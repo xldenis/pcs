@@ -1,6 +1,7 @@
 .DS_Store
 .idea
 *.log
+.plandex
 tmp/
 visualization/data
 target
