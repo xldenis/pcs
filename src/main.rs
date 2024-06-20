@@ -2,9 +2,9 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use pcs::{rustc_interface, run_free_pcs};
+use pcs::{combined_pcs::BodyWithBorrowckFacts, run_free_pcs, rustc_interface};
 use rustc_interface::{
-    borrowck::consumers::{self, BodyWithBorrowckFacts},
+    borrowck::consumers,
     data_structures::fx::FxHashMap,
     data_structures::steal::Steal,
     driver::{self, Compilation},
@@ -31,7 +31,8 @@ fn mir_borrowck<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> MirBorrowck<'tcx
     let consumer_opts = consumers::ConsumerOptions::PoloniusOutputFacts;
     let body_with_facts = consumers::get_body_with_borrowck_facts(tcx, def_id, consumer_opts);
     unsafe {
-        let body: BodyWithBorrowckFacts<'static> = std::mem::transmute(body_with_facts);
+        let body: BodyWithBorrowckFacts<'tcx> = body_with_facts.into();
+        let body: BodyWithBorrowckFacts<'static> = std::mem::transmute(body);
         BODIES.with(|state| {
             let mut map = state.borrow_mut();
             assert!(map.insert(def_id, body).is_none());
@@ -43,7 +44,7 @@ fn mir_borrowck<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> MirBorrowck<'tcx
     original_mir_borrowck(tcx, def_id)
 }
 
-fn do_stuff<'tcx>(tcx: TyCtxt<'tcx>) {
+fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
     let mut item_names = vec![];
     let dir_path = "visualization/data";
     if std::path::Path::new(dir_path).exists() {
@@ -59,7 +60,7 @@ fn do_stuff<'tcx>(tcx: TyCtxt<'tcx>) {
                     let mut map = state.borrow_mut();
                     unsafe { std::mem::transmute(map.remove(&def_id).unwrap()) }
                 });
-                run_free_pcs(&body, tcx, &dir_path);
+                run_free_pcs(&body, tcx, Some(&dir_path));
                 item_names.push(format!("{}", tcx.item_name(body.body.source.def_id())));
             }
             unsupported_item_kind => {
@@ -93,7 +94,7 @@ impl driver::Callbacks for PcsCallbacks {
         compiler: &Compiler,
         queries: &'tcx Queries<'tcx>,
     ) -> Compilation {
-        queries.global_ctxt().unwrap().enter(do_stuff);
+        queries.global_ctxt().unwrap().enter(run_pcs_on_all_fns);
         Compilation::Stop
     }
 }

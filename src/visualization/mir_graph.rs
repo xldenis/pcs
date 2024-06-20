@@ -1,4 +1,3 @@
-use serde::Serialize;
 use serde_derive::Serialize;
 use crate::{
     borrows::domain::{Borrow, BorrowsDomain, RegionAbstraction}, free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary}, rustc_interface, utils::{Place, PlaceRepacker}

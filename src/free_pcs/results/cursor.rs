@@ -87,7 +87,8 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx>+ HasExtra<T>, E: Analysis<'tcx, Domai
     fn body(&self) -> &'mir Body<'tcx> {
         self.repacker().body()
     }
-    pub(crate) fn repacker(&self) -> PlaceRepacker<'mir, 'tcx> {
+
+    pub fn repacker(&self) -> PlaceRepacker<'mir, 'tcx> {
         self.cursor.get().get_curr_fpcs().repacker
     }
 

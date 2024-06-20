@@ -7,7 +7,7 @@
 use std::{cell::Cell, rc::Rc};
 
 use rustc_interface::{
-    borrowck::consumers::BodyWithBorrowckFacts,
+    borrowck::{borrow_set::BorrowSet, consumers::{self, RegionInferenceContext, LocationTable, PoloniusInput, PoloniusOutput}},
     dataflow::{Analysis, AnalysisDomain},
     index::{Idx, IndexVec},
     middle::{
@@ -20,17 +20,44 @@ use rustc_interface::{
 };
 
 use crate::{
-    borrows::{domain::BorrowsDomain, engine::BorrowsEngine}, free_pcs::{engine::FpcsEngine, CapabilityKind, CapabilityLocal, FreePlaceCapabilitySummary}, rustc_interface, utils::PlaceRepacker
+    borrows::{domain::BorrowsDomain, engine::BorrowsEngine},
+    free_pcs::{engine::FpcsEngine, CapabilityKind, CapabilityLocal, FreePlaceCapabilitySummary},
+    rustc_interface,
+    utils::PlaceRepacker,
 };
 
 use super::domain::PlaceCapabilitySummary;
+
+pub struct BodyWithBorrowckFacts<'tcx> {
+    pub body: Body<'tcx>,
+    pub promoted: IndexVec<Promoted, Body<'tcx>>,
+    pub borrow_set: Rc<BorrowSet<'tcx>>,
+    pub region_inference_context: Rc<RegionInferenceContext<'tcx>>,
+    pub location_table: Option<Rc<LocationTable>>,
+    pub input_facts: Option<Box<PoloniusInput>>,
+    pub output_facts: Option<Rc<PoloniusOutput>>,
+}
+
+impl <'tcx> From<consumers::BodyWithBorrowckFacts<'tcx>> for BodyWithBorrowckFacts<'tcx> {
+    fn from(value: consumers::BodyWithBorrowckFacts<'tcx>) -> Self {
+        Self {
+            body: value.body,
+            promoted: value.promoted,
+            borrow_set: value.borrow_set,
+            region_inference_context: value.region_inference_context,
+            location_table: value.location_table.map(Rc::new),
+            input_facts: value.input_facts,
+            output_facts: value.output_facts,
+        }
+    }
+}
 
 pub struct PcsContext<'a, 'tcx> {
     pub rp: PlaceRepacker<'a, 'tcx>,
     pub mir: &'a BodyWithBorrowckFacts<'tcx>,
 }
 
-impl <'a, 'tcx> PcsContext<'a, 'tcx> {
+impl<'a, 'tcx> PcsContext<'a, 'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, mir: &'a BodyWithBorrowckFacts<'tcx>) -> Self {
         let rp = PlaceRepacker::new(&mir.body, &mir.promoted, tcx);
         Self { rp, mir }
