@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
         consumers::BorrowIndex
@@ -10,7 +10,7 @@ use prusti_rustc_interface::{
     middle::mir::{self, Location},
 };
 
-use crate::{prusti_rustc_interface, utils::Place};
+use crate::{rustc_interface, utils::Place};
 
 impl<'tcx> JoinSemiLattice for BorrowsDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {

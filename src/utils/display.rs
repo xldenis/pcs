@@ -10,7 +10,7 @@ use std::{
     fmt::{Debug, Formatter, Result},
 };
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     middle::{
         mir::{
             PlaceElem, PlaceRef, ProjectionElem, VarDebugInfo, VarDebugInfoContents, RETURN_PLACE,
@@ -20,7 +20,7 @@ use prusti_rustc_interface::{
     span::Span,
 };
 
-use crate::prusti_rustc_interface;
+use crate::rustc_interface;
 
 use super::{Place, PlaceRepacker};
 

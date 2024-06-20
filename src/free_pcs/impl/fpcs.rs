@@ -7,7 +7,7 @@
 use std::fmt::{Debug, Formatter, Result};
 
 use derive_more::{Deref, DerefMut};
-use prusti_rustc_interface::{
+use rustc_interface::{
     index::Idx,
     dataflow::fmt::DebugWithContext, index::IndexVec, middle::mir::{Local, RETURN_PLACE},
 };
@@ -15,7 +15,7 @@ use prusti_rustc_interface::{
 use crate::{
     free_pcs::{
         CapabilityLocal, CapabilityProjections, RepackOp,
-    }, prusti_rustc_interface, utils::PlaceRepacker
+    }, rustc_interface, utils::PlaceRepacker
 };
 
 use super::{CapabilityKind, RepackingBridgeSemiLattice, engine::FpcsEngine};

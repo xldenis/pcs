@@ -6,7 +6,7 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     borrowck::consumers::BodyWithBorrowckFacts,
     dataflow::{Analysis, AnalysisDomain},
     index::{Idx, IndexVec},
@@ -20,7 +20,7 @@ use prusti_rustc_interface::{
 };
 
 use crate::{
-    borrows::{domain::BorrowsDomain, engine::BorrowsEngine}, free_pcs::{engine::FpcsEngine, CapabilityKind, CapabilityLocal, FreePlaceCapabilitySummary}, prusti_rustc_interface, utils::PlaceRepacker
+    borrows::{domain::BorrowsDomain, engine::BorrowsEngine}, free_pcs::{engine::FpcsEngine, CapabilityKind, CapabilityLocal, FreePlaceCapabilitySummary}, rustc_interface, utils::PlaceRepacker
 };
 
 use super::domain::PlaceCapabilitySummary;

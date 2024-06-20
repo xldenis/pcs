@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     hir,
     middle::{
         mir::{Mutability, ProjectionElem},
@@ -13,7 +13,7 @@ use prusti_rustc_interface::{
     target::abi::FieldIdx,
 };
 
-use crate::prusti_rustc_interface;
+use crate::rustc_interface;
 
 use super::{root_place::RootPlace, Place, PlaceRepacker};
 

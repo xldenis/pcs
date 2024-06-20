@@ -7,7 +7,7 @@
 // This module is not used, and instead we use https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/mir/struct.Promoted.html.
 // I've kept this around as a skeleton for working with `ConstValue` and `ConstAlloc` if we ever need that in the future.
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     abi::{HasDataLayout, Size, TagEncoding, TargetDataLayout, VariantIdx, Variants},
     borrowck::{
         borrow_set::BorrowData,
@@ -35,7 +35,7 @@ use prusti_rustc_interface::{
     },
 };
 
-use crate::prusti_rustc_interface;
+use crate::rustc_interface;
 
 use super::PlaceRepacker;
 

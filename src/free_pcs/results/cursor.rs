@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     dataflow::{Analysis, Forward},
     dataflow::ResultsCursor,
     middle::{
@@ -16,7 +16,7 @@ use prusti_rustc_interface::{
 use crate::{
     combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary}, free_pcs::{
         engine::FpcsEngine, CapabilitySummary, FreePlaceCapabilitySummary, RepackOp, RepackingBridgeSemiLattice
-    }, prusti_rustc_interface, utils::PlaceRepacker
+    }, rustc_interface, utils::PlaceRepacker
 };
 
 pub trait HasFpcs<'mir, 'tcx> {

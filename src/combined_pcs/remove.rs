@@ -4,12 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use prusti_rustc_interface::middle::{
+use rustc_interface::middle::{
     mir::PlaceRef,
     ty::RegionVid,
 };
 
-use crate::{free_pcs::{CapabilityLocal, CapabilityProjections, CapabilitySummary}, prusti_rustc_interface, utils::PlaceRepacker};
+use crate::{free_pcs::{CapabilityLocal, CapabilityProjections, CapabilitySummary}, rustc_interface, utils::PlaceRepacker};
 
 impl<'tcx> CapabilitySummary<'tcx> {
     pub fn fold_up_to(&mut self, rp: PlaceRepacker<'_, 'tcx>, r: RegionVid) {

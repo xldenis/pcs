@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     data_structures::fx::FxHashSet,
     dataflow::storage,
     index::{bit_set::BitSet, Idx, IndexVec},
@@ -20,7 +20,7 @@ use prusti_rustc_interface::{
 
 // use crate::utils::ty::{DeepTypeVisitable, DeepTypeVisitor, Stack};
 
-use crate::prusti_rustc_interface;
+use crate::rustc_interface;
 
 use super::Place;
 

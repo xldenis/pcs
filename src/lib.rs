@@ -14,14 +14,14 @@ pub mod utils;
 pub mod r#loop;
 pub mod combined_pcs;
 pub mod borrows;
-pub mod prusti_rustc_interface;
+pub mod rustc_interface;
 
 use std::{fs::create_dir_all, rc::Rc};
 
 use borrows::domain::BorrowsDomain;
 use combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary};
 use free_pcs::HasExtra;
-use prusti_rustc_interface::{
+use rustc_interface::{
     borrowck::consumers::BodyWithBorrowckFacts,
     dataflow::Analysis,
     index::IndexVec,

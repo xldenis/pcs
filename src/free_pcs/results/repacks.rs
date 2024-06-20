@@ -6,9 +6,9 @@
 
 use std::fmt::{Display, Formatter, Result};
 
-use prusti_rustc_interface::middle::mir::Local;
+use rustc_interface::middle::mir::Local;
 
-use crate::{free_pcs::CapabilityKind, prusti_rustc_interface, utils::Place};
+use crate::{free_pcs::CapabilityKind, rustc_interface, utils::Place};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepackOp<'tcx> {

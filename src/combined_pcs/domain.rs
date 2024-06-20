@@ -10,7 +10,7 @@ use std::{
 };
 
 use derive_more::{Deref, DerefMut};
-use prusti_rustc_interface::{
+use rustc_interface::{
     dataflow::JoinSemiLattice,
     dataflow::fmt::DebugWithContext, index::IndexVec, middle::mir::{BasicBlock, Location, START_BLOCK},
 };
@@ -18,7 +18,7 @@ use prusti_rustc_interface::{
 use crate::{
     free_pcs::{
         CapabilityLocal, CapabilityProjections, FreePlaceCapabilitySummary, HasFpcs, RepackOp
-    }, prusti_rustc_interface, utils::{Place, PlaceRepacker}
+    }, rustc_interface, utils::{Place, PlaceRepacker}
 };
 
 use super::{PcsContext, PcsEngine};

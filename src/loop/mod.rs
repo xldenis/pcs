@@ -4,12 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     index::{Idx, IndexVec},
     middle::mir::{BasicBlock, Body, START_BLOCK},
 };
 
-use crate::prusti_rustc_interface;
+use crate::rustc_interface;
 
 #[derive(Clone, Debug)]
 struct LoopSet {

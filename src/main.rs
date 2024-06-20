@@ -2,8 +2,8 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use pcs::{prusti_rustc_interface, run_free_pcs};
-use prusti_rustc_interface::{
+use pcs::{rustc_interface, run_free_pcs};
+use rustc_interface::{
     borrowck::consumers::{self, BodyWithBorrowckFacts},
     data_structures::fx::FxHashMap,
     data_structures::steal::Steal,
@@ -38,7 +38,7 @@ fn mir_borrowck<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> MirBorrowck<'tcx
         });
     }
     let mut providers = Providers::default();
-    prusti_rustc_interface::borrowck::provide(&mut providers);
+    rustc_interface::borrowck::provide(&mut providers);
     let original_mir_borrowck = providers.mir_borrowck;
     original_mir_borrowck(tcx, def_id)
 }

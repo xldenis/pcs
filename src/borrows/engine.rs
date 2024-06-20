@@ -1,6 +1,6 @@
 use std::{collections::HashSet, ops::ControlFlow, rc::Rc};
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
@@ -21,7 +21,7 @@ use prusti_rustc_interface::{
     },
 };
 
-use crate::{borrows::domain::RegionAbstraction, prusti_rustc_interface, utils};
+use crate::{borrows::domain::RegionAbstraction, rustc_interface, utils};
 
 use super::domain::{Borrow, BorrowKind, BorrowsDomain};
 

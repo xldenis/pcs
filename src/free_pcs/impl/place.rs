@@ -9,9 +9,9 @@ use std::{
     fmt::{Debug, Formatter, Result},
 };
 
-use prusti_rustc_interface::data_structures::fx::FxHashSet;
+use rustc_interface::data_structures::fx::FxHashSet;
 
-use crate::{prusti_rustc_interface, utils::{Place, PlaceOrdering}};
+use crate::{rustc_interface, utils::{Place, PlaceOrdering}};
 
 #[derive(Debug)]
 pub(crate) struct RelatedSet<'tcx> {

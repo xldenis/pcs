@@ -4,12 +4,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use prusti_rustc_interface::dataflow::JoinSemiLattice;
+use rustc_interface::dataflow::JoinSemiLattice;
 
 use crate::{
     free_pcs::{
         CapabilityKind, CapabilityLocal, CapabilityProjections, CapabilitySummary, FreePlaceCapabilitySummary,
-    }, prusti_rustc_interface, utils::{PlaceOrdering, PlaceRepacker}
+    }, rustc_interface, utils::{PlaceOrdering, PlaceRepacker}
 };
 
 impl JoinSemiLattice for FreePlaceCapabilitySummary<'_, '_> {

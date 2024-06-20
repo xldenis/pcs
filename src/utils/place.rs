@@ -13,12 +13,12 @@ use std::{
 
 use derive_more::{Deref, DerefMut};
 
-use prusti_rustc_interface::middle::{
+use rustc_interface::middle::{
     mir::{Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
     ty::Ty,
 };
 
-use crate::prusti_rustc_interface;
+use crate::rustc_interface;
 
 use super::debug_info::{self, DebugInfo};
 #[derive(Clone, Copy, Deref, DerefMut)]

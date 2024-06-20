@@ -7,13 +7,13 @@
 use std::fmt::{Debug, Formatter, Result};
 
 use derive_more::{Deref, DerefMut};
-use prusti_rustc_interface::{
+use rustc_interface::{
     data_structures::fx::{FxHashMap, FxHashSet},
     middle::mir::Local,
 };
 
 use crate::{
-    free_pcs::{CapabilityKind, RelatedSet, RepackOp}, prusti_rustc_interface, utils::{Place, PlaceOrdering, PlaceRepacker}
+    free_pcs::{CapabilityKind, RelatedSet, RepackOp}, rustc_interface, utils::{Place, PlaceOrdering, PlaceRepacker}
 };
 
 #[derive(Clone, PartialEq, Eq)]

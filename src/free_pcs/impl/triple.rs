@@ -4,13 +4,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use prusti_rustc_interface::middle::mir::{
+use rustc_interface::middle::mir::{
     visit::Visitor, Local, Location, Operand, Rvalue, Statement, StatementKind, Terminator,
     TerminatorKind, RETURN_PLACE,
 };
 
 use crate::{
-    free_pcs::CapabilityKind, prusti_rustc_interface, utils::{Place, PlaceRepacker}
+    free_pcs::CapabilityKind, rustc_interface, utils::{Place, PlaceRepacker}
 };
 
 use super::CapabilitySummary;

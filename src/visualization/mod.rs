@@ -7,7 +7,7 @@
 pub mod mir_graph;
 
 use crate::{
-    borrows::domain::{Borrow, BorrowKind, BorrowsDomain, RegionAbstraction}, free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary}, prusti_rustc_interface, utils::{Place, PlaceRepacker}
+    borrows::domain::{Borrow, BorrowKind, BorrowsDomain, RegionAbstraction}, free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary}, rustc_interface, utils::{Place, PlaceRepacker}
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -16,7 +16,7 @@ use std::{
     rc::Rc,
 };
 
-use prusti_rustc_interface::{
+use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
