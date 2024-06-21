@@ -52,57 +52,67 @@ impl<'tcx> RegionAbstraction<'tcx> {
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub struct Borrow<'tcx> {
-    pub kind: BorrowKind<'tcx>,
-    pub borrowed_place_before: Option<Location>,
-    pub assigned_place_before: Option<Location>,
+pub enum MaybeOldPlace<'tcx> {
+    Current {
+        place: Place<'tcx>,
+    },
+    OldPlace {
+        place: Place<'tcx>,
+        before: Location,
+    },
 }
 
-impl<'tcx> Borrow<'tcx> {
-    pub fn new(
-        kind: BorrowKind<'tcx>,
-        borrowed_place_before: Option<Location>,
-        assigned_place_before: Option<Location>,
-    ) -> Self {
-        Self {
-            kind,
-            borrowed_place_before,
-            assigned_place_before,
+impl<'tcx> MaybeOldPlace<'tcx> {
+    pub fn is_current(&self) -> bool {
+        matches!(self, MaybeOldPlace::Current { .. })
+    }
+
+    pub fn place(&self) -> Place<'tcx> {
+        match self {
+            MaybeOldPlace::Current { place } => *place,
+            MaybeOldPlace::OldPlace { place, .. } => *place,
         }
     }
 
-    pub fn assigned_place(&self, borrow_set: &BorrowSet<'tcx>) -> Place<'tcx> {
-        self.kind.assigned_place(borrow_set)
-    }
-
-    pub fn borrowed_place(&self, borrow_set: &BorrowSet<'tcx>) -> Place<'tcx> {
-        self.kind.borrowed_place(borrow_set)
+    pub fn before_location(&self) -> Option<Location> {
+        match self {
+            MaybeOldPlace::Current { .. } => None,
+            MaybeOldPlace::OldPlace { before, .. } => Some(*before),
+        }
     }
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum BorrowKind<'tcx> {
-    Rustc(BorrowIndex),
-    PCS {
-        borrowed_place: Place<'tcx>,
-        assigned_place: Place<'tcx>,
-    },
+pub struct Borrow<'tcx> {
+    pub kind: BorrowKind,
+    pub borrowed_place: MaybeOldPlace<'tcx>,
+    pub assigned_place: MaybeOldPlace<'tcx>,
+    pub is_mut: bool
 }
 
-impl<'tcx> BorrowKind<'tcx> {
-    pub fn assigned_place(&self, borrow_set: &BorrowSet<'tcx>) -> Place<'tcx> {
-        match self {
-            BorrowKind::Rustc(borrow_index) => borrow_set[*borrow_index].assigned_place.into(),
-            BorrowKind::PCS { assigned_place, .. } => *assigned_place,
+impl<'tcx> Borrow<'tcx> {
+    pub fn new(kind: BorrowKind, borrowed_place: Place<'tcx>, assigned_place: Place<'tcx>, is_mut: bool) -> Self {
+        Self {
+            kind,
+            borrowed_place: MaybeOldPlace::Current {
+                place: borrowed_place,
+            },
+            assigned_place: MaybeOldPlace::Current {
+                place: assigned_place,
+            },
+            is_mut
         }
     }
 
-    pub fn borrowed_place(&self, borrow_set: &BorrowSet<'tcx>) -> Place<'tcx> {
-        match self {
-            BorrowKind::Rustc(borrow_index) => borrow_set[*borrow_index].borrowed_place.into(),
-            BorrowKind::PCS { borrowed_place, .. } => *borrowed_place,
-        }
+    pub fn is_current(&self) -> bool {
+        self.borrowed_place.is_current() && self.assigned_place.is_current()
     }
+}
+
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum BorrowKind {
+    Rustc(BorrowIndex),
+    PCS,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -117,7 +127,6 @@ use serde_json::{json, Value};
 use super::engine::BorrowAction;
 
 impl<'tcx> BorrowsState<'tcx> {
-
     pub fn contains_borrow(&self, borrow: &Borrow<'tcx>) -> bool {
         self.borrows.contains(borrow)
     }
@@ -135,15 +144,10 @@ impl<'tcx> BorrowsState<'tcx> {
                 json!({
                     "kind": match &borrow.kind {
                         BorrowKind::Rustc(index) => json!(format!("Rustc({:?})", index)),
-                        BorrowKind::PCS { borrowed_place, assigned_place } => json!({
-                            "PCS": {
-                                "borrowed_place": format!("{:?}", borrowed_place.to_string(repacker)),
-                                "assigned_place": format!("{:?}", assigned_place.to_string(repacker))
-                            }
-                        })
+                        BorrowKind::PCS => json!("PCS"),
                     },
-                    "target_place_before": format!("{:?}", borrow.borrowed_place_before),
-                    "assigned_place_before": format!("{:?}", borrow.assigned_place_before)
+                    "target_place": format!("{:?}", borrow.borrowed_place),
+                    "assigned_place": format!("{:?}", borrow.assigned_place)
                 })
             }).collect::<Vec<_>>(),
         })
@@ -160,7 +164,7 @@ impl<'tcx> BorrowsState<'tcx> {
 
     pub fn live_borrows(&self) -> impl Iterator<Item = &Borrow<'tcx>> {
         self.borrows.iter().filter(|borrow| {
-            borrow.assigned_place_before.is_none() && borrow.borrowed_place_before.is_none()
+            borrow.assigned_place.is_current() && borrow.borrowed_place.is_current()
         })
     }
 
@@ -170,8 +174,10 @@ impl<'tcx> BorrowsState<'tcx> {
         borrow_set: &BorrowSet<'tcx>,
     ) -> Option<Place<'tcx>> {
         self.live_borrows()
-            .find(|borrow| borrow.borrowed_place(borrow_set) == place)
-            .map(|borrow| borrow.assigned_place(borrow_set))
+            .find(|borrow| {
+                borrow.borrowed_place.is_current() && borrow.borrowed_place.place() == place
+            })
+            .map(|borrow| borrow.assigned_place.place())
     }
 
     pub fn add_region_abstraction(&mut self, abstraction: RegionAbstraction<'tcx>) {
@@ -184,19 +190,17 @@ impl<'tcx> BorrowsState<'tcx> {
         self.borrows.insert(borrow);
     }
 
-    pub fn add_rustc_borrow(&mut self, borrow: BorrowIndex) {
-        self.borrows.insert(Borrow {
-            kind: BorrowKind::Rustc(borrow),
-            borrowed_place_before: None,
-            assigned_place_before: None,
-        });
+    pub fn add_rustc_borrow(&mut self, borrow: BorrowIndex, borrow_set: &BorrowSet<'tcx>) {
+        self.borrows.insert(Borrow::new(
+            BorrowKind::Rustc(borrow),
+            borrow_set[borrow].borrowed_place.into(),
+            borrow_set[borrow].assigned_place.into(),
+            matches!(borrow_set[borrow].kind, mir::BorrowKind::Mut {..}),
+        ));
     }
 
-    pub fn remove_borrow(&mut self, borrow: &BorrowIndex) {
-        self.borrows.remove(&Borrow {
-            kind: BorrowKind::Rustc(*borrow),
-            borrowed_place_before: None,
-            assigned_place_before: None,
-        });
+    pub fn remove_rustc_borrow(&mut self, borrow: &BorrowIndex) {
+        self.borrows
+            .retain(|b| !b.is_current() || b.kind != BorrowKind::Rustc(*borrow));
     }
 }

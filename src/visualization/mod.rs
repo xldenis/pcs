@@ -7,16 +7,13 @@
 pub mod mir_graph;
 
 use crate::{
-    borrows::domain::{Borrow, BorrowKind, BorrowsState, RegionAbstraction},
+    borrows::domain::{Borrow, BorrowKind, BorrowsState, MaybeOldPlace, RegionAbstraction},
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker},
 };
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
-    fs::File,
-    io::{self, Write},
-    rc::Rc,
+    collections::{BTreeSet, HashMap, HashSet, VecDeque}, fs::File, io::{self, Write}, rc::Rc
 };
 
 use rustc_interface::{
@@ -278,13 +275,13 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
         for borrow in &self.borrows_domain.borrows {
             let borrowed_place = self.insert_place_and_previous_projections(
-                borrow.borrowed_place(&self.borrow_set).into(),
-                borrow.borrowed_place_before,
+                borrow.borrowed_place.place().into(),
+                borrow.borrowed_place.before_location(),
                 None,
             );
             let assigned_place = self.insert_place_and_previous_projections(
-                borrow.assigned_place(&self.borrow_set).into(),
-                borrow.assigned_place_before,
+                borrow.assigned_place.place().into(),
+                borrow.assigned_place.before_location(),
                 None,
             );
             match borrow.kind {
@@ -308,11 +305,11 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
 
         let mut before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
         for borrow in &self.borrows_domain.borrows {
-            if let Some(before) = borrow.assigned_place_before {
-                before_places.insert((borrow.assigned_place(&self.borrow_set), before));
+            if let MaybeOldPlace::OldPlace{ place, before } = borrow.assigned_place {
+                before_places.insert((place, before));
             }
-            if let Some(before) = borrow.borrowed_place_before {
-                before_places.insert((borrow.borrowed_place(&self.borrow_set), before));
+            if let MaybeOldPlace::OldPlace{ place, before } = borrow.borrowed_place {
+                before_places.insert((place, before));
             }
         }
         for (place, location) in before_places.iter() {

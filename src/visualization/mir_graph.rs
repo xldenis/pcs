@@ -124,7 +124,16 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
         Rvalue::NullaryOp(_, _) => todo!(),
         Rvalue::UnaryOp(_, _) => todo!(),
         Rvalue::Discriminant(_) => todo!(),
-        Rvalue::Aggregate(_, _) => todo!(),
+        Rvalue::Aggregate(kind, ops) => {
+            format!(
+                "Aggregate {:?} {}",
+                kind,
+                ops.iter()
+                    .map(|op| format_operand(op, debug_info))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
         Rvalue::ShallowInitBox(_, _) => todo!(),
         Rvalue::CopyForDeref(_) => todo!(),
     }
