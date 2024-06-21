@@ -98,16 +98,16 @@ pub fn run_free_pcs<'mir, 'tcx>(
                     &file_path,
                 )
                 .expect("Failed to generate DOT graph");
-                let actions_file_path = format!(
-                    "{}/block_{}_stmt_{}_actions.json",
+                let borrows_file_path = format!(
+                    "{}/block_{}_stmt_{}_borrows.json",
                     &dir_path,
                     block.index(),
                     statement_index
                 );
-                let actions_json = serde_json::to_string(&statement.extra.actions)
-                    .expect("Failed to serialize actions to JSON");
-                std::fs::write(&actions_file_path, actions_json)
-                    .expect("Failed to write actions to JSON file");
+                let borrows_json =
+                    serde_json::to_string_pretty(&statement.extra.to_json(rp)).unwrap();
+                std::fs::write(&borrows_file_path, borrows_json)
+                    .expect("Failed to write borrows to JSON file");
             }
         }
     }

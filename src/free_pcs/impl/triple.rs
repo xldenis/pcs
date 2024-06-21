@@ -157,7 +157,6 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
         let t = match &statement.kind {
             &Assign(box (place, ref rvalue)) => {
                 let place: Place<'_> = place.into();
-                let place = place.target_place().unwrap_or(place);
                 Triple {
                 pre: Condition::capability(
                     place,

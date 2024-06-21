@@ -13,7 +13,7 @@ use crate::{
     utils::{Place, PlaceRepacker},
 };
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs::File,
     io::{self, Write},
     rc::Rc,
@@ -276,15 +276,15 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
                 }
             }
         }
-        for borrow in &self.borrows_domain.live_borrows {
+        for borrow in &self.borrows_domain.borrows {
             let borrowed_place = self.insert_place_and_previous_projections(
                 borrow.borrowed_place(&self.borrow_set).into(),
-                borrow.before,
+                borrow.borrowed_place_before,
                 None,
             );
             let assigned_place = self.insert_place_and_previous_projections(
                 borrow.assigned_place(&self.borrow_set).into(),
-                None,
+                borrow.assigned_place_before,
                 None,
             );
             match borrow.kind {
@@ -305,6 +305,27 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
                 }
             }
         }
+
+        let mut before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
+        for borrow in &self.borrows_domain.borrows {
+            if let Some(before) = borrow.assigned_place_before {
+                before_places.insert((borrow.assigned_place(&self.borrow_set), before));
+            }
+            if let Some(before) = borrow.borrowed_place_before {
+                before_places.insert((borrow.borrowed_place(&self.borrow_set), before));
+            }
+        }
+        for (place, location) in before_places.iter() {
+            for (place2, location2) in before_places.iter() {
+                if location == location2 && place2.is_deref_of(*place) {
+                    let source = self.node_id(*place, Some(*location));
+                    let target = self.node_id(*place2, Some(*location));
+                    self.edges
+                        .insert(GraphEdge::ProjectionEdge { source, target });
+                }
+            }
+        }
+
         let mut nodes = self.nodes.clone().into_iter().collect::<Vec<_>>();
         nodes.sort_by(|a, b| self.rank(a.id).cmp(&self.rank(b.id)));
         Graph::new(nodes, self.edges)

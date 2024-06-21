@@ -58,20 +58,13 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         place: utils::Place<'tcx>,
         location: Location,
     ) {
-        state.live_borrows = state
-            .live_borrows
+        state.borrows = state
+            .borrows
             .clone()
             .into_iter()
             .map(|mut borrow| {
                 if borrow.borrowed_place(&self.borrow_set).is_deref_of(place) {
-                    eprintln!("!!!!!!");
-                    borrow.before = Some(location);
-                } else {
-                    eprintln!(
-                        "NR {:?} {:?}",
-                        place,
-                        borrow.borrowed_place(&self.borrow_set)
-                    );
+                    borrow.borrowed_place_before = Some(location);
                 }
                 borrow
             })
@@ -131,7 +124,7 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         origin: utils::Place<'tcx>,
     ) -> Option<Borrow<'tcx>> {
         let loans_to = state
-            .live_borrows
+            .borrows
             .iter()
             .filter(|borrow| borrow.assigned_place(&self.borrow_set) == origin.into())
             .collect::<Vec<_>>();
@@ -145,12 +138,12 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         assigned_to: Place<'tcx>,
     ) -> FxHashSet<Borrow<'tcx>> {
         let (to_remove, to_keep): (FxHashSet<_>, FxHashSet<_>) = state
-            .live_borrows
+            .borrows
             .clone()
             .into_iter()
             .partition(|borrow| borrow.assigned_place(&self.borrow_set) == assigned_to.into());
 
-        state.live_borrows = to_keep;
+        state.borrows = to_keep;
 
         to_remove
     }
@@ -161,12 +154,12 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         origin: Place<'tcx>,
     ) -> FxHashSet<Borrow<'tcx>> {
         let (to_remove, to_keep): (FxHashSet<_>, FxHashSet<_>) = state
-            .live_borrows
+            .borrows
             .clone()
             .into_iter()
             .partition(|borrow| borrow.borrowed_place(&self.borrow_set) == origin.into());
 
-        state.live_borrows = to_keep;
+        state.borrows = to_keep;
 
         to_remove
     }
@@ -229,7 +222,14 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         match &statement.kind {
             StatementKind::Assign(box (target, rvalue)) => match rvalue {
                 Rvalue::Use(Operand::Move(from)) => {
-                    self.remove_loans_assigned_to(state, *target);
+                    for mut borrow in self.remove_loans_assigned_to(state, *target) {
+                        borrow.assigned_place_before = Some(location);
+                        state.add_borrow(borrow);
+                        // state.log_action(format!(
+                        //     "Removed loan assigned to {:?} due to move {:?} -> {:?}:  {:?}",
+                        //     target, from, target, borrow
+                        // ));
+                    }
                     let loans_to_move = self.remove_loans_assigned_to(state, *from);
                     for loan in loans_to_move {
                         state.add_borrow(Borrow::new(
@@ -238,6 +238,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                                 assigned_place: (*target).into(),
                             },
                             None,
+                            None
                         ));
                     }
                     self.tag_deref_of_place_with_location(state, (*target).into(), location);
@@ -246,7 +247,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
             },
             StatementKind::StorageDead(local) => {
                 let mut actions = vec![];
-                state.live_borrows.retain(|borrow| {
+                state.borrows.retain(|borrow| {
                     if borrow.assigned_place(&self.borrow_set).local == *local {
                         actions.push(format!("Remove borrow {:?} for StorageDead", borrow));
                         false

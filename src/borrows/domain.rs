@@ -12,8 +12,8 @@ use crate::{rustc_interface, utils::Place};
 impl<'tcx> JoinSemiLattice for BorrowsDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
-        for borrow in &other.live_borrows {
-            if self.live_borrows.insert(borrow.clone()) {
+        for borrow in &other.borrows {
+            if self.borrows.insert(borrow.clone()) {
                 changed = true;
             }
         }
@@ -58,12 +58,21 @@ impl<'tcx> RegionAbstraction<'tcx> {
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Borrow<'tcx> {
     pub kind: BorrowKind<'tcx>,
-    pub before: Option<Location>,
+    pub borrowed_place_before: Option<Location>,
+    pub assigned_place_before: Option<Location>,
 }
 
 impl<'tcx> Borrow<'tcx> {
-    pub fn new(kind: BorrowKind<'tcx>, before: Option<Location>) -> Self {
-        Self { kind, before }
+    pub fn new(
+        kind: BorrowKind<'tcx>,
+        borrowed_place_before: Option<Location>,
+        assigned_place_before: Option<Location>,
+    ) -> Self {
+        Self {
+            kind,
+            borrowed_place_before,
+            assigned_place_before,
+        }
     }
 
     pub fn assigned_place(&self, borrow_set: &BorrowSet<'tcx>) -> Place<'tcx> {
@@ -102,15 +111,42 @@ impl<'tcx> BorrowKind<'tcx> {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct BorrowsDomain<'tcx> {
-    pub live_borrows: FxHashSet<Borrow<'tcx>>,
+    pub borrows: FxHashSet<Borrow<'tcx>>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
     pub actions: FxHashSet<String>,
 }
 
+use serde_json::{json, Value};
+use crate::utils::PlaceRepacker;
+
+impl<'tcx> BorrowsDomain<'tcx> {
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
+        json!({
+            "borrows": self.borrows.iter().map(|borrow| {
+                json!({
+                    "kind": match &borrow.kind {
+                        BorrowKind::Rustc(index) => json!(format!("Rustc({:?})", index)),
+                        BorrowKind::PCS { borrowed_place, assigned_place } => json!({
+                            "PCS": {
+                                "borrowed_place": format!("{:?}", borrowed_place.to_string(repacker)),
+                                "assigned_place": format!("{:?}", assigned_place.to_string(repacker))
+                            }
+                        })
+                    },
+                    "target_place_before": format!("{:?}", borrow.borrowed_place_before),
+                    "assigned_place_before": format!("{:?}", borrow.assigned_place_before)
+                })
+            }).collect::<Vec<_>>(),
+            "actions": self.actions.iter().collect::<Vec<_>>()
+        })
+    }
+}
+
+
 impl<'tcx> BorrowsDomain<'tcx> {
     pub fn new() -> Self {
         Self {
-            live_borrows: FxHashSet::default(),
+            borrows: FxHashSet::default(),
             region_abstractions: vec![],
             actions: FxHashSet::default(),
         }
@@ -121,7 +157,7 @@ impl<'tcx> BorrowsDomain<'tcx> {
         place: Place<'tcx>,
         borrow_set: &BorrowSet<'tcx>,
     ) -> Option<Place<'tcx>> {
-        self.live_borrows
+        self.borrows
             .iter()
             .find(|borrow| borrow.borrowed_place(borrow_set) == place)
             .map(|borrow| borrow.assigned_place(borrow_set))
@@ -138,20 +174,22 @@ impl<'tcx> BorrowsDomain<'tcx> {
     }
 
     pub fn add_borrow(&mut self, borrow: Borrow<'tcx>) {
-        self.live_borrows.insert(borrow);
+        self.borrows.insert(borrow);
     }
 
     pub fn add_rustc_borrow(&mut self, borrow: BorrowIndex) {
-        self.live_borrows.insert(Borrow {
+        self.borrows.insert(Borrow {
             kind: BorrowKind::Rustc(borrow),
-            before: None,
+            borrowed_place_before: None,
+            assigned_place_before: None,
         });
     }
 
     pub fn remove_borrow(&mut self, borrow: &BorrowIndex) {
-        self.live_borrows.remove(&Borrow {
+        self.borrows.remove(&Borrow {
             kind: BorrowKind::Rustc(*borrow),
-            before: None,
+            borrowed_place_before: None,
+            assigned_place_before: None,
         });
     }
 }

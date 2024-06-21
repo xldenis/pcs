@@ -183,9 +183,9 @@ impl<'tcx> Place<'tcx> {
     }
 
     pub fn is_deref_of(self, other: Self) -> bool {
-        other.is_prefix(self)
+        self.projection.last() == Some(&ProjectionElem::Deref)
+            && other.is_prefix(self)
             && other.projection.len() == self.projection.len() - 1
-            && self.projection.last().unwrap() == &ProjectionElem::Deref
     }
 
     pub fn target_place(self) -> Option<Self> {
