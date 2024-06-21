@@ -1,5 +1,5 @@
 use crate::{
-    borrows::domain::{Borrow, BorrowsDomain, RegionAbstraction},
+    borrows::domain::{Borrow, BorrowsState, RegionAbstraction},
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker},

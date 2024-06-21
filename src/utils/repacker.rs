@@ -310,6 +310,14 @@ impl<'tcx> Place<'tcx> {
                     }
                 }
             }
+            TyKind::Ref(_, _, _) => {
+                places.push(
+                    repacker
+                        .tcx
+                        .mk_place_deref(self.to_rust_place(repacker))
+                        .into(),
+                );
+            }
             ty => unreachable!("ty={:?}", ty),
         }
         places
@@ -367,7 +375,12 @@ impl<'tcx> Place<'tcx> {
     pub fn projection_refs(
         self,
         repacker: PlaceRepacker<'_, 'tcx>,
-    ) -> impl Iterator<Item = (Option<(Region<'tcx>, Ty<'tcx>, Mutability)>, &'tcx [PlaceElem<'tcx>])> {
+    ) -> impl Iterator<
+        Item = (
+            Option<(Region<'tcx>, Ty<'tcx>, Mutability)>,
+            &'tcx [PlaceElem<'tcx>],
+        ),
+    > {
         self.projection_tys(repacker)
             .filter_map(|(ty, projs)| match ty.ty.kind() {
                 &TyKind::Ref(r, ty, m) => Some((Some((r, ty, m)), projs)),
@@ -419,8 +432,7 @@ impl<'tcx> Place<'tcx> {
         mut predicate: impl FnMut(PlaceTy<'tcx>) -> bool,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> Option<Place<'tcx>> {
-        self
-            .projection_tys(repacker)
+        self.projection_tys(repacker)
             .find(|(typ, _)| predicate(*typ))
             .map(|(_, proj)| {
                 let projection = repacker.tcx.mk_place_elems(proj);

@@ -9,8 +9,9 @@ use rustc_interface::{
 
 use crate::{rustc_interface, utils::Place};
 
-impl<'tcx> JoinSemiLattice for BorrowsDomain<'tcx> {
+impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
+        eprintln!("Joining {:?} and {:?}", self.borrows, other.borrows);
         let mut changed = false;
         for borrow in &other.borrows {
             if self.borrows.insert(borrow.clone()) {
@@ -21,11 +22,6 @@ impl<'tcx> JoinSemiLattice for BorrowsDomain<'tcx> {
             if !self.region_abstractions.contains(region_abstraction) {
                 self.region_abstractions.push(region_abstraction.clone());
                 changed = true;
-            }
-        }
-        for action in &other.actions {
-            if !self.actions.contains(action) {
-                self.actions.insert(action.clone());
             }
         }
         changed
@@ -110,16 +106,29 @@ impl<'tcx> BorrowKind<'tcx> {
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub struct BorrowsDomain<'tcx> {
+pub struct BorrowsState<'tcx> {
     pub borrows: FxHashSet<Borrow<'tcx>>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
-    pub actions: FxHashSet<String>,
 }
 
-use serde_json::{json, Value};
 use crate::utils::PlaceRepacker;
+use serde_json::{json, Value};
 
-impl<'tcx> BorrowsDomain<'tcx> {
+use super::engine::BorrowAction;
+
+impl<'tcx> BorrowsState<'tcx> {
+
+    pub fn contains_borrow(&self, borrow: &Borrow<'tcx>) -> bool {
+        self.borrows.contains(borrow)
+    }
+
+    pub fn apply_action(&mut self, action: BorrowAction<'_, 'tcx>) {
+        match action {
+            BorrowAction::AddBorrow(borrow) => self.borrows.insert(borrow.into_owned()),
+            BorrowAction::RemoveBorrow(borrow) => self.borrows.remove(borrow),
+        };
+    }
+
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
         json!({
             "borrows": self.borrows.iter().map(|borrow| {
@@ -137,19 +146,22 @@ impl<'tcx> BorrowsDomain<'tcx> {
                     "assigned_place_before": format!("{:?}", borrow.assigned_place_before)
                 })
             }).collect::<Vec<_>>(),
-            "actions": self.actions.iter().collect::<Vec<_>>()
         })
     }
 }
 
-
-impl<'tcx> BorrowsDomain<'tcx> {
+impl<'tcx> BorrowsState<'tcx> {
     pub fn new() -> Self {
         Self {
             borrows: FxHashSet::default(),
             region_abstractions: vec![],
-            actions: FxHashSet::default(),
         }
+    }
+
+    pub fn live_borrows(&self) -> impl Iterator<Item = &Borrow<'tcx>> {
+        self.borrows.iter().filter(|borrow| {
+            borrow.assigned_place_before.is_none() && borrow.borrowed_place_before.is_none()
+        })
     }
 
     pub fn reference_targeting_place(
@@ -157,14 +169,9 @@ impl<'tcx> BorrowsDomain<'tcx> {
         place: Place<'tcx>,
         borrow_set: &BorrowSet<'tcx>,
     ) -> Option<Place<'tcx>> {
-        self.borrows
-            .iter()
+        self.live_borrows()
             .find(|borrow| borrow.borrowed_place(borrow_set) == place)
             .map(|borrow| borrow.assigned_place(borrow_set))
-    }
-
-    pub fn log_action(&mut self, action: String) {
-        self.actions.insert(action);
     }
 
     pub fn add_region_abstraction(&mut self, abstraction: RegionAbstraction<'tcx>) {

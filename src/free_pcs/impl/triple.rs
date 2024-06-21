@@ -10,7 +10,9 @@ use rustc_interface::middle::mir::{
 };
 
 use crate::{
-    free_pcs::CapabilityKind, rustc_interface, utils::{Place, PlaceRepacker}
+    free_pcs::CapabilityKind,
+    rustc_interface,
+    utils::{Place, PlaceRepacker},
 };
 
 use super::CapabilitySummary;
@@ -41,10 +43,7 @@ pub(crate) enum Condition<'tcx> {
 }
 
 impl<'tcx> Condition<'tcx> {
-    fn capability(
-        place: Place<'tcx>,
-        kind: CapabilityKind,
-    ) -> Condition<'tcx> {
+    fn capability(place: Place<'tcx>, kind: CapabilityKind) -> Condition<'tcx> {
         Condition::Capability(place, kind)
     }
 }
@@ -107,7 +106,7 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
                 let place: Place<'tcx> = place.into();
                 Triple {
                     pre: Condition::Capability(place, CapabilityKind::Exclusive),
-                    post: Condition::Unchanged,
+                    post: Condition::Unchanged
                 }
             }
             Operand::Move(place) => Triple {
@@ -141,10 +140,7 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
             | &CopyForDeref(place) => self.triple(
                 Stage::Before,
                 Triple {
-                    pre: Condition::capability(
-                        place.into(),
-                        CapabilityKind::Exclusive,
-                    ),
+                    pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
                     post: Condition::Unchanged,
                 },
             ),
@@ -158,45 +154,25 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
             &Assign(box (place, ref rvalue)) => {
                 let place: Place<'_> = place.into();
                 Triple {
-                pre: Condition::capability(
-                    place,
-                    CapabilityKind::Exclusive,
-                ),
-                post: Condition::capability(
-                    place,
-                    CapabilityKind::Exclusive,
-                ),
-            }},
+                    pre: Condition::capability(place, CapabilityKind::Exclusive),
+                    post: Condition::capability(place, CapabilityKind::Exclusive),
+                }
+            }
             &FakeRead(box (_, place)) => Triple {
-                pre: Condition::capability(
-                    place.into(),
-                    CapabilityKind::Exclusive,
-                ),
+                pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
                 post: Condition::Unchanged,
             },
             &PlaceMention(box place) => Triple {
-                pre: Condition::capability(
-                    place.into(),
-                    CapabilityKind::Write,
-                ),
+                pre: Condition::capability(place.into(), CapabilityKind::Write),
                 post: Condition::Unchanged,
             },
             &SetDiscriminant { box place, .. } => Triple {
-                pre: Condition::capability(
-                    place.into(),
-                    CapabilityKind::Exclusive,
-                ),
+                pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
                 post: Condition::Unchanged,
             },
             &Deinit(box place) => Triple {
-                pre: Condition::capability(
-                    place.into(),
-                    CapabilityKind::Exclusive,
-                ),
-                post: Condition::capability(
-                    place.into(),
-                    CapabilityKind::Write,
-                ),
+                pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
+                post: Condition::capability(place.into(), CapabilityKind::Write),
             },
             &StorageLive(local) => Triple {
                 pre: Condition::Unalloc(local),
@@ -207,10 +183,7 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
                 post: Condition::Unalloc(local),
             },
             &Retag(_, box place) => Triple {
-                pre: Condition::capability(
-                    place.into(),
-                    CapabilityKind::Exclusive,
-                ),
+                pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
                 post: Condition::Unchanged,
             },
             AscribeUserType(..) | Coverage(..) | Intrinsic(..) | ConstEvalCounter | Nop => return,

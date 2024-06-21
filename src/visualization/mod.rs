@@ -7,7 +7,7 @@
 pub mod mir_graph;
 
 use crate::{
-    borrows::domain::{Borrow, BorrowKind, BorrowsDomain, RegionAbstraction},
+    borrows::domain::{Borrow, BorrowKind, BorrowsState, RegionAbstraction},
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker},
@@ -158,7 +158,7 @@ pub fn get_source_name_from_place<'tcx>(
 struct GraphConstructor<'a, 'tcx> {
     summary: &'a CapabilitySummary<'tcx>,
     repacker: Rc<PlaceRepacker<'a, 'tcx>>,
-    borrows_domain: &'a BorrowsDomain<'tcx>,
+    borrows_domain: &'a BorrowsState<'tcx>,
     borrow_set: &'a BorrowSet<'tcx>,
     inserted_nodes: Vec<(Place<'tcx>, Option<Location>)>,
     nodes: Vec<GraphNode>,
@@ -170,7 +170,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
     fn new(
         summary: &'a CapabilitySummary<'tcx>,
         repacker: Rc<PlaceRepacker<'a, 'tcx>>,
-        borrows_domain: &'a BorrowsDomain<'tcx>,
+        borrows_domain: &'a BorrowsState<'tcx>,
         borrow_set: &'a BorrowSet<'tcx>,
     ) -> Self {
         Self {
@@ -438,7 +438,7 @@ pub fn generate_dot_graph<'a, 'tcx: 'a>(
     location: Location,
     repacker: Rc<PlaceRepacker<'a, 'tcx>>,
     summary: &CapabilitySummary<'tcx>,
-    borrows_domain: &BorrowsDomain<'tcx>,
+    borrows_domain: &BorrowsState<'tcx>,
     borrow_set: &BorrowSet<'tcx>,
     input_facts: &PoloniusInput,
     file_path: &str,

@@ -7,6 +7,7 @@
 #![allow(unused)]
 #![feature(rustc_private)]
 #![feature(box_patterns, hash_extract_if, extract_if)]
+#![feature(if_let_guard)]
 
 pub mod borrows;
 pub mod combined_pcs;
@@ -18,7 +19,7 @@ pub mod visualization;
 
 use std::{fs::create_dir_all, rc::Rc};
 
-use borrows::domain::BorrowsDomain;
+use borrows::{domain::BorrowsState, engine::BorrowsDomain};
 use combined_pcs::{BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary};
 use free_pcs::HasExtra;
 use rustc_interface::{
@@ -92,7 +93,7 @@ pub fn run_free_pcs<'mir, 'tcx>(
                     statement.location,
                     Rc::new(rp),
                     &statement.state,
-                    &statement.extra,
+                    &statement.extra.end_state,
                     &mir.borrow_set,
                     &input_facts,
                     &file_path,

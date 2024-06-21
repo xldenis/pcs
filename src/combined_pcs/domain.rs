@@ -16,13 +16,13 @@ use rustc_interface::{
 };
 
 use crate::{
-    free_pcs::{
+    borrows::engine::BorrowsDomain, free_pcs::{
         CapabilityLocal, CapabilityProjections, FreePlaceCapabilitySummary, HasFpcs, RepackOp
     }, rustc_interface, utils::{Place, PlaceRepacker}
 };
 
 use super::{PcsContext, PcsEngine};
-use crate::borrows::domain::BorrowsDomain;
+use crate::borrows::domain::BorrowsState;
 
 #[derive(Clone)]
 pub struct PlaceCapabilitySummary<'a, 'tcx> {

@@ -7,20 +7,23 @@
 use std::{cell::Cell, rc::Rc};
 
 use rustc_interface::{
-    borrowck::{borrow_set::BorrowSet, consumers::{self, RegionInferenceContext, LocationTable, PoloniusInput, PoloniusOutput}},
+    borrowck::{
+        borrow_set::BorrowSet,
+        consumers::{self, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext},
+    },
     dataflow::{Analysis, AnalysisDomain},
     index::{Idx, IndexVec},
     middle::{
         mir::{
-            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Local, Location, Promoted,
-            Statement, Terminator, TerminatorEdges, RETURN_PLACE, START_BLOCK,
+            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Local, Location, Promoted, Rvalue,
+            Statement, StatementKind, Terminator, TerminatorEdges, RETURN_PLACE, START_BLOCK,
         },
         ty::TyCtxt,
     },
 };
 
 use crate::{
-    borrows::{domain::BorrowsDomain, engine::BorrowsEngine},
+    borrows::{domain::BorrowsState, engine::BorrowsEngine},
     free_pcs::{engine::FpcsEngine, CapabilityKind, CapabilityLocal, FreePlaceCapabilitySummary},
     rustc_interface,
     utils::PlaceRepacker,
@@ -38,7 +41,7 @@ pub struct BodyWithBorrowckFacts<'tcx> {
     pub output_facts: Option<Rc<PoloniusOutput>>,
 }
 
-impl <'tcx> From<consumers::BodyWithBorrowckFacts<'tcx>> for BodyWithBorrowckFacts<'tcx> {
+impl<'tcx> From<consumers::BodyWithBorrowckFacts<'tcx>> for BodyWithBorrowckFacts<'tcx> {
     fn from(value: consumers::BodyWithBorrowckFacts<'tcx>) -> Self {
         Self {
             body: value.body,
@@ -116,6 +119,17 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
+        match &statement.kind {
+            StatementKind::Assign(box (place, Rvalue::Use(operand))) if let Some(place) = operand.place() => {
+                if let Some(place) = state.borrows.end_state.reference_targeting_place(place.into(), self.cgx.mir.borrow_set.as_ref()) {
+                    if let CapabilityLocal::Allocated(cap) = &mut state.fpcs.after[place.local] {
+                        let related = cap.find_all_related(place, Some(crate::utils::PlaceOrdering::Suffix));
+                        cap.collapse(related.get_from(), place, self.cgx.rp);
+                    }
+                }
+            }
+            _ => {}
+        }
         self.borrows
             .apply_before_statement_effect(&mut state.borrows, statement, location);
         self.fpcs
