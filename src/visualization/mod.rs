@@ -7,7 +7,10 @@
 pub mod mir_graph;
 
 use crate::{
-    borrows::domain::{Borrow, BorrowKind, BorrowsDomain, RegionAbstraction}, free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary}, rustc_interface, utils::{Place, PlaceRepacker}
+    borrows::domain::{Borrow, BorrowKind, BorrowsDomain, RegionAbstraction},
+    free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
+    rustc_interface,
+    utils::{Place, PlaceRepacker},
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -119,11 +122,12 @@ pub fn get_source_name_from_local(local: &Local, debug_info: &[VarDebugInfo]) ->
 }
 
 pub fn get_source_name_from_place<'tcx>(
-    place: &Place<'tcx>,
+    local: Local,
+    projection: &[PlaceElem<'tcx>],
     debug_info: &[VarDebugInfo],
 ) -> Option<String> {
-    get_source_name_from_local(&place.local, debug_info).map(|mut name| {
-        let mut iter = place.projection.iter().peekable();
+    get_source_name_from_local(&local, debug_info).map(|mut name| {
+        let mut iter = projection.iter().peekable();
         while let Some(elem) = iter.next() {
             match elem {
                 mir::ProjectionElem::Deref => {
@@ -217,8 +221,12 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
             return node_id;
         }
         let id = self.node_id(place, location);
-        let label = get_source_name_from_place(&place, &self.repacker.body().var_debug_info)
-            .unwrap_or_else(|| format!("{:?}: {}", place, place.ty(*self.repacker).ty));
+        let label = get_source_name_from_place(
+            place.local,
+            place.projection,
+            &self.repacker.body().var_debug_info,
+        )
+        .unwrap_or_else(|| format!("{:?}: {}", place, place.ty(*self.repacker).ty));
         let node = GraphNode {
             id,
             node_type: NodeType::PlaceNode {

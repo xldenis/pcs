@@ -1,7 +1,10 @@
-use serde_derive::Serialize;
 use crate::{
-    borrows::domain::{Borrow, BorrowsDomain, RegionAbstraction}, free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary}, rustc_interface, utils::{Place, PlaceRepacker}
+    borrows::domain::{Borrow, BorrowsDomain, RegionAbstraction},
+    free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
+    rustc_interface,
+    utils::{Place, PlaceRepacker},
 };
+use serde_derive::Serialize;
 use std::{
     collections::{HashSet, VecDeque},
     fs::File,
@@ -22,8 +25,8 @@ use rustc_interface::{
     index::IndexVec,
     middle::{
         mir::{
-            self, Body, Local, Location, PlaceElem, Promoted, TerminatorKind, UnwindAction,
-            RETURN_PLACE, Statement, VarDebugInfo, Operand, Rvalue
+            self, BinOp, Body, Local, Location, Operand, PlaceElem, Promoted, Rvalue, Statement,
+            TerminatorKind, UnwindAction, VarDebugInfo, RETURN_PLACE,
         },
         ty::{self, GenericArgsRef, ParamEnv, RegionVid, TyCtxt},
     },
@@ -50,12 +53,40 @@ struct MirEdge {
     label: String,
 }
 
+fn format_bin_op(op: &BinOp) -> String {
+    match op {
+        BinOp::Add => "+".to_string(),
+        BinOp::Sub => "-".to_string(),
+        BinOp::Mul => "*".to_string(),
+        BinOp::Div => "/".to_string(),
+        BinOp::Rem => "%".to_string(),
+        BinOp::AddUnchecked => todo!(),
+        BinOp::SubUnchecked => todo!(),
+        BinOp::MulUnchecked => todo!(),
+        BinOp::BitXor => todo!(),
+        BinOp::BitAnd => todo!(),
+        BinOp::BitOr => todo!(),
+        BinOp::Shl => todo!(),
+        BinOp::ShlUnchecked => todo!(),
+        BinOp::Shr => todo!(),
+        BinOp::ShrUnchecked => todo!(),
+        BinOp::Eq => "==".to_string(),
+        BinOp::Lt => "<".to_string(),
+        BinOp::Le => "<=".to_string(),
+        BinOp::Ne => todo!(),
+        BinOp::Ge => todo!(),
+        BinOp::Gt => todo!(),
+        BinOp::Offset => todo!(),
+    }
+}
+
 fn format_local(local: &Local, debug_info: &[VarDebugInfo]) -> String {
     get_source_name_from_local(local, debug_info).unwrap_or_else(|| format!("{:?}", local))
 }
 
 fn format_place<'tcx>(place: &mir::Place<'tcx>, debug_info: &[VarDebugInfo]) -> String {
-    get_source_name_from_place(&(*place).into(), debug_info).unwrap_or_else(|| format!("{:?}", place))
+    get_source_name_from_place(place.local, &place.projection, debug_info)
+        .unwrap_or_else(|| format!("{:?}", place))
 }
 
 fn format_operand<'tcx>(operand: &Operand<'tcx>, debug_info: &[VarDebugInfo]) -> String {
@@ -74,7 +105,7 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
             let kind = match kind {
                 mir::BorrowKind::Shared => "",
                 mir::BorrowKind::Shallow => "",
-                mir::BorrowKind::Mut { .. } => "mut"
+                mir::BorrowKind::Mut { .. } => "mut",
             };
             format!("&{} {}", kind, format_place(place, debug_info))
         }
@@ -82,8 +113,14 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
         Rvalue::AddressOf(_, _) => todo!(),
         Rvalue::Len(_) => todo!(),
         Rvalue::Cast(_, _, _) => todo!(),
-        Rvalue::BinaryOp(_, _) => todo!(),
-        Rvalue::CheckedBinaryOp(_, _) => todo!(),
+        Rvalue::BinaryOp(op, box (lhs, rhs)) | Rvalue::CheckedBinaryOp(op, box (lhs, rhs)) => {
+            format!(
+                "{} {} {}",
+                format_operand(lhs, debug_info),
+                format_bin_op(op),
+                format_operand(rhs, debug_info)
+            )
+        }
         Rvalue::NullaryOp(_, _) => todo!(),
         Rvalue::UnaryOp(_, _) => todo!(),
         Rvalue::Discriminant(_) => todo!(),
@@ -96,13 +133,26 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
 fn format_stmt<'tcx>(stmt: &Statement<'tcx>, debug_info: &[VarDebugInfo]) -> String {
     match &stmt.kind {
         mir::StatementKind::Assign(box (place, rvalue)) => {
-            format!("{} = {}", format_place(place, debug_info), format_rvalue(rvalue, debug_info))
+            format!(
+                "{} = {}",
+                format_place(place, debug_info),
+                format_rvalue(rvalue, debug_info)
+            )
         }
-        mir::StatementKind::FakeRead(box (_, place)) => format!("FakeRead({})", format_place(place, debug_info)),
-        mir::StatementKind::SetDiscriminant { place, variant_index } => todo!(),
+        mir::StatementKind::FakeRead(box (_, place)) => {
+            format!("FakeRead({})", format_place(place, debug_info))
+        }
+        mir::StatementKind::SetDiscriminant {
+            place,
+            variant_index,
+        } => todo!(),
         mir::StatementKind::Deinit(_) => todo!(),
-        mir::StatementKind::StorageLive(local) => format!("StorageLive({})", format_local(local, debug_info)),
-        mir::StatementKind::StorageDead(local) => format!("StorageDead({})", format_local(local, debug_info)),
+        mir::StatementKind::StorageLive(local) => {
+            format!("StorageLive({})", format_local(local, debug_info))
+        }
+        mir::StatementKind::StorageDead(local) => {
+            format!("StorageDead({})", format_local(local, debug_info))
+        }
         mir::StatementKind::Retag(_, _) => todo!(),
         mir::StatementKind::PlaceMention(_) => todo!(),
         mir::StatementKind::AscribeUserType(_, _) => todo!(),
@@ -193,11 +243,13 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
                 call_source,
                 fn_span,
             } => {
-                edges.push(MirEdge {
-                    source: format!("{:?}", bb),
-                    target: format!("{:?}", target.unwrap()),
-                    label: "call".to_string(),
-                });
+                if let Some(target) = target {
+                    edges.push(MirEdge {
+                        source: format!("{:?}", bb),
+                        target: format!("{:?}", target),
+                        label: "call".to_string(),
+                    });
+                }
             }
             TerminatorKind::Assert {
                 cond,

@@ -1,10 +1,7 @@
 use std::rc::Rc;
 
 use rustc_interface::{
-    borrowck::{
-        borrow_set::BorrowSet,
-        consumers::BorrowIndex
-    },
+    borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
     data_structures::fx::{FxHashMap, FxHashSet},
     dataflow::{AnalysisDomain, JoinSemiLattice},
     middle::mir::{self, Location},
@@ -84,7 +81,7 @@ pub enum BorrowKind<'tcx> {
     PCS {
         borrowed_place: Place<'tcx>,
         assigned_place: Place<'tcx>,
-    }
+    },
 }
 
 impl<'tcx> BorrowKind<'tcx> {
@@ -107,7 +104,7 @@ impl<'tcx> BorrowKind<'tcx> {
 pub struct BorrowsDomain<'tcx> {
     pub live_borrows: FxHashSet<Borrow<'tcx>>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
-    pub actions: FxHashSet<String>
+    pub actions: FxHashSet<String>,
 }
 
 impl<'tcx> BorrowsDomain<'tcx> {
@@ -117,6 +114,17 @@ impl<'tcx> BorrowsDomain<'tcx> {
             region_abstractions: vec![],
             actions: FxHashSet::default(),
         }
+    }
+
+    pub fn reference_targeting_place(
+        &self,
+        place: Place<'tcx>,
+        borrow_set: &BorrowSet<'tcx>,
+    ) -> Option<Place<'tcx>> {
+        self.live_borrows
+            .iter()
+            .find(|borrow| borrow.borrowed_place(borrow_set) == place)
+            .map(|borrow| borrow.assigned_place(borrow_set))
     }
 
     pub fn log_action(&mut self, action: String) {
