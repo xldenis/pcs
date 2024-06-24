@@ -200,7 +200,11 @@ function BasicBlockTable({
         </tr>
         {data.stmts.map((stmt, i) => (
           <tr
-            className={i === currentPoint.stmt && data.block === currentPoint.block ? "highlight" : ""}
+            className={
+              i === currentPoint.stmt && data.block === currentPoint.block
+                ? "highlight"
+                : ""
+            }
             key={i}
             onClick={() => setCurrentPoint({ block: data.block, stmt: i })}
           >
@@ -279,6 +283,41 @@ async function main() {
         })();
       }
     }, [selectedFunction]);
+
+    useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (
+          event.key === "ArrowUp" ||
+          event.key === "ArrowDown" ||
+          event.key === "j" ||
+          event.key === "k"
+        ) {
+          event.preventDefault(); // Prevent scrolling
+          setCurrentPoint((prevPoint) => {
+            const currentNode = nodes.find(
+              (node) => node.data.block === prevPoint.block
+            );
+            if (!currentNode) return prevPoint;
+
+            const stmtCount = currentNode.data.stmts.length;
+            let newStmt = prevPoint.stmt;
+
+            if (event.key === "ArrowUp" || event.key === "k") {
+              newStmt = (newStmt - 1 + stmtCount) % stmtCount;
+            } else if (event.key === "ArrowDown" || event.key === "j") {
+              newStmt = (newStmt + 1) % stmtCount;
+            }
+
+            return { ...prevPoint, stmt: newStmt };
+          });
+        }
+      };
+
+      window.addEventListener("keydown", handleKeyDown);
+      return () => {
+        window.removeEventListener("keydown", handleKeyDown);
+      };
+    }, [nodes]);
 
     return (
       <div>
