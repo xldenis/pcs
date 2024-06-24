@@ -1,19 +1,35 @@
-let currentRow;
+import * as d3 from "d3";
+import * as dagre from "@dagrejs/dagre";
+import * as Viz from "@viz-js/viz";
+
+type CurrentPoint = {
+  block: number;
+  stmt: number;
+};
+
+let currentPoint: CurrentPoint = {
+  block: 0,
+  stmt: 0,
+};
 let selectedFunction = "";
 
-async function fetchJsonFile(filePath) {
+async function fetchJsonFile(filePath: string) {
   const response = await fetch(filePath);
   return await response.json();
 }
 
-async function fetchDotFile(filePath) {
+async function fetchDotFile(filePath: string) {
   const response = await fetch(filePath);
   return await response.text();
 }
 
 async function populateFunctionDropdown() {
-  const functions = await fetchJsonFile("data/functions.json");
+  const functions: string[] = await fetchJsonFile("data/functions.json");
   const select = document.getElementById("function-select");
+  if (!select) {
+    console.error("Function select element not found");
+    return;
+  }
   functions.forEach((func) => {
     const option = document.createElement("option");
     option.value = func;
@@ -21,7 +37,7 @@ async function populateFunctionDropdown() {
     select.appendChild(option);
   });
 
-  select.addEventListener("change", (event) => {
+  select.addEventListener("change", (event: any) => {
     selectedFunction = event.target.value;
     renderGraph();
   });
@@ -37,7 +53,10 @@ async function renderGraph() {
   if (!selectedFunction) return;
 
   const graphFilePath = `data/${selectedFunction}/mir.json`;
-  const graph = await fetchJsonFile(graphFilePath);
+  const graph: {
+    nodes: { id: string; label: string }[];
+    edges: { source: string; target: string; label: string }[];
+  } = await fetchJsonFile(graphFilePath);
 
   const g = new dagre.graphlib.Graph()
     .setGraph({})
@@ -53,7 +72,12 @@ async function renderGraph() {
 
   dagre.layout(g);
 
-  document.getElementById("graph").innerHTML = "";
+  const graphElement = document.getElementById("graph");
+  if (!graphElement) {
+    console.error("Graph element not found");
+    return;
+  }
+  graphElement.innerHTML = "";
   const svg = d3.select("#graph").append("svg");
 
   const node = svg
@@ -63,7 +87,7 @@ async function renderGraph() {
     .enter()
     .append("g")
     .attr("class", "node")
-    .attr("transform", (d) => {
+    .attr("transform", (d: string) => {
       const node = g.node(d);
       return `translate(${node.x - node.width / 2},${node.y - node.height / 2})`;
     });
@@ -73,11 +97,14 @@ async function renderGraph() {
     .attr("width", 200)
     .attr("height", 600)
     .attr("class", "foreign-object")
-    .html((d) => g.node(d).label);
+    .html((d: string) => g.node(d).label);
 
   // Compute the actual height and width of each HTML table and update the corresponding node in dagre
   document.querySelectorAll("table[data-bb]").forEach((table) => {
     const bb = table.getAttribute("data-bb");
+    if (bb === null) {
+      return;
+    }
     const rect = table.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
@@ -93,18 +120,15 @@ async function renderGraph() {
 
   // Calculate width and height of the complete graph
   const graphWidth =
-    Math.max(...g.nodes().map((d) => g.node(d).x + g.node(d).width / 2)) +
-    20;
+    Math.max(...g.nodes().map((d) => g.node(d).x + g.node(d).width / 2)) + 20;
   const graphHeight =
-    Math.max(
-      ...g.nodes().map((d) => g.node(d).y + g.node(d).height / 2)
-    ) + 20;
+    Math.max(...g.nodes().map((d) => g.node(d).y + g.node(d).height / 2)) + 20;
 
   // Update SVG dimensions based on calculated values
   svg.attr("width", graphWidth).attr("height", graphHeight);
 
   // Transform the nodes to their new positions
-  node.attr("transform", (d) => {
+  node.attr("transform", (d: any) => {
     const node = g.node(d);
     return `translate(${node.x - node.width / 2},${node.y - node.height / 2})`;
   });
@@ -117,8 +141,8 @@ async function renderGraph() {
     .enter()
     .append("path")
     .attr("class", "link")
-    .attr("id", (d, i) => `link${i}`)
-    .attr("d", (d) => {
+    .attr("id", (d: any, i: number) => `link${i}`)
+    .attr("d", (d: any) => {
       const source = g.node(d.v);
       const target = g.node(d.w);
       const sourceX = source.x;
@@ -137,14 +161,14 @@ async function renderGraph() {
     .attr("class", "link-label")
     .attr("dy", -5)
     .append("textPath")
-    .attr("xlink:href", (d, i) => `#link${i}`)
+    .attr("xlink:href", (d: any, i: number) => `#link${i}`)
     .attr("startOffset", "50%")
-    .text((d) => g.edge(d).label);
+    .text((d: any) => g.edge(d).label);
 
-  svg.on("click", async function (event) {
+  svg.on("click", async function (event: any) {
     const row = event.target.closest("tr");
     if (row) {
-      highlightRow(row);
+      selectRow(row);
     }
   });
 
@@ -153,54 +177,59 @@ async function renderGraph() {
     "tr[data-bb='0'][data-statement='0']"
   );
   if (initialRow) {
-    highlightRow(initialRow);
+    selectRow(initialRow);
   }
-
-  document.addEventListener("keydown", function (event) {
-    if (
-      event.key === "ArrowUp" ||
-      event.key === "ArrowDown" ||
-      event.key === "k" ||
-      event.key === "j"
-    ) {
-      event.preventDefault();
-      if (currentRow) {
-        if (
-          (event.key === "ArrowUp" || event.key === "k") &&
-          currentRow.previousElementSibling
-        ) {
-          highlightRow(currentRow.previousElementSibling);
-        } else if (
-          (event.key === "ArrowDown" || event.key === "j") &&
-          currentRow.nextElementSibling
-        ) {
-          highlightRow(currentRow.nextElementSibling);
-        }
-      }
-    }
-  });
 }
 
+document.addEventListener("keydown", function (event) {
+  if (
+    event.key === "ArrowUp" ||
+    event.key === "ArrowDown" ||
+    event.key === "k" ||
+    event.key === "j"
+  ) {
+    event.preventDefault();
+    if (currentPoint) {
+      let newStmt;
+      if (event.key === "ArrowUp" || event.key === "k") {
+        newStmt = currentPoint.stmt - 1;
+      } else {
+        newStmt = currentPoint.stmt + 1;
+      }
+      const row = document.querySelector(
+        `tr[data-bb='${currentPoint.block}'][data-statement='${newStmt}']`
+      );
+      if (row) {
+        selectRow(row);
+      }
+    }
+  }
+});
+
 // Highlights a row and renders the corresponding DOT graph
-async function highlightRow(row) {
+async function selectRow(row: Element) {
   const statement = row.getAttribute("data-statement");
   const bb = row.getAttribute("data-bb");
+  currentPoint.stmt = parseInt(statement);
+  currentPoint.block = parseInt(bb);
   console.log("Statement:", statement, "BB:", bb);
 
   d3.selectAll(".highlight").classed("highlight", false);
 
   d3.select(row).classed("highlight", true);
-  currentRow = row;
 
   const dotFilePath = `data/${selectedFunction}/block_${bb}_stmt_${statement}.dot`;
 
   try {
     const dotData = await fetchDotFile(dotFilePath);
+    const dotGraph = document.getElementById("dot-graph");
+    if (!dotGraph) {
+      console.error("Dot graph element not found");
+      return;
+    }
     Viz.instance().then(function (viz) {
-      document.getElementById("dot-graph").innerHTML = "";
-      document
-        .getElementById("dot-graph")
-        .appendChild(viz.renderSVGElement(dotData));
+      dotGraph.innerHTML = "";
+      dotGraph.appendChild(viz.renderSVGElement(dotData));
     });
   } catch (error) {
     console.error("Error fetching or rendering DOT file:", error);

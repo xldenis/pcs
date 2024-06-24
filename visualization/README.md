@@ -1,14 +1,8 @@
-# D3.js Directed Control Flow Graph Server
+# Prerequesites:
 
-This project contains a simple server for serving a D3.js Directed Control Flow Graph visualization.
+1. Install `npm`
+2. Run `npm install`
 
-## Prerequisites
+# To run:
 
-Before you begin, ensure you have met the following requirements:
-
-* You have installed [Deno](https://deno.land/#installation), which is required to run this server.
-
-## Running the Server
-
-Run `./serve`
-
+`./serve`

@@ -1,0 +1,29 @@
+{
+  "name": "visualization",
+  "version": "1.0.0",
+  "description": "This project contains a simple server for serving a D3.js Directed Control Flow Graph visualization.",
+  "main": "index.js",
+  "scripts": {
+    "serve": "http-server -c-1",
+    "watch": "nodemon --watch src --ext ts --exec \"npm run build\"",
+    "build": "webpack --mode development",
+    "dev": "concurrently \"npm run serve\" \"npm run watch\""
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/d3": "^7.4.3",
+    "concurrently": "^8.2.2",
+    "http-server": "^14.1.1",
+    "nodemon": "^3.1.4",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.5.2",
+    "webpack": "^5.92.1",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "github:dagrejs/dagre",
+    "@viz-js/viz": "^3.6.0",
+    "d3": "^7.9.0"
+  }
+}
