@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "serve": "http-server -c-1",
-    "watch": "nodemon --watch src --ext ts --exec \"npm run build\"",
+    "watch": "nodemon --watch src --ext tsx --exec \"npm run build\"",
     "build": "webpack --mode development",
     "dev": "concurrently \"npm run serve\" \"npm run watch\""
   },
@@ -13,9 +13,13 @@
   "license": "ISC",
   "devDependencies": {
     "@types/d3": "^7.4.3",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
     "concurrently": "^8.2.2",
+    "css-loader": "^7.1.2",
     "http-server": "^14.1.1",
     "nodemon": "^3.1.4",
+    "style-loader": "^4.0.0",
     "ts-loader": "^9.5.1",
     "typescript": "^5.5.2",
     "webpack": "^5.92.1",
@@ -24,6 +28,9 @@
   "dependencies": {
     "@dagrejs/dagre": "github:dagrejs/dagre",
     "@viz-js/viz": "^3.6.0",
-    "d3": "^7.9.0"
+    "d3": "^7.9.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "reactflow": "^11.11.4"
   }
 }

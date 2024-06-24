@@ -1,6 +1,6 @@
 {
   "watch": ["src"],
-  "ext": "ts",
+  "ext": "tsx",
   "ignore": ["src/**/*.spec.ts"],
   "exec": "npm run build"
 }
