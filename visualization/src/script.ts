@@ -12,6 +12,7 @@ let currentPoint: CurrentPoint = {
   stmt: 0,
 };
 let selectedFunction = "";
+let selectedPath: number[] = [];
 
 async function fetchJsonFile(filePath: string) {
   const response = await fetch(filePath);
@@ -21,6 +22,22 @@ async function fetchJsonFile(filePath: string) {
 async function fetchDotFile(filePath: string) {
   const response = await fetch(filePath);
   return await response.text();
+}
+
+async function populatePathsDropDown(functionName: string) {
+  const paths: number[][] = await fetchJsonFile(`data/${functionName}/paths.json`);
+  const select = document.getElementById("path-select");
+  if (!select) {
+    console.error("Path select element not found");
+    return;
+  }
+  select.innerHTML = "";
+  paths.forEach((path: number[]) => {
+    const option = document.createElement("option");
+    option.value = path.join(",");
+    option.textContent = path.map(bb => `bb${bb}`).join(" -> ");
+    select?.appendChild(option);
+  });
 }
 
 async function populateFunctionDropdown() {
@@ -40,12 +57,14 @@ async function populateFunctionDropdown() {
   select.addEventListener("change", (event: any) => {
     selectedFunction = event.target.value;
     renderGraph();
+    populatePathsDropDown(selectedFunction);
   });
 
   // Set the initial selected function and render the graph
   if (functions.length > 0) {
     selectedFunction = functions[0];
     renderGraph();
+    populatePathsDropDown(selectedFunction);
   }
 }
 

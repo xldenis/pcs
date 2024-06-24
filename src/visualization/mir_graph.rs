@@ -164,7 +164,9 @@ fn format_stmt<'tcx>(stmt: &Statement<'tcx>, debug_info: &[VarDebugInfo]) -> Str
         }
         mir::StatementKind::Retag(_, _) => todo!(),
         mir::StatementKind::PlaceMention(_) => todo!(),
-        mir::StatementKind::AscribeUserType(_, _) => todo!(),
+        mir::StatementKind::AscribeUserType(_, _) => {
+            format!("AscribeUserType(...)")
+        }
         mir::StatementKind::Coverage(_) => todo!(),
         mir::StatementKind::Intrinsic(_) => todo!(),
         mir::StatementKind::ConstEvalCounter => todo!(),
@@ -242,7 +244,13 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
                 target,
                 unwind,
                 replace,
-            } => todo!(),
+            } => {
+                edges.push(MirEdge {
+                    source: format!("{:?}", bb),
+                    target: format!("{:?}", target),
+                    label: "drop".to_string(),
+                });
+            }
             TerminatorKind::Call {
                 func,
                 args,

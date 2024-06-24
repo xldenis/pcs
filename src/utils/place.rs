@@ -30,7 +30,7 @@ pub struct Place<'tcx>(
 );
 
 impl<'tcx> Place<'tcx> {
-    pub(crate) fn new(local: Local, projection: &'tcx [PlaceElem<'tcx>]) -> Self {
+    pub fn new(local: Local, projection: &'tcx [PlaceElem<'tcx>]) -> Self {
         Self(PlaceRef { local, projection }, DebugInfo::new_static())
     }
 
