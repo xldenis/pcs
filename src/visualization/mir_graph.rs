@@ -43,7 +43,9 @@ struct MirGraph {
 #[derive(Serialize)]
 struct MirNode {
     id: String,
-    label: String,
+    block: usize,
+    stmts: Vec<String>,
+    terminator: String,
 }
 
 #[derive(Serialize)]
@@ -179,38 +181,18 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
     let mut edges = Vec::new();
 
     for (bb, data) in body.basic_blocks.iter_enumerated() {
-        let mut label = String::new();
-        label.push_str(
-            &format!(
-                r#"<table data-bb="bb{}" border="1" cellspacing="0" cellpadding="4" style="border-collapse: collapse;">"#,
-                bb.as_usize()
-            )
-        );
-        label.push_str(&format!(
-            "<tr><td>(on start)</td><td><b>BB{}</b></td></tr>",
-            bb.as_usize()
-        ));
+        let stmts = data
+            .statements
+            .iter()
+            .map(|stmt| format_stmt(stmt, &body.var_debug_info));
 
-        for (i, stmt) in data.statements.iter().enumerate() {
-            label.push_str(&format!(
-                "<tr data-bb=\"{}\" data-statement=\"{}\"><td>{}</td> <td><code>{}</code></td></tr>",
-                bb.as_usize(),
-                i,
-                i,
-                format_stmt(stmt, &body.var_debug_info)
-            ));
-        }
-
-        label.push_str(&format!(
-            "<tr><td>T</td> <td>{:?}</td></tr>",
-            data.terminator().kind
-        ));
-        label.push_str("<tr><td>(on end)</td></tr>");
-        label.push_str("</table>");
+        let terminator = format!("{:?}", data.terminator().kind);
 
         nodes.push(MirNode {
             id: format!("{:?}", bb),
-            label,
+            block: bb.as_usize(),
+            stmts: stmts.collect(),
+            terminator,
         });
 
         match &data.terminator().kind {
