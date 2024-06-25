@@ -11,7 +11,6 @@ use crate::{rustc_interface, utils::Place};
 
 impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        eprintln!("Joining {:?} and {:?}", self.borrows, other.borrows);
         let mut changed = false;
         for borrow in &other.borrows {
             if self.borrows.insert(borrow.clone()) {

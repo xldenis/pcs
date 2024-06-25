@@ -88,7 +88,6 @@ pub fn run_free_pcs<'mir, 'tcx>(
                     block.index(),
                     statement_index
                 );
-                eprintln!("{}", file_path);
                 generate_dot_graph(
                     statement.location,
                     Rc::new(rp),

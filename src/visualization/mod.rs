@@ -440,7 +440,6 @@ pub fn generate_dot_graph<'a, 'tcx: 'a>(
     input_facts: &PoloniusInput,
     file_path: &str,
 ) -> io::Result<()> {
-    eprintln!("{:?}", repacker.body().var_debug_info);
     let constructor = GraphConstructor::new(summary, repacker, borrows_domain, borrow_set);
     let graph = constructor.construct_graph();
     let mut drawer = GraphDrawer::new(file_path);

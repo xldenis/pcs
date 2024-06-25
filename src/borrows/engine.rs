@@ -160,7 +160,6 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         if sup == sub {
             true
         } else {
-            // eprintln!("Checking outlives {:?} {:?}", sup, sub);
             self.region_inference_context
                 .outlives_constraints()
                 .any(|constraint| {

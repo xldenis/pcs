@@ -305,6 +305,7 @@ async function main() {
     const [paths, setPaths] = useState<number[][]>([]);
     const [nodes, setNodes] = useState([]);
     const [edges, setEdges] = useState([]);
+    const [showPathBlocksOnly, setShowPathBlocksOnly] = useState(false);
 
     const fetchDotFile = async (filePath: string) => {
       const response = await fetch(filePath);
@@ -334,7 +335,7 @@ async function main() {
 
     useEffect(() => {
       loadDotGraph();
-    }, [currentPoint]);
+    }, [currentPoint, selectedFunction]);
 
     useEffect(() => {
       if (selectedFunction) {
@@ -352,6 +353,26 @@ async function main() {
         })();
       }
     }, [selectedFunction]);
+
+    useEffect(() => {
+      if (nodes.length > 0 && edges.length > 0) {
+        const { filteredNodes, filteredEdges } = filterNodesAndEdges();
+        const { nodes: layoutedNodes } = layout(filteredNodes, filteredEdges, {
+          direction: "TB",
+        });
+
+        // Update positions of visible nodes, keep others unchanged
+        setNodes(
+          nodes.map((node) => {
+            const layoutedNode = layoutedNodes.find((n) => n.id === node.id);
+            if (layoutedNode) {
+              return { ...node, x: layoutedNode.x, y: layoutedNode.y };
+            }
+            return node;
+          })
+        );
+      }
+    }, [showPathBlocksOnly, selectedPath]);
 
     useEffect(() => {
       const fetchHeapData = async () => {
@@ -415,6 +436,31 @@ async function main() {
       };
     }, [nodes]);
 
+    const filterNodesAndEdges = () => {
+      if (!showPathBlocksOnly || paths.length === 0) {
+        return { filteredNodes: nodes, filteredEdges: edges };
+      }
+
+      const currentPath = paths[selectedPath];
+      const filteredNodes = nodes.filter((node) =>
+        currentPath.includes(node.data.block)
+      );
+      const filteredEdges = edges.filter((edge) => {
+        const sourceNode = nodes.find((n) => n.id === edge.source);
+        const targetNode = nodes.find((n) => n.id === edge.target);
+        return (
+          sourceNode &&
+          targetNode &&
+          currentPath.includes(sourceNode.data.block) &&
+          currentPath.includes(targetNode.data.block)
+        );
+      });
+
+      return { filteredNodes, filteredEdges };
+    };
+
+    const { filteredNodes, filteredEdges } = filterNodesAndEdges();
+
     return (
       <div style={{ position: "relative", minHeight: "100vh" }}>
         <div>
@@ -446,10 +492,19 @@ async function main() {
               </option>
             ))}
           </select>
+          <br />
+          <label>
+            <input
+              type="checkbox"
+              checked={showPathBlocksOnly}
+              onChange={(e) => setShowPathBlocksOnly(e.target.checked)}
+            />
+            Show path blocks only
+          </label>
         </div>
         <div className="graph-container" style={{ height: 800 }}>
           <div id="mir-graph">
-            {nodes.map((node) => (
+            {filteredNodes.map((node) => (
               <BasicBlockNode
                 key={node.id}
                 data={node.data}
@@ -462,8 +517,8 @@ async function main() {
               />
             ))}
           </div>
-          {edges.map((edge) => (
-            <Edge key={edge.id} edge={edge} nodes={nodes} />
+          {filteredEdges.map((edge) => (
+            <Edge key={edge.id} edge={edge} nodes={filteredNodes} />
           ))}
         </div>
         <SymbolicHeap heap={heapData} />
