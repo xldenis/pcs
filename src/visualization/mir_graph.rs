@@ -220,7 +220,7 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
             TerminatorKind::UnwindResume => {}
             TerminatorKind::UnwindTerminate(_) => todo!(),
             TerminatorKind::Return => {}
-            TerminatorKind::Unreachable => todo!(),
+            TerminatorKind::Unreachable => {}
             TerminatorKind::Drop {
                 place,
                 target,

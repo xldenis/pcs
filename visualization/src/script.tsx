@@ -237,11 +237,63 @@ type DagreNode<T> = {
   height: number;
 };
 
+function SymbolicHeap({ heap }: { heap: Record<string, string> }) {
+  return (
+    <table
+      style={{
+        borderCollapse: "collapse",
+        width: "300px",
+        position: "absolute",
+        top: "20px",
+        right: "20px",
+        backgroundColor: "white",
+        boxShadow: "0 0 10px rgba(0,0,0,0.1)",
+      }}
+    >
+      <thead>
+        <tr>
+          <th
+            style={{
+              border: "1px solid black",
+              padding: "8px",
+              backgroundColor: "#f2f2f2",
+            }}
+          >
+            Location
+          </th>
+          <th
+            style={{
+              border: "1px solid black",
+              padding: "8px",
+              backgroundColor: "#f2f2f2",
+            }}
+          >
+            Value
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {Object.entries(heap).map(([symbol, value]) => (
+          <tr key={symbol}>
+            <td style={{ border: "1px solid black", padding: "8px" }}>
+              <code>{symbol}</code>
+            </td>
+            <td style={{ border: "1px solid black", padding: "8px" }}>
+              <code>{value}</code>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 async function main() {
   const viz = await Viz.instance();
   const functions = await getFunctions();
 
   const App: React.FC<{}> = () => {
+    const [heapData, setHeapData] = useState<Record<string, string>>({});
     const [currentPoint, setCurrentPoint] = useState<CurrentPoint>({
       block: 0,
       stmt: 0,
@@ -302,6 +354,30 @@ async function main() {
     }, [selectedFunction]);
 
     useEffect(() => {
+      const fetchHeapData = async () => {
+        if (paths.length === 0 || selectedPath >= paths.length) return;
+
+        const currentPath = paths[selectedPath];
+        const currentBlockIndex = currentPath.indexOf(currentPoint.block);
+
+        if (currentBlockIndex === -1) return;
+
+        const pathToCurrentBlock = currentPath.slice(0, currentBlockIndex + 1);
+        const heapFilePath = `data/${selectedFunction}/path_${pathToCurrentBlock.map((block) => `bb${block}`).join("_")}_stmt_${currentPoint.stmt}.json`;
+
+        try {
+          const data = await fetchJsonFile(heapFilePath);
+          setHeapData(data);
+        } catch (error) {
+          console.error("Error fetching heap data:", error);
+          setHeapData({});
+        }
+      };
+
+      fetchHeapData();
+    }, [selectedFunction, selectedPath, currentPoint, paths]);
+
+    useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
         if (
           event.key === "ArrowUp" ||
@@ -327,6 +403,9 @@ async function main() {
 
             return { ...prevPoint, stmt: newStmt };
           });
+        } else if (event.key >= "0" && event.key <= "9") {
+          const newBlock = parseInt(event.key);
+          setCurrentPoint({ block: newBlock, stmt: 0 });
         }
       };
 
@@ -337,7 +416,7 @@ async function main() {
     }, [nodes]);
 
     return (
-      <div>
+      <div style={{ position: "relative", minHeight: "100vh" }}>
         <div>
           <label htmlFor="function-select">Select Function:</label>
           <select
@@ -387,6 +466,7 @@ async function main() {
             <Edge key={edge.id} edge={edge} nodes={nodes} />
           ))}
         </div>
+        <SymbolicHeap heap={heapData} />
       </div>
     );
   };
