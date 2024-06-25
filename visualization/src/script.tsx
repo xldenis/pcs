@@ -4,6 +4,10 @@ import ReactDOMServer from "react-dom/server";
 import * as dagre from "@dagrejs/dagre";
 import * as Viz from "@viz-js/viz";
 
+import { BasicBlockData, DagreInputNode, DagreNode } from "./types";
+import Edge from "./components/Edge";
+import SymbolicHeap from "./components/SymbolicHeap";
+
 type CurrentPoint = {
   block: number;
   stmt: number;
@@ -38,6 +42,7 @@ async function getGraphData(func: string): Promise<GraphData> {
     const container = document.createElement("div");
     container.innerHTML = ReactDOMServer.renderToString(
       BasicBlockTable({
+        isOnSelectedPath: false,
         currentPoint: { block: 0, stmt: 0 },
         data: {
           block: node.block,
@@ -98,70 +103,18 @@ const layout = (
   };
 };
 
-type BasicBlockData = { block: number; stmts: string[]; terminator: string };
-
-function Edge({
-  edge,
-  nodes,
-}: {
-  edge: any;
-  nodes: DagreNode<BasicBlockData>[];
-}) {
-  const sourceNode = nodes.find((n) => n.id === edge.source);
-  const targetNode = nodes.find((n) => n.id === edge.target);
-
-  if (!sourceNode || !targetNode) return null;
-
-  const startX = sourceNode.x + sourceNode.width / 2;
-  const startY = sourceNode.y + sourceNode.height;
-  const endX = targetNode.x + targetNode.width / 2;
-  const endY = targetNode.y;
-
-  return (
-    <svg
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
-      }}
-    >
-      <line
-        x1={startX}
-        y1={startY}
-        x2={endX}
-        y2={endY}
-        stroke="black"
-        strokeWidth={2}
-      />
-      {edge.data.label && (
-        <text
-          x={(startX + endX) / 2}
-          y={(startY + endY) / 2}
-          textAnchor="middle"
-          alignmentBaseline="middle"
-          fill="black"
-          fontSize="12"
-        >
-          {edge.data.label}
-        </text>
-      )}
-    </svg>
-  );
-}
-
 function BasicBlockNode({
   data,
   currentPoint,
   position,
   setCurrentPoint,
+  isOnSelectedPath,
 }: {
   data: BasicBlockData;
   currentPoint: CurrentPoint;
   position: { x: number; y: number };
   setCurrentPoint: (point: CurrentPoint) => void;
+  isOnSelectedPath: boolean;
 }) {
   return (
     <div style={{ position: "absolute", left: position.x, top: position.y }}>
@@ -169,6 +122,7 @@ function BasicBlockNode({
         data={data}
         currentPoint={currentPoint}
         setCurrentPoint={setCurrentPoint}
+        isOnSelectedPath={isOnSelectedPath}
       />
     </div>
   );
@@ -178,17 +132,22 @@ function BasicBlockTable({
   data,
   currentPoint,
   setCurrentPoint,
+  isOnSelectedPath,
 }: {
   data: BasicBlockData;
   currentPoint: CurrentPoint;
   setCurrentPoint: (point: CurrentPoint) => void;
+  isOnSelectedPath: boolean;
 }) {
   return (
     <table
-      border={1}
       cellSpacing={0}
       cellPadding={4}
-      style={{ borderCollapse: "collapse", width: "300px" }}
+      style={{
+        borderCollapse: "collapse",
+        width: "300px",
+        border: isOnSelectedPath ? "5px solid red" : "1px solid black",
+      }}
     >
       <tbody>
         <tr>
@@ -224,73 +183,19 @@ function BasicBlockTable({
   );
 }
 
-type DagreInputNode<T> = {
-  id: string;
-};
 
-type DagreNode<T> = {
-  id: string;
-  data: T;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-function SymbolicHeap({ heap }: { heap: Record<string, string> }) {
-  return (
-    <table
-      style={{
-        borderCollapse: "collapse",
-        width: "300px",
-        position: "absolute",
-        top: "20px",
-        right: "20px",
-        backgroundColor: "white",
-        boxShadow: "0 0 10px rgba(0,0,0,0.1)",
-      }}
-    >
-      <thead>
-        <tr>
-          <th
-            style={{
-              border: "1px solid black",
-              padding: "8px",
-              backgroundColor: "#f2f2f2",
-            }}
-          >
-            Location
-          </th>
-          <th
-            style={{
-              border: "1px solid black",
-              padding: "8px",
-              backgroundColor: "#f2f2f2",
-            }}
-          >
-            Value
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {Object.entries(heap).map(([symbol, value]) => (
-          <tr key={symbol}>
-            <td style={{ border: "1px solid black", padding: "8px" }}>
-              <code>{symbol}</code>
-            </td>
-            <td style={{ border: "1px solid black", padding: "8px" }}>
-              <code>{value}</code>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+const getPaths = async (functionName: string) => {
+  const paths: number[][] = await fetchJsonFile(
+    `data/${functionName}/paths.json`
   );
-}
+  return paths;
+};
 
 async function main() {
   const viz = await Viz.instance();
   const functions = await getFunctions();
+  const initialFunction = localStorage.getItem("selectedFunction");
+  const initialPath = localStorage.getItem("selectedPath");
 
   const App: React.FC<{}> = () => {
     const [heapData, setHeapData] = useState<Record<string, string>>({});
@@ -299,24 +204,20 @@ async function main() {
       stmt: 0,
     });
     const [selectedFunction, setSelectedFunction] = useState<string>(
-      functions[0]
+      initialFunction || functions[0]
     );
-    const [selectedPath, setSelectedPath] = useState<number>(0);
+    const [selectedPath, setSelectedPath] = useState<number>(
+      initialPath ? parseInt(initialPath) : 0
+    );
     const [paths, setPaths] = useState<number[][]>([]);
     const [nodes, setNodes] = useState([]);
     const [edges, setEdges] = useState([]);
     const [showPathBlocksOnly, setShowPathBlocksOnly] = useState(false);
+    const [graphHeight, setGraphHeight] = useState(800); // Default height
 
     const fetchDotFile = async (filePath: string) => {
       const response = await fetch(filePath);
       return await response.text();
-    };
-
-    const getPaths = async (functionName: string) => {
-      const paths: number[][] = await fetchJsonFile(
-        `data/${functionName}/paths.json`
-      );
-      return paths;
     };
 
     async function loadDotGraph() {
@@ -436,6 +337,21 @@ async function main() {
       };
     }, [nodes]);
 
+    useEffect(() => {
+      if (nodes.length > 0) {
+        const maxY = Math.max(...nodes.map((node) => node.y + node.height));
+        setGraphHeight(maxY + 100); // Add some padding
+      }
+    }, [nodes]);
+
+    useEffect(() => {
+      localStorage.setItem("selectedFunction", selectedFunction);
+    }, [selectedFunction]);
+
+    useEffect(() => {
+      localStorage.setItem("selectedPath", selectedPath.toString());
+    }, [selectedPath]);
+
     const filterNodesAndEdges = () => {
       if (!showPathBlocksOnly || paths.length === 0) {
         return { filteredNodes: nodes, filteredEdges: edges };
@@ -460,6 +376,14 @@ async function main() {
     };
 
     const { filteredNodes, filteredEdges } = filterNodesAndEdges();
+
+    const isBlockOnSelectedPath = useCallback(
+      (block: number) => {
+        if (paths.length === 0 || selectedPath >= paths.length) return false;
+        return paths[selectedPath].includes(block);
+      },
+      [paths, selectedPath]
+    );
 
     return (
       <div style={{ position: "relative", minHeight: "100vh" }}>
@@ -502,10 +426,11 @@ async function main() {
             Show path blocks only
           </label>
         </div>
-        <div className="graph-container" style={{ height: 800 }}>
+        <div className="graph-container" style={{ height: graphHeight }}>
           <div id="mir-graph">
             {filteredNodes.map((node) => (
               <BasicBlockNode
+                isOnSelectedPath={isBlockOnSelectedPath(node.data.block)}
                 key={node.id}
                 data={node.data}
                 position={{
