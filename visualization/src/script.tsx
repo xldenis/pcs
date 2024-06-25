@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import ReactDOMServer from "react-dom/server";
 import * as dagre from "@dagrejs/dagre";
 import * as Viz from "@viz-js/viz";
-import "reactflow/dist/style.css";
 
 type CurrentPoint = {
   block: number;
@@ -239,6 +238,7 @@ type DagreNode<T> = {
 };
 
 async function main() {
+  const viz = await Viz.instance();
   const functions = await getFunctions();
 
   const App: React.FC<{}> = () => {
@@ -251,7 +251,6 @@ async function main() {
     );
     const [selectedPath, setSelectedPath] = useState<number>(0);
     const [paths, setPaths] = useState<number[][]>([]);
-    const [dotData, setDotData] = useState<string | null>();
     const [nodes, setNodes] = useState([]);
     const [edges, setEdges] = useState([]);
 
@@ -266,6 +265,24 @@ async function main() {
       );
       return paths;
     };
+
+    async function loadDotGraph() {
+      const dotFilePath = `data/${selectedFunction}/block_${currentPoint.block}_stmt_${currentPoint.stmt}.dot`;
+      const dotData = await fetchDotFile(dotFilePath);
+      const dotGraph = document.getElementById("dot-graph");
+      if (!dotGraph) {
+        console.error("Dot graph element not found");
+        return;
+      }
+      Viz.instance().then(function (viz) {
+        dotGraph.innerHTML = "";
+        dotGraph.appendChild(viz.renderSVGElement(dotData));
+      });
+    }
+
+    useEffect(() => {
+      loadDotGraph();
+    }, [currentPoint]);
 
     useEffect(() => {
       if (selectedFunction) {
@@ -369,7 +386,6 @@ async function main() {
           {edges.map((edge) => (
             <Edge key={edge.id} edge={edge} nodes={nodes} />
           ))}
-          <div id="dot-graph"></div>
         </div>
       </div>
     );
