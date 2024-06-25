@@ -144,7 +144,9 @@ pub fn get_source_name_from_place<'tcx>(
                     from_end,
                 } => todo!(),
                 mir::ProjectionElem::Subslice { from, to, from_end } => todo!(),
-                mir::ProjectionElem::Downcast(_, _) => todo!(),
+                mir::ProjectionElem::Downcast(d, v) => {
+                    name = format!("downcast {:?} as {:?}", name, d);
+                }
                 mir::ProjectionElem::OpaqueCast(_) => todo!(),
             }
         }
