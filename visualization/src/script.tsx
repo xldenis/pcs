@@ -80,7 +80,7 @@ async function getGraphData(func: string): Promise<GraphData> {
   return { initialNodes, initialEdges };
 }
 
-async function getFunctions(): Promise<string[]> {
+async function getFunctions(): Promise<Record<string, string>> {
   return await fetchJsonFile("data/functions.json");
 }
 
@@ -90,7 +90,7 @@ const layout = (
   options: any
 ) => {
   const g = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ ranksep: 100, rankdir: options.direction });
+  g.setGraph({ ranksep: 100, rankdir: options.direction, marginy: 100 });
 
   edges.forEach((edge: any) => g.setEdge(edge.source, edge.target));
   nodes.forEach((node) => g.setNode(node.id, node));
@@ -104,12 +104,14 @@ const layout = (
 };
 
 function BasicBlockNode({
+  height,
   data,
   currentPoint,
   position,
   setCurrentPoint,
   isOnSelectedPath,
 }: {
+  height: number;
   data: BasicBlockData;
   currentPoint: CurrentPoint;
   position: { x: number; y: number };
@@ -117,7 +119,13 @@ function BasicBlockNode({
   isOnSelectedPath: boolean;
 }) {
   return (
-    <div style={{ position: "absolute", left: position.x, top: position.y }}>
+    <div
+      style={{
+        position: "absolute",
+        left: position.x,
+        top: position.y - height / 2,
+      }}
+    >
       <BasicBlockTable
         data={data}
         currentPoint={currentPoint}
@@ -183,19 +191,36 @@ function BasicBlockTable({
   );
 }
 
-
 const getPaths = async (functionName: string) => {
-  const paths: number[][] = await fetchJsonFile(
-    `data/${functionName}/paths.json`
-  );
-  return paths;
+  try {
+    const paths: number[][] = await fetchJsonFile(
+      `data/${functionName}/paths.json`
+    );
+    return paths;
+  } catch (error) {
+    return [];
+  }
 };
 
 async function main() {
   const viz = await Viz.instance();
   const functions = await getFunctions();
-  const initialFunction = localStorage.getItem("selectedFunction");
-  const initialPath = localStorage.getItem("selectedPath");
+  let initialFunction = localStorage.getItem("selectedFunction");
+  if (!initialFunction || !Object.keys(functions).includes(initialFunction)) {
+    initialFunction = Object.keys(functions)[0];
+  }
+  const initialPaths = await getPaths(initialFunction);
+
+  let initialPath = 0;
+  let initialPathStr = localStorage.getItem("selectedPath");
+  if (initialPathStr) {
+    initialPath = parseInt(initialPathStr);
+    if (initialPath >= initialPaths.length) {
+      initialPath = 0;
+    }
+  } else {
+    initialPath = 0;
+  }
 
   const App: React.FC<{}> = () => {
     const [heapData, setHeapData] = useState<Record<string, string>>({});
@@ -206,10 +231,8 @@ async function main() {
     const [selectedFunction, setSelectedFunction] = useState<string>(
       initialFunction || functions[0]
     );
-    const [selectedPath, setSelectedPath] = useState<number>(
-      initialPath ? parseInt(initialPath) : 0
-    );
-    const [paths, setPaths] = useState<number[][]>([]);
+    const [selectedPath, setSelectedPath] = useState<number>(initialPath);
+    const [paths, setPaths] = useState<number[][]>(initialPaths);
     const [nodes, setNodes] = useState([]);
     const [edges, setEdges] = useState([]);
     const [showPathBlocksOnly, setShowPathBlocksOnly] = useState(false);
@@ -397,9 +420,9 @@ async function main() {
               setSelectedFunction(fn);
             }}
           >
-            {functions.map((func) => (
+            {Object.keys(functions).map((func) => (
               <option key={func} value={func}>
-                {func}
+                {functions[func]}
               </option>
             ))}
           </select>
@@ -433,6 +456,7 @@ async function main() {
                 isOnSelectedPath={isBlockOnSelectedPath(node.data.block)}
                 key={node.id}
                 data={node.data}
+                height={node.height}
                 position={{
                   x: node.x,
                   y: node.y,

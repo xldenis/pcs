@@ -14,9 +14,9 @@ export default function Edge({
   if (!sourceNode || !targetNode) return null;
 
   const startX = sourceNode.x + sourceNode.width / 2;
-  const startY = sourceNode.y + sourceNode.height;
+  const startY = sourceNode.y + (sourceNode.height / 2);
   const endX = targetNode.x + targetNode.width / 2;
-  const endY = targetNode.y;
+  const endY = targetNode.y - (targetNode.height / 2);
 
   return (
     <svg

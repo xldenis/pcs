@@ -13,7 +13,10 @@ use crate::{
     utils::{Place, PlaceRepacker},
 };
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque}, fs::File, io::{self, Write}, rc::Rc
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    fs::File,
+    io::{self, Write},
+    rc::Rc,
 };
 
 use rustc_interface::{
@@ -113,9 +116,20 @@ pub fn get_source_name_from_local(local: &Local, debug_info: &[VarDebugInfo]) ->
     if local.as_usize() == 0 {
         return None;
     }
-    debug_info
-        .get(&local.as_usize() - 1)
-        .map(|source_info| format!("{}", source_info.name))
+    debug_info.get(&local.as_usize() - 1).map(|source_info| {
+        let name = source_info.name.as_str();
+        let mut shadow_count = 0;
+        for i in 0..local.as_usize() - 1 {
+            if debug_info[i].name.as_str() == name {
+                shadow_count += 1;
+            }
+        }
+        if shadow_count == 0 {
+            format!("{}", name)
+        } else {
+            format!("{}$shadow{}", name, shadow_count)
+        }
+    })
 }
 
 pub fn get_source_name_from_place<'tcx>(
@@ -307,10 +321,10 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
 
         let mut before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
         for borrow in &self.borrows_domain.borrows {
-            if let MaybeOldPlace::OldPlace{ place, before } = borrow.assigned_place {
+            if let MaybeOldPlace::OldPlace { place, before } = borrow.assigned_place {
                 before_places.insert((place, before));
             }
-            if let MaybeOldPlace::OldPlace{ place, before } = borrow.borrowed_place {
+            if let MaybeOldPlace::OldPlace { place, before } = borrow.borrowed_place {
                 before_places.insert((place, before));
             }
         }

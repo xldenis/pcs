@@ -61,9 +61,7 @@ pub fn run_free_pcs<'mir, 'tcx>(
         .iterate_to_fixpoint();
     let mut fpcs_analysis = free_pcs::FreePcsAnalysis::new(analysis.into_results_cursor(&mir.body));
 
-    if let Some(visualization_output_path) = visualization_output_path {
-        let fn_name = tcx.item_name(mir.body.source.def_id());
-        let dir_path = format!("{}/{}", visualization_output_path, fn_name);
+    if let Some(dir_path) = visualization_output_path {
         if std::path::Path::new(&dir_path).exists() {
             std::fs::remove_dir_all(&dir_path).expect("Failed to delete directory contents");
         }
@@ -74,7 +72,6 @@ pub fn run_free_pcs<'mir, 'tcx>(
         let input_facts = mir.input_facts.as_ref().unwrap().clone();
         let output_facts = mir.output_facts.as_ref().unwrap().clone();
         let location_table = mir.location_table.as_ref().unwrap();
-        let fn_name = tcx.item_name(mir.body.source.def_id());
 
         let rp = PcsContext::new(tcx, mir).rp;
 

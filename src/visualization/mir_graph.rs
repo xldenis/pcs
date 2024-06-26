@@ -125,7 +125,7 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
         }
         Rvalue::NullaryOp(_, _) => todo!(),
         Rvalue::UnaryOp(_, _) => todo!(),
-        Rvalue::Discriminant(_) => todo!(),
+        Rvalue::Discriminant(place) => format!("Discriminant({})", format_place(place, debug_info)),
         Rvalue::Aggregate(kind, ops) => {
             format!(
                 "Aggregate {:?} {}",
@@ -138,6 +138,33 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
         }
         Rvalue::ShallowInitBox(_, _) => todo!(),
         Rvalue::CopyForDeref(_) => todo!(),
+    }
+}
+fn format_terminator<'tcx>(
+    terminator: &TerminatorKind<'tcx>,
+    debug_info: &[VarDebugInfo],
+) -> String {
+    match terminator {
+        TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            target,
+            unwind,
+            call_source,
+            fn_span,
+        } => {
+            format!(
+                "{} = {}({})",
+                format_place(destination, debug_info),
+                format_operand(func, debug_info),
+                args.iter()
+                    .map(|arg| format_operand(arg, debug_info))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+        _ => format!("{:?}", terminator),
     }
 }
 
@@ -186,7 +213,7 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
             .iter()
             .map(|stmt| format_stmt(stmt, &body.var_debug_info));
 
-        let terminator = format!("{:?}", data.terminator().kind);
+        let terminator = format_terminator(&data.terminator().kind, &body.var_debug_info);
 
         nodes.push(MirNode {
             id: format!("{:?}", bb),
@@ -248,6 +275,18 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
                         target: format!("{:?}", target),
                         label: "call".to_string(),
                     });
+                    match unwind {
+                        UnwindAction::Continue => todo!(),
+                        UnwindAction::Unreachable => todo!(),
+                        UnwindAction::Terminate(_) => todo!(),
+                        UnwindAction::Cleanup(cleanup) => {
+                            edges.push(MirEdge {
+                                source: format!("{:?}", bb),
+                                target: format!("{:?}", cleanup),
+                                label: "unwind".to_string(),
+                            });
+                        }
+                    }
                 }
             }
             TerminatorKind::Assert {
@@ -285,7 +324,13 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
             TerminatorKind::FalseEdge {
                 real_target,
                 imaginary_target,
-            } => todo!(),
+            } => {
+                edges.push(MirEdge {
+                    source: format!("{:?}", bb),
+                    target: format!("{:?}", real_target),
+                    label: "real".to_string(),
+                });
+            }
             TerminatorKind::FalseUnwind {
                 real_target,
                 unwind,
