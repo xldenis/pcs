@@ -56,12 +56,13 @@ fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
         let kind = tcx.def_kind(def_id);
         match kind {
             hir::def::DefKind::Fn | hir::def::DefKind::AssocFn => {
+                let item_name = format!("{}", tcx.item_name(def_id.to_def_id()));
                 let body = BODIES.with(|state| {
                     let mut map = state.borrow_mut();
                     unsafe { std::mem::transmute(map.remove(&def_id).unwrap()) }
                 });
-                run_free_pcs(&body, tcx, Some(&dir_path));
-                item_names.push(format!("{}", tcx.item_name(body.body.source.def_id())));
+                run_free_pcs(&body, tcx, Some(&format!("{}/{}", dir_path, item_name)));
+                item_names.push(item_name);
             }
             unsupported_item_kind => {
                 eprintln!("unsupported item: {unsupported_item_kind:?}");
@@ -73,8 +74,13 @@ fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
 
     let file_path = format!("{}/functions.json", dir_path);
 
-    let json_data =
-        serde_json::to_string(&item_names).expect("Failed to serialize item names to JSON");
+    let json_data = serde_json::to_string(
+        &item_names
+            .iter()
+            .map(|name| (name.clone(), name.clone()))
+            .collect::<std::collections::HashMap<_, _>>(),
+    )
+    .expect("Failed to serialize item names to JSON");
     let mut file = File::create(file_path).expect("Failed to create JSON file");
     file.write_all(json_data.as_bytes())
         .expect("Failed to write item names to JSON file");

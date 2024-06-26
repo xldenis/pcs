@@ -334,7 +334,13 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
             TerminatorKind::FalseUnwind {
                 real_target,
                 unwind,
-            } => todo!(),
+            } => {
+                edges.push(MirEdge {
+                    source: format!("{:?}", bb),
+                    target: format!("{:?}", real_target),
+                    label: "real".to_string(),
+                });
+            }
             TerminatorKind::InlineAsm {
                 template,
                 operands,
