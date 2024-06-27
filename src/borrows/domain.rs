@@ -83,7 +83,7 @@ impl<'tcx> MaybeOldPlace<'tcx> {
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         let place_str = match self.place().to_string(repacker) {
             crate::utils::display::PlaceDisplay::Temporary(p) => format!("{:?}", p),
-            crate::utils::display::PlaceDisplay::User(_, s) => s
+            crate::utils::display::PlaceDisplay::User(_, s) => s,
         };
 
         json!({
@@ -98,11 +98,16 @@ pub struct Borrow<'tcx> {
     pub kind: BorrowKind,
     pub borrowed_place: MaybeOldPlace<'tcx>,
     pub assigned_place: MaybeOldPlace<'tcx>,
-    pub is_mut: bool
+    pub is_mut: bool,
 }
 
 impl<'tcx> Borrow<'tcx> {
-    pub fn new(kind: BorrowKind, borrowed_place: Place<'tcx>, assigned_place: Place<'tcx>, is_mut: bool) -> Self {
+    pub fn new(
+        kind: BorrowKind,
+        borrowed_place: Place<'tcx>,
+        assigned_place: Place<'tcx>,
+        is_mut: bool,
+    ) -> Self {
         Self {
             kind,
             borrowed_place: MaybeOldPlace::Current {
@@ -111,7 +116,7 @@ impl<'tcx> Borrow<'tcx> {
             assigned_place: MaybeOldPlace::Current {
                 place: assigned_place,
             },
-            is_mut
+            is_mut,
         }
     }
 
@@ -147,7 +152,6 @@ use serde_json::{json, Value};
 use super::engine::BorrowAction;
 
 impl<'tcx> BorrowsState<'tcx> {
-
     pub fn contains_borrow(&self, borrow: &Borrow<'tcx>) -> bool {
         self.borrows.contains(borrow)
     }
@@ -162,14 +166,7 @@ impl<'tcx> BorrowsState<'tcx> {
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
         json!({
             "borrows": self.borrows.iter().map(|borrow| {
-                json!({
-                    "kind": match &borrow.kind {
-                        BorrowKind::Rustc(index) => json!(format!("Rustc({:?})", index)),
-                        BorrowKind::PCS => json!("PCS"),
-                    },
-                    "target_place": format!("{:?}", borrow.borrowed_place),
-                    "assigned_place": format!("{:?}", borrow.assigned_place)
-                })
+                borrow.to_json(repacker)
             }).collect::<Vec<_>>(),
         })
     }
@@ -216,7 +213,7 @@ impl<'tcx> BorrowsState<'tcx> {
             BorrowKind::Rustc(borrow),
             borrow_set[borrow].borrowed_place.into(),
             borrow_set[borrow].assigned_place.into(),
-            matches!(borrow_set[borrow].kind, mir::BorrowKind::Mut {..}),
+            matches!(borrow_set[borrow].kind, mir::BorrowKind::Mut { .. }),
         ));
     }
 

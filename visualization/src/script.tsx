@@ -4,7 +4,14 @@ import ReactDOMServer from "react-dom/server";
 import * as dagre from "@dagrejs/dagre";
 import * as Viz from "@viz-js/viz";
 
-import { BasicBlockData, DagreInputNode, DagreNode } from "./types";
+import BorrowsAndActions from "./components/BorrowsAndActions";
+import {
+  BasicBlockData,
+  BorrowAction,
+  DagreInputNode,
+  DagreNode,
+  PathData,
+} from "./types";
 import Edge from "./components/Edge";
 import SymbolicHeap from "./components/SymbolicHeap";
 
@@ -180,7 +187,17 @@ function BasicBlockTable({
             </td>
           </tr>
         ))}
-        <tr>
+        <tr
+          className={
+            currentPoint.stmt == data.stmts.length &&
+            data.block === currentPoint.block
+              ? "highlight"
+              : ""
+          }
+          onClick={() =>
+            setCurrentPoint({ block: data.block, stmt: data.stmts.length })
+          }
+        >
           <td>T</td>
           <td>
             <code>{data.terminator}</code>
@@ -223,8 +240,7 @@ async function main() {
   }
 
   const App: React.FC<{}> = () => {
-    const [borrowActions, setBorrowActions] = useState<string[]>([]);
-    const [heapData, setHeapData] = useState<Record<string, string>>({});
+    const [pathData, setPathData] = useState<PathData | null>(null);
     const [currentPoint, setCurrentPoint] = useState<CurrentPoint>({
       block: 0,
       stmt: 0,
@@ -312,15 +328,10 @@ async function main() {
         const heapFilePath = `data/${selectedFunction}/path_${pathToCurrentBlock.map((block) => `bb${block}`).join("_")}_stmt_${currentPoint.stmt}.json`;
 
         try {
-          const data: {
-            heap: Record<string, string>,
-            borrow_actions: string[]
-          } = await fetchJsonFile(heapFilePath);
-          setHeapData(data.heap);
-          setBorrowActions(data.borrow_actions);
+          const data: PathData = await fetchJsonFile(heapFilePath);
+          setPathData(data);
         } catch (error) {
-          console.error("Error fetching heap data:", error);
-          setHeapData({});
+          console.error("Error fetching path data:", error);
         }
       };
 
@@ -342,7 +353,7 @@ async function main() {
             );
             if (!currentNode) return prevPoint;
 
-            const stmtCount = currentNode.data.stmts.length;
+            const stmtCount = currentNode.data.stmts.length + 1;
             let newStmt = prevPoint.stmt;
 
             if (event.key === "ArrowUp" || event.key === "k") {
@@ -475,7 +486,12 @@ async function main() {
             <Edge key={edge.id} edge={edge} nodes={filteredNodes} />
           ))}
         </div>
-        <SymbolicHeap heap={heapData} />
+        {pathData && (
+          <>
+            <SymbolicHeap heap={pathData.heap} />
+            <BorrowsAndActions pathData={pathData} />
+          </>
+        )}
       </div>
     );
   };

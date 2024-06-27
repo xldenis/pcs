@@ -205,7 +205,7 @@ impl<'tcx> BorrowsDomain<'tcx> {
         let (s, e) = if start {
             (&self.before_start, &self.start)
         } else {
-            (&self.start, &self.after)
+            (&self.before_after, &self.after)
         };
         let mut actions = vec![];
         for borrow in s.borrows.iter() {
@@ -351,6 +351,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
+        state.before_start = state.after.clone();
         match &terminator.kind {
             TerminatorKind::Call {
                 func,
@@ -386,6 +387,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
             }
             _ => {}
         }
+        state.before_after = state.after.clone();
     }
 
     fn apply_terminator_effect<'mir>(
@@ -394,6 +396,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         terminator: &'mir Terminator<'tcx>,
         location: Location,
     ) -> TerminatorEdges<'mir, 'tcx> {
+        state.start = state.after.clone();
         match &terminator.kind {
             TerminatorKind::Call { args, .. } => {
                 for arg in args {

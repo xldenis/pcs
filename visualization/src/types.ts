@@ -16,3 +16,31 @@ export type DagreNode<T> = {
   width: number;
   height: number;
 };
+
+export type MaybeOldPlace = {
+  place: string;
+  before?: string;
+};
+
+export type Borrow = {
+  assigned_place: MaybeOldPlace;
+  borrowed_place: MaybeOldPlace;
+  is_mut: boolean;
+  kind: string;
+};
+
+export type BorrowAction = {
+  action: "AddBorrow" | "RemoveBorrow";
+  borrow: Borrow;
+};
+
+export type PathData = {
+  heap: Record<string, string>;
+  borrow_actions_start: BorrowAction[];
+  borrow_actions_mid: BorrowAction[];
+  borrows: {
+    borrows: Borrow[]
+  }
+  repacks_middle: string[]
+  repacks_start: string[]
+};
