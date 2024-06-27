@@ -161,10 +161,9 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
         self.borrows
             .apply_before_statement_effect(&mut state.borrows, statement, location);
         let before_actions = state.borrows.actions(true);
+        self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, before_actions.clone());
         self.fpcs
             .apply_before_statement_effect(&mut state.fpcs, statement, location);
-        self.apply_borrow_actions_to_fpcs(&mut state.fpcs.before_after, before_actions.clone());
-        self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, before_actions);
     }
     fn apply_statement_effect(
         &mut self,
