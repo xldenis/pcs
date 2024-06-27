@@ -24,9 +24,12 @@ use rustc_interface::{
 
 use crate::{
     borrows::{domain::BorrowsState, engine::BorrowsEngine},
-    free_pcs::{engine::FpcsEngine, CapabilityKind, CapabilityLocal, FreePlaceCapabilitySummary},
+    free_pcs::{
+        engine::FpcsEngine, CapabilityKind, CapabilityLocal, CapabilitySummary,
+        FreePlaceCapabilitySummary,
+    },
     rustc_interface,
-    utils::PlaceRepacker,
+    utils::{PlaceOrdering, PlaceRepacker},
 };
 
 use super::domain::PlaceCapabilitySummary;
@@ -112,6 +115,31 @@ impl<'a, 'tcx> AnalysisDomain<'tcx> for PcsEngine<'a, 'tcx> {
     }
 }
 
+impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
+    fn apply_borrow_actions_to_fpcs<'state>(
+        &self,
+        state: &'state mut CapabilitySummary<'tcx>,
+        actions: Vec<crate::borrows::engine::BorrowAction<'state, 'tcx>>,
+    ) {
+        for action in actions {
+            match action {
+                crate::borrows::engine::BorrowAction::AddBorrow(_) => {}
+                crate::borrows::engine::BorrowAction::RemoveBorrow(bw) => match bw.assigned_place {
+                    crate::borrows::domain::MaybeOldPlace::Current { place } => {
+                        if let CapabilityLocal::Allocated(cap) = &mut state[place.local] {
+                            let related = cap.find_all_related(place, None);
+                            if related.relation == PlaceOrdering::Suffix {
+                                cap.collapse(related.get_from(), place, self.cgx.rp);
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+            }
+        }
+    }
+}
+
 impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
     fn apply_before_statement_effect(
         &mut self,
@@ -121,7 +149,7 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
     ) {
         match &statement.kind {
             StatementKind::Assign(box (place, Rvalue::Use(operand))) if let Some(place) = operand.place() => {
-                if let Some(place) = state.borrows.end_state.reference_targeting_place(place.into(), self.cgx.mir.borrow_set.as_ref()) {
+                if let Some(place) = state.borrows.after.reference_targeting_place(place.into(), self.cgx.mir.borrow_set.as_ref()) {
                     if let CapabilityLocal::Allocated(cap) = &mut state.fpcs.after[place.local] {
                         let related = cap.find_all_related(place, Some(crate::utils::PlaceOrdering::Suffix));
                         cap.collapse(related.get_from(), place, self.cgx.rp);
@@ -132,8 +160,11 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
         }
         self.borrows
             .apply_before_statement_effect(&mut state.borrows, statement, location);
+        let before_actions = state.borrows.actions(true);
         self.fpcs
             .apply_before_statement_effect(&mut state.fpcs, statement, location);
+        self.apply_borrow_actions_to_fpcs(&mut state.fpcs.before_after, before_actions.clone());
+        self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, before_actions);
     }
     fn apply_statement_effect(
         &mut self,
@@ -143,6 +174,7 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
     ) {
         self.borrows
             .apply_statement_effect(&mut state.borrows, statement, location);
+        self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, state.borrows.actions(false));
         self.fpcs
             .apply_statement_effect(&mut state.fpcs, statement, location);
     }

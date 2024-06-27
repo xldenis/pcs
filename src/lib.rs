@@ -89,7 +89,7 @@ pub fn run_free_pcs<'mir, 'tcx>(
                     statement.location,
                     Rc::new(rp),
                     &statement.state,
-                    &statement.extra.end_state,
+                    &statement.extra.after,
                     &mir.borrow_set,
                     &input_facts,
                     &file_path,

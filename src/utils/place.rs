@@ -13,9 +13,12 @@ use std::{
 
 use derive_more::{Deref, DerefMut};
 
-use rustc_interface::middle::{
-    mir::{Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
-    ty::Ty,
+use rustc_interface::{
+    abi::VariantIdx,
+    middle::{
+        mir::{Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
+        ty::Ty,
+    },
 };
 
 use crate::rustc_interface;
@@ -188,9 +191,24 @@ impl<'tcx> Place<'tcx> {
             && other.projection.len() == self.projection.len() - 1
     }
 
+    pub fn is_downcast_of(self, other: Self) -> Option<VariantIdx> {
+        if let Some(ProjectionElem::Downcast(_, index)) = self.projection.last() {
+            if other.is_prefix(self) && other.projection.len() == self.projection.len() - 1 {
+                Some(*index)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     pub fn target_place(self) -> Option<Self> {
         if let Some(ProjectionElem::Deref) = self.projection.last() {
-            Some(Place::new(self.local, &self.projection[..self.projection.len() - 1]))
+            Some(Place::new(
+                self.local,
+                &self.projection[..self.projection.len() - 1],
+            ))
         } else {
             None
         }

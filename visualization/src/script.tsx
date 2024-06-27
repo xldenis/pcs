@@ -223,6 +223,7 @@ async function main() {
   }
 
   const App: React.FC<{}> = () => {
+    const [borrowActions, setBorrowActions] = useState<string[]>([]);
     const [heapData, setHeapData] = useState<Record<string, string>>({});
     const [currentPoint, setCurrentPoint] = useState<CurrentPoint>({
       block: 0,
@@ -311,8 +312,12 @@ async function main() {
         const heapFilePath = `data/${selectedFunction}/path_${pathToCurrentBlock.map((block) => `bb${block}`).join("_")}_stmt_${currentPoint.stmt}.json`;
 
         try {
-          const data = await fetchJsonFile(heapFilePath);
-          setHeapData(data);
+          const data: {
+            heap: Record<string, string>,
+            borrow_actions: string[]
+          } = await fetchJsonFile(heapFilePath);
+          setHeapData(data.heap);
+          setBorrowActions(data.borrow_actions);
         } catch (error) {
           console.error("Error fetching heap data:", error);
           setHeapData({});

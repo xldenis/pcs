@@ -4,7 +4,7 @@ use rustc_interface::{
     borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
     data_structures::fx::{FxHashMap, FxHashSet},
     dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, Location},
+    middle::mir::{self, Location, VarDebugInfo},
 };
 
 use crate::{rustc_interface, utils::Place};
@@ -79,6 +79,18 @@ impl<'tcx> MaybeOldPlace<'tcx> {
             MaybeOldPlace::OldPlace { before, .. } => Some(*before),
         }
     }
+
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        let place_str = match self.place().to_string(repacker) {
+            crate::utils::display::PlaceDisplay::Temporary(p) => format!("{:?}", p),
+            crate::utils::display::PlaceDisplay::User(_, s) => s
+        };
+
+        json!({
+            "place": place_str,
+            "before": self.before_location().map(|loc| format!("{:?}", loc)),
+        })
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -106,6 +118,15 @@ impl<'tcx> Borrow<'tcx> {
     pub fn is_current(&self) -> bool {
         self.borrowed_place.is_current() && self.assigned_place.is_current()
     }
+
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        json!({
+            "kind": format!("{:?}", self.kind),
+            "borrowed_place": self.borrowed_place.to_json(repacker),
+            "assigned_place": self.assigned_place.to_json(repacker),
+            "is_mut": self.is_mut,
+        })
+    }
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -126,6 +147,7 @@ use serde_json::{json, Value};
 use super::engine::BorrowAction;
 
 impl<'tcx> BorrowsState<'tcx> {
+
     pub fn contains_borrow(&self, borrow: &Borrow<'tcx>) -> bool {
         self.borrows.contains(borrow)
     }

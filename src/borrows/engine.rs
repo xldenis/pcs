@@ -12,7 +12,7 @@ use rustc_interface::{
     index::IndexVec,
     middle::{
         mir::{
-            visit::{TyContext, Visitor},
+            visit::{TyContext, Visitor},VarDebugInfo,
             BasicBlock, Body, CallReturnPlaces, HasLocalDecls, Local, Location, Operand, Place,
             ProjectionElem, Promoted, Rvalue, Statement, StatementKind, Terminator,
             TerminatorEdges, TerminatorKind, RETURN_PLACE, START_BLOCK,
@@ -104,28 +104,28 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         visitor.0
     }
 
-    fn loans_invalidated_at(&self, location: Location) -> Vec<BorrowIndex> {
+    fn loans_invalidated_at(&self, location: Location, start: bool) -> Vec<BorrowIndex> {
         self.input_facts
             .loan_invalidated_at
             .iter()
             .filter_map(
                 |(loan_point, loan)| match self.location_table.to_location(*loan_point) {
-                    RichLocation::Start(loan_location) if loan_location == location => Some(*loan),
-                    RichLocation::Mid(loan_location) if loan_location == location => Some(*loan),
+                    RichLocation::Start(loan_location) if loan_location == location && start => Some(*loan),
+                    RichLocation::Mid(loan_location) if loan_location == location && !start => Some(*loan),
                     _ => None,
                 },
             )
             .collect()
     }
 
-    fn loan_issued_at_location(&self, location: Location) -> Option<BorrowIndex> {
+    fn loan_issued_at_location(&self, location: Location, start: bool) -> Option<BorrowIndex> {
         self.input_facts
             .loan_issued_at
             .iter()
             .find_map(
                 |(_, loan, loan_point)| match self.location_table.to_location(*loan_point) {
-                    RichLocation::Start(loan_location) if loan_location == location => Some(*loan),
-                    RichLocation::Mid(loan_location) if loan_location == location => Some(*loan),
+                    RichLocation::Start(loan_location) if loan_location == location && start => Some(*loan),
+                    RichLocation::Mid(loan_location) if loan_location == location && !start => Some(*loan),
                     _ => None,
                 },
             )
@@ -172,36 +172,49 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct BorrowsDomain<'tcx> {
-    start_state: BorrowsState<'tcx>,
-    pub end_state: BorrowsState<'tcx>,
+    before_start: BorrowsState<'tcx>,
+    before_after: BorrowsState<'tcx>,
+    start: BorrowsState<'tcx>,
+    pub after: BorrowsState<'tcx>,
 }
 
 impl<'tcx> BorrowsDomain<'tcx> {
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
         json!({
-            "start_state": self.start_state.to_json(repacker),
-            "end_state": self.end_state.to_json(repacker),
+            "before_start": self.before_start.to_json(repacker),
+            "before_after": self.before_after.to_json(repacker),
+            "start": self.start.to_json(repacker),
+            "after": self.after.to_json(repacker),
         })
     }
 
     pub fn new() -> Self {
         Self {
-            start_state: BorrowsState::new(),
-            end_state: BorrowsState::new(),
+            before_start: BorrowsState::new(),
+            before_after: BorrowsState::new(),
+            start: BorrowsState::new(),
+            after: BorrowsState::new(),
         }
     }
+
     fn apply_to_end_state(&mut self, action: BorrowAction<'_, 'tcx>) {
-        self.end_state.apply_action(action)
+        self.after.apply_action(action)
     }
-    pub fn actions<'a>(&'a self) -> Vec<BorrowAction<'a, 'tcx>> {
+
+    pub fn actions<'a>(&'a self, start: bool) -> Vec<BorrowAction<'a, 'tcx>> {
+        let (s, e) = if start {
+            (&self.before_start, &self.start)
+        } else {
+            (&self.start, &self.after)
+        };
         let mut actions = vec![];
-        for borrow in self.start_state.borrows.iter() {
-            if !self.end_state.contains_borrow(borrow) {
+        for borrow in s.borrows.iter() {
+            if !e.contains_borrow(borrow) {
                 actions.push(BorrowAction::RemoveBorrow(borrow));
             }
         }
-        for borrow in self.end_state.borrows.iter() {
-            if !self.start_state.contains_borrow(borrow) {
+        for borrow in e.borrows.iter() {
+            if !s.contains_borrow(borrow) {
                 actions.push(BorrowAction::AddBorrow(Cow::Borrowed(borrow)));
             }
         }
@@ -209,15 +222,31 @@ impl<'tcx> BorrowsDomain<'tcx> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BorrowAction<'state, 'tcx> {
     AddBorrow(Cow<'state, Borrow<'tcx>>),
     RemoveBorrow(&'state Borrow<'tcx>),
 }
 
+impl <'state, 'tcx> BorrowAction<'state, 'tcx> {
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        match self {
+            BorrowAction::AddBorrow(borrow) => json!({
+                "action": "AddBorrow",
+                "borrow": borrow.to_json(repacker)
+            }),
+            BorrowAction::RemoveBorrow(borrow) => json!({
+                "action": "RemoveBorrow",
+                "borrow": borrow.to_json(repacker)
+            }),
+        }
+    }
+
+}
+
 impl<'tcx> JoinSemiLattice for BorrowsDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        self.end_state.join(&other.end_state)
+        self.after.join(&other.after)
     }
 }
 
@@ -249,6 +278,14 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
+        state.before_start = state.after.clone();
+        for loan in self.loans_invalidated_at(location, true) {
+            state.after.remove_rustc_borrow(&loan);
+        }
+        if let Some(loan) = self.loan_issued_at_location(location, true) {
+            state.after.add_rustc_borrow(loan, &self.borrow_set);
+        }
+        state.before_after = state.after.clone();
     }
 
     fn apply_statement_effect(
@@ -257,30 +294,30 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
-        state.start_state = state.end_state.clone();
-        for loan in self.loans_invalidated_at(location) {
-            state.end_state.remove_rustc_borrow(&loan);
+        state.start = state.after.clone();
+        for loan in self.loans_invalidated_at(location, false) {
+            state.after.remove_rustc_borrow(&loan);
         }
-        if let Some(loan) = self.loan_issued_at_location(location) {
-            state.end_state.add_rustc_borrow(loan, &self.borrow_set);
+        if let Some(loan) = self.loan_issued_at_location(location, false) {
+            state.after.add_rustc_borrow(loan, &self.borrow_set);
         }
         match &statement.kind {
             StatementKind::Assign(box (target, rvalue)) => match rvalue {
                 Rvalue::Use(Operand::Move(from)) => {
-                    for mut borrow in self.remove_loans_assigned_to(&mut state.end_state, *target) {
+                    for mut borrow in self.remove_loans_assigned_to(&mut state.after, *target) {
                         borrow.assigned_place = MaybeOldPlace::OldPlace {
                             place: (*target).into(),
                             before: location,
                         };
-                        state.end_state.add_borrow(borrow);
+                        state.after.add_borrow(borrow);
                         // state.log_action(format!(
                         //     "Removed loan assigned to {:?} due to move {:?} -> {:?}:  {:?}",
                         //     target, from, target, borrow
                         // ));
                     }
-                    let loans_to_move = self.remove_loans_assigned_to(&mut state.end_state, *from);
+                    let loans_to_move = self.remove_loans_assigned_to(&mut state.after, *from);
                     for loan in loans_to_move {
-                        state.end_state.add_borrow(Borrow::new(
+                        state.after.add_borrow(Borrow::new(
                             BorrowKind::PCS,
                             loan.borrowed_place.place(),
                             (*target).into(),
@@ -288,7 +325,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                         ));
                     }
                     self.tag_deref_of_place_with_location(
-                        &mut state.end_state,
+                        &mut state.after,
                         (*target).into(),
                         location,
                     );
@@ -296,7 +333,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                 _ => {}
             },
             StatementKind::StorageDead(local) => {
-                state.end_state.borrows.retain(|borrow| {
+                state.after.borrows.retain(|borrow| {
                     if borrow.assigned_place.place().local == *local {
                         false
                     } else {
@@ -344,7 +381,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                         }
                     }
                     eprintln!("Add RA {:?}", region_abstraction);
-                    state.end_state.add_region_abstraction(region_abstraction);
+                    state.after.add_region_abstraction(region_abstraction);
                 }
             }
             _ => {}
@@ -361,7 +398,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
             TerminatorKind::Call { args, .. } => {
                 for arg in args {
                     if let Operand::Move(arg) = arg {
-                        self.remove_loans_assigned_to(&mut state.end_state, *arg);
+                        self.remove_loans_assigned_to(&mut state.after, *arg);
                     }
                 }
             }

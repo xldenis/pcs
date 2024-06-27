@@ -105,6 +105,13 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx>+ HasExtra<T>, E: Analysis<'tcx, Domai
         self.cursor.seek_after_primary_effect(location);
         let c = self.cursor.get().get_curr_fpcs();
         let (repacks_start, repacks_middle) = c.repack_ops(&after);
+        eprintln!("after (prev): {:?}", after);
+        eprintln!("before start: {:?}", c.before_start);
+        eprintln!("repacks start: {:?}", repacks_start);
+        eprintln!("start: {:?}", c.start);
+        eprintln!("before mid: {:?}", c.before_after);
+        eprintln!("repacks middle: {:?}", repacks_middle);
+        eprintln!("after mid: {:?}", c.after);
         FreePcsLocation {
             location,
             state: c.after.clone(),
