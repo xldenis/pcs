@@ -1,3 +1,8 @@
+export type CurrentPoint = {
+  block: number;
+  stmt: number;
+};
+
 export type BasicBlockData = {
   block: number;
   stmts: string[];
@@ -6,6 +11,16 @@ export type BasicBlockData = {
 
 export type DagreInputNode<T> = {
   id: string;
+};
+
+export type DagreEdge = {
+  id: string,
+  source: string;
+  target: string;
+  data: {
+    label: string;
+  };
+  type: string
 };
 
 export type DagreNode<T> = {

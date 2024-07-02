@@ -5,99 +5,52 @@ import * as dagre from "@dagrejs/dagre";
 import * as Viz from "@viz-js/viz";
 
 import BorrowsAndActions from "./components/BorrowsAndActions";
+import BasicBlockTable, {
+  computeTableHeight,
+  isStorageStmt,
+} from "./components/BasicBlockTable";
 import {
   BasicBlockData,
   BorrowAction,
+  CurrentPoint,
+  DagreEdge,
   DagreInputNode,
   DagreNode,
   PathData,
 } from "./types";
 import Edge from "./components/Edge";
 import SymbolicHeap from "./components/SymbolicHeap";
-
-type CurrentPoint = {
-  block: number;
-  stmt: number;
-};
+import BasicBlockNode from "./components/BasicBlockNode";
 
 const fetchJsonFile = async (filePath: string) => {
   const response = await fetch(filePath);
   return await response.json();
 };
 
-type GraphData = {
-  initialNodes: {
-    id: string;
-    data: { block: number; stmts: string[]; terminator: string };
-  }[];
-  initialEdges: {
-    id: string;
-    source: string;
-    target: string;
-    data: { label: string };
-  }[];
+type MirGraphNode = {
+  id: string;
+  block: number;
+  stmts: string[];
+  terminator: string;
 };
 
-async function getGraphData(func: string): Promise<GraphData> {
-  const graphFilePath = `data/${func}/mir.json`;
-  const graph: {
-    nodes: { id: string; block: number; stmts: string[]; terminator: string }[];
-    edges: { source: string; target: string; label: string }[];
-  } = await fetchJsonFile(graphFilePath);
+type MirGraphEdge = {
+  source: string;
+  target: string;
+  label: string;
+};
 
-  const initialNodes = graph.nodes.map((node) => {
-    const container = document.createElement("div");
-    container.innerHTML = ReactDOMServer.renderToString(
-      BasicBlockTable({
-        isOnSelectedPath: false,
-        currentPoint: { block: 0, stmt: 0 },
-        data: {
-          block: node.block,
-          stmts: node.stmts,
-          terminator: node.terminator,
-        },
-        setCurrentPoint: () => {},
-      })
-    );
-    document.body.appendChild(container);
-    const height = container.offsetHeight;
-    container.remove();
-    return {
-      id: node.id,
-      data: {
-        block: node.block,
-        stmts: node.stmts,
-        terminator: node.terminator,
-      },
-      width: 300,
-      height,
-    };
-  });
+type MirGraph = {
+  nodes: MirGraphNode[];
+  edges: MirGraphEdge[];
+};
 
-  const initialEdges = graph.edges.map((edge, idx) => ({
-    id: `${edge.source}-${edge.target}-${idx}`,
-    source: edge.source,
-    target: edge.target,
-    data: {
-      label: edge.label,
-    },
-    type: "straight",
-  }));
-
-  return { initialNodes, initialEdges };
-}
-
-async function getFunctions(): Promise<Record<string, string>> {
-  return await fetchJsonFile("data/functions.json");
-}
-
-const layout = (
+const layoutSizedNodes = (
   nodes: DagreInputNode<BasicBlockData>[],
-  edges: any,
-  options: any
+  edges: any
 ) => {
   const g = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ ranksep: 100, rankdir: options.direction, marginy: 100 });
+  g.setGraph({ ranksep: 100, rankdir: "TB", marginy: 100 });
 
   edges.forEach((edge: any) => g.setEdge(edge.source, edge.target));
   nodes.forEach((node) => g.setNode(node.id, node));
@@ -110,102 +63,44 @@ const layout = (
   };
 };
 
-function BasicBlockNode({
-  height,
-  data,
-  currentPoint,
-  position,
-  setCurrentPoint,
-  isOnSelectedPath,
-}: {
-  height: number;
-  data: BasicBlockData;
-  currentPoint: CurrentPoint;
-  position: { x: number; y: number };
-  setCurrentPoint: (point: CurrentPoint) => void;
-  isOnSelectedPath: boolean;
-}) {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left: position.x,
-        top: position.y - height / 2,
-      }}
-    >
-      <BasicBlockTable
-        data={data}
-        currentPoint={currentPoint}
-        setCurrentPoint={setCurrentPoint}
-        isOnSelectedPath={isOnSelectedPath}
-      />
-    </div>
-  );
+function toDagreEdges(edges: MirGraphEdge[]): DagreEdge[] {
+  return edges.map((edge, idx) => ({
+    id: `${edge.source}-${edge.target}-${idx}`,
+    source: edge.source,
+    target: edge.target,
+    data: { label: edge.label },
+    type: "straight",
+  }));
 }
 
-function BasicBlockTable({
-  data,
-  currentPoint,
-  setCurrentPoint,
-  isOnSelectedPath,
-}: {
-  data: BasicBlockData;
-  currentPoint: CurrentPoint;
-  setCurrentPoint: (point: CurrentPoint) => void;
-  isOnSelectedPath: boolean;
-}) {
-  return (
-    <table
-      cellSpacing={0}
-      cellPadding={4}
-      style={{
-        borderCollapse: "collapse",
-        width: "300px",
-        border: isOnSelectedPath ? "5px solid red" : "1px solid black",
-      }}
-    >
-      <tbody>
-        <tr>
-          <td>(on start)</td>
-          <td>
-            <b>bb{data.block}</b>
-          </td>
-        </tr>
-        {data.stmts.map((stmt, i) => (
-          <tr
-            className={
-              i === currentPoint.stmt && data.block === currentPoint.block
-                ? "highlight"
-                : ""
-            }
-            key={i}
-            onClick={() => setCurrentPoint({ block: data.block, stmt: i })}
-          >
-            <td>{i}</td>
-            <td>
-              <code>{stmt}</code>
-            </td>
-          </tr>
-        ))}
-        <tr
-          className={
-            currentPoint.stmt == data.stmts.length &&
-            data.block === currentPoint.block
-              ? "highlight"
-              : ""
-          }
-          onClick={() =>
-            setCurrentPoint({ block: data.block, stmt: data.stmts.length })
-          }
-        >
-          <td>T</td>
-          <td>
-            <code>{data.terminator}</code>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  );
+function layoutUnsizedNodes(
+  nodes: MirGraphNode[],
+  edges: { source: string; target: string }[],
+  showStorageStmts: boolean
+): DagreNode<BasicBlockData>[] {
+  const heightCalculatedNodes = nodes.map((node) => {
+    return {
+      id: node.id,
+      data: {
+        block: node.block,
+        stmts: node.stmts,
+        terminator: node.terminator,
+      },
+      height: computeTableHeight(node, showStorageStmts),
+      width: 300,
+    };
+  });
+  const g = layoutSizedNodes(heightCalculatedNodes, edges);
+  return g.nodes;
+}
+
+async function getGraphData(func: string): Promise<MirGraph> {
+  const graphFilePath = `data/${func}/mir.json`;
+  return await fetchJsonFile(graphFilePath);
+}
+
+async function getFunctions(): Promise<Record<string, string>> {
+  return await fetchJsonFile("data/functions.json");
 }
 
 const getPaths = async (functionName: string) => {
@@ -250,17 +145,19 @@ async function main() {
     );
     const [selectedPath, setSelectedPath] = useState<number>(initialPath);
     const [paths, setPaths] = useState<number[][]>(initialPaths);
-    const [nodes, setNodes] = useState([]);
-    const [edges, setEdges] = useState([]);
+    const [nodes, setNodes] = useState<DagreNode<BasicBlockData>[]>([]);
+    const [edges, setEdges] = useState<DagreEdge[]>([]);
     const [showPathBlocksOnly, setShowPathBlocksOnly] = useState(false);
-    const [graphHeight, setGraphHeight] = useState(800); // Default height
+    const [graphHeight, setGraphHeight] = useState(800);
+    const [showPCS, setShowPCS] = useState(true);
+    const [showStorageStmts, setShowStorageStmts] = useState(true);
 
     const fetchDotFile = async (filePath: string) => {
       const response = await fetch(filePath);
       return await response.text();
     };
 
-    async function loadDotGraph() {
+    async function loadPCSDotGraph() {
       const dotFilePath = `data/${selectedFunction}/block_${currentPoint.block}_stmt_${currentPoint.stmt}.dot`;
       const dotData = await fetchDotFile(dotFilePath);
       const dotGraph = document.getElementById("dot-graph");
@@ -275,19 +172,28 @@ async function main() {
     }
 
     useEffect(() => {
-      loadDotGraph();
+      const graph = document.getElementById("dot-graph");
+      if (showPCS) {
+        graph.style.display = "block";
+      } else {
+        graph.style.display = "none";
+      }
+    }, [showPCS]);
+
+    useEffect(() => {
+      loadPCSDotGraph();
     }, [currentPoint, selectedFunction]);
 
     useEffect(() => {
       if (selectedFunction) {
         (async function () {
-          const graphData = await getGraphData(selectedFunction);
-          const { nodes, edges } = layout(
-            graphData.initialNodes,
-            graphData.initialEdges,
-            { direction: "TB" }
+          const mirGraph = await getGraphData(selectedFunction);
+          const edges = toDagreEdges(mirGraph.edges);
+          const nodes = layoutUnsizedNodes(
+            mirGraph.nodes,
+            edges,
+            showStorageStmts
           );
-          console.log(nodes);
           setNodes(nodes);
           setEdges(edges);
           setPaths(await getPaths(selectedFunction));
@@ -298,9 +204,10 @@ async function main() {
     useEffect(() => {
       if (nodes.length > 0 && edges.length > 0) {
         const { filteredNodes, filteredEdges } = filterNodesAndEdges();
-        const { nodes: layoutedNodes } = layout(filteredNodes, filteredEdges, {
-          direction: "TB",
-        });
+        const { nodes: layoutedNodes } = layoutSizedNodes(
+          filteredNodes,
+          filteredEdges
+        );
 
         // Update positions of visible nodes, keep others unchanged
         setNodes(
@@ -338,59 +245,6 @@ async function main() {
       fetchHeapData();
     }, [selectedFunction, selectedPath, currentPoint, paths]);
 
-    useEffect(() => {
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (
-          event.key === "ArrowUp" ||
-          event.key === "ArrowDown" ||
-          event.key === "j" ||
-          event.key === "k"
-        ) {
-          event.preventDefault(); // Prevent scrolling
-          setCurrentPoint((prevPoint) => {
-            const currentNode = nodes.find(
-              (node) => node.data.block === prevPoint.block
-            );
-            if (!currentNode) return prevPoint;
-
-            const stmtCount = currentNode.data.stmts.length + 1;
-            let newStmt = prevPoint.stmt;
-
-            if (event.key === "ArrowUp" || event.key === "k") {
-              newStmt = (newStmt - 1 + stmtCount) % stmtCount;
-            } else if (event.key === "ArrowDown" || event.key === "j") {
-              newStmt = (newStmt + 1) % stmtCount;
-            }
-
-            return { ...prevPoint, stmt: newStmt };
-          });
-        } else if (event.key >= "0" && event.key <= "9") {
-          const newBlock = parseInt(event.key);
-          setCurrentPoint({ block: newBlock, stmt: 0 });
-        }
-      };
-
-      window.addEventListener("keydown", handleKeyDown);
-      return () => {
-        window.removeEventListener("keydown", handleKeyDown);
-      };
-    }, [nodes]);
-
-    useEffect(() => {
-      if (nodes.length > 0) {
-        const maxY = Math.max(...nodes.map((node) => node.y + node.height));
-        setGraphHeight(maxY + 100); // Add some padding
-      }
-    }, [nodes]);
-
-    useEffect(() => {
-      localStorage.setItem("selectedFunction", selectedFunction);
-    }, [selectedFunction]);
-
-    useEffect(() => {
-      localStorage.setItem("selectedPath", selectedPath.toString());
-    }, [selectedPath]);
-
     const filterNodesAndEdges = () => {
       if (!showPathBlocksOnly || paths.length === 0) {
         return { filteredNodes: nodes, filteredEdges: edges };
@@ -415,6 +269,120 @@ async function main() {
     };
 
     const { filteredNodes, filteredEdges } = filterNodesAndEdges();
+
+    useEffect(() => {
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (
+          event.key === "ArrowUp" ||
+          event.key === "ArrowDown" ||
+          event.key === "j" ||
+          event.key === "k"
+        ) {
+          event.preventDefault(); // Prevent scrolling
+          setCurrentPoint((prevPoint) => {
+            const currentNode = nodes.find(
+              (node) => node.data.block === prevPoint.block
+            );
+            if (!currentNode) return prevPoint;
+
+            const stmtCount = currentNode.data.stmts.length + 1;
+
+            const isSelectable = (node: BasicBlockData, idx: number) => {
+              if (showStorageStmts || idx === stmtCount - 1) {
+                return true;
+              } else {
+                return !isStorageStmt(node.stmts[idx]);
+              }
+            };
+
+            const getNextStmtIdx = (node: BasicBlockData, from: number) => {
+              const offset = direction === "up" ? -1 : 1;
+              let idx = from + offset;
+              while (idx >= 0 && idx < stmtCount) {
+                if (isSelectable(node, idx)) {
+                  return idx;
+                } else {
+                  console.log(
+                    `${currentNode.data.stmts[idx]}[${currentNode.data.block}:${idx}] is not selectable`
+                  );
+                }
+                idx += offset;
+              }
+              return null;
+            };
+
+            const direction =
+              event.key === "ArrowUp" || event.key === "k" ? "up" : "down";
+
+            const nextStmtIdx = getNextStmtIdx(
+              currentNode.data,
+              prevPoint.stmt
+            );
+            if (nextStmtIdx !== null) {
+              return { ...prevPoint, stmt: nextStmtIdx };
+            } else {
+              const currBlockIdx = filteredNodes.findIndex(
+                (node) => node.data.block === prevPoint.block
+              );
+              if (direction === "down") {
+                const nextBlockIdx = (currBlockIdx + 1) % filteredNodes.length;
+                const data = filteredNodes[nextBlockIdx].data;
+                return {
+                  block: filteredNodes[nextBlockIdx].data.block,
+                  stmt: getNextStmtIdx(data, -1),
+                };
+              } else {
+                const nextBlockIdx =
+                  (currBlockIdx - 1 + filteredNodes.length) %
+                  filteredNodes.length;
+                const data = filteredNodes[nextBlockIdx].data;
+                return {
+                  block: data.block,
+                  stmt: data.stmts.length,
+                };
+              }
+            }
+          });
+        } else if (event.key >= "0" && event.key <= "9") {
+          const newBlock = parseInt(event.key);
+          setCurrentPoint({ block: newBlock, stmt: 0 });
+        }
+      };
+
+      window.addEventListener("keydown", handleKeyDown);
+      return () => {
+        window.removeEventListener("keydown", handleKeyDown);
+      };
+    }, [nodes, showPathBlocksOnly]);
+
+    useEffect(() => {
+      if (nodes.length > 0) {
+        const maxY = Math.max(...nodes.map((node) => node.y + node.height));
+        setGraphHeight(maxY + 100); // Add some padding
+      }
+    }, [nodes]);
+
+    useEffect(() => {
+      localStorage.setItem("selectedFunction", selectedFunction);
+    }, [selectedFunction]);
+
+    useEffect(() => {
+      localStorage.setItem("selectedPath", selectedPath.toString());
+    }, [selectedPath]);
+
+    useEffect(() => {
+      const resizedNodes = layoutUnsizedNodes(
+        nodes.map((node) => ({
+          id: node.id,
+          block: node.data.block,
+          stmts: node.data.stmts,
+          terminator: node.data.terminator,
+        })),
+        edges,
+        showStorageStmts
+      );
+      setNodes(resizedNodes);
+    }, [showStorageStmts]);
 
     const isBlockOnSelectedPath = useCallback(
       (block: number) => {
@@ -464,23 +432,44 @@ async function main() {
             />
             Show path blocks only
           </label>
+          <br />
+          <label>
+            <input
+              type="checkbox"
+              checked={showPCS}
+              onChange={(e) => setShowPCS(e.target.checked)}
+            />
+            Show PCS
+          </label>
+          <br />
+          <label>
+            <input
+              type="checkbox"
+              checked={showStorageStmts}
+              onChange={(e) => setShowStorageStmts(e.target.checked)}
+            />
+            Show storage statements
+          </label>
         </div>
         <div className="graph-container" style={{ height: graphHeight }}>
           <div id="mir-graph">
-            {filteredNodes.map((node) => (
-              <BasicBlockNode
-                isOnSelectedPath={isBlockOnSelectedPath(node.data.block)}
-                key={node.id}
-                data={node.data}
-                height={node.height}
-                position={{
-                  x: node.x,
-                  y: node.y,
-                }}
-                currentPoint={currentPoint}
-                setCurrentPoint={setCurrentPoint}
-              />
-            ))}
+            {filteredNodes.map((node) => {
+              return (
+                <BasicBlockNode
+                  isOnSelectedPath={isBlockOnSelectedPath(node.data.block)}
+                  key={node.id}
+                  data={node.data}
+                  height={node.height}
+                  position={{
+                    x: node.x,
+                    y: node.y,
+                  }}
+                  currentPoint={currentPoint}
+                  setCurrentPoint={setCurrentPoint}
+                  showStorageStmts={showStorageStmts}
+                />
+              );
+            })}
           </div>
           {filteredEdges.map((edge) => (
             <Edge key={edge.id} edge={edge} nodes={filteredNodes} />
@@ -489,7 +478,7 @@ async function main() {
         {pathData && (
           <>
             <SymbolicHeap heap={pathData.heap} />
-            <BorrowsAndActions pathData={pathData} />
+            {/* <BorrowsAndActions pathData={pathData} /> */}
           </>
         )}
       </div>
