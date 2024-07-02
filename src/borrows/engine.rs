@@ -12,10 +12,10 @@ use rustc_interface::{
     index::IndexVec,
     middle::{
         mir::{
-            visit::{TyContext, Visitor},VarDebugInfo,
+            visit::{TyContext, Visitor},
             BasicBlock, Body, CallReturnPlaces, HasLocalDecls, Local, Location, Operand, Place,
             ProjectionElem, Promoted, Rvalue, Statement, StatementKind, Terminator,
-            TerminatorEdges, TerminatorKind, RETURN_PLACE, START_BLOCK,
+            TerminatorEdges, TerminatorKind, VarDebugInfo, RETURN_PLACE, START_BLOCK,
         },
         ty::{self, Region, RegionKind, RegionVid, TyCtxt, TypeVisitor},
     },
@@ -23,7 +23,7 @@ use rustc_interface::{
 use serde_json::{json, Value};
 
 use crate::{
-    borrows::domain::RegionAbstraction,
+    borrows::domain::{PlaceSnapshot, RegionAbstraction},
     rustc_interface,
     utils::{self, PlaceRepacker},
 };
@@ -57,28 +57,6 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         }
     }
 
-    fn tag_deref_of_place_with_location(
-        &self,
-        state: &mut BorrowsState<'tcx>,
-        place: utils::Place<'tcx>,
-        location: Location,
-    ) {
-        state.borrows = state
-            .borrows
-            .clone()
-            .into_iter()
-            .map(|mut borrow| {
-                if borrow.borrowed_place.place().is_deref_of(place) {
-                    borrow.borrowed_place = MaybeOldPlace::OldPlace {
-                        place: borrow.borrowed_place.place(),
-                        before: location,
-                    };
-                }
-                borrow
-            })
-            .collect();
-    }
-
     fn get_regions_in(&self, ty: ty::Ty<'tcx>, location: Location) -> HashSet<RegionVid> {
         struct RegionVisitor(HashSet<RegionVid>);
 
@@ -110,8 +88,12 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
             .iter()
             .filter_map(
                 |(loan_point, loan)| match self.location_table.to_location(*loan_point) {
-                    RichLocation::Start(loan_location) if loan_location == location && start => Some(*loan),
-                    RichLocation::Mid(loan_location) if loan_location == location && !start => Some(*loan),
+                    RichLocation::Start(loan_location) if loan_location == location && start => {
+                        Some(*loan)
+                    }
+                    RichLocation::Mid(loan_location) if loan_location == location && !start => {
+                        Some(*loan)
+                    }
                     _ => None,
                 },
             )
@@ -124,8 +106,12 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
             .iter()
             .find_map(
                 |(_, loan, loan_point)| match self.location_table.to_location(*loan_point) {
-                    RichLocation::Start(loan_location) if loan_location == location && start => Some(*loan),
-                    RichLocation::Mid(loan_location) if loan_location == location && !start => Some(*loan),
+                    RichLocation::Start(loan_location) if loan_location == location && start => {
+                        Some(*loan)
+                    }
+                    RichLocation::Mid(loan_location) if loan_location == location && !start => {
+                        Some(*loan)
+                    }
                     _ => None,
                 },
             )
@@ -149,7 +135,7 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
             .borrows
             .clone()
             .into_iter()
-            .partition(|borrow| borrow.assigned_place.place() == assigned_to.into());
+            .partition(|borrow| borrow.assigned_place.place == assigned_to.into());
 
         state.borrows = to_keep;
 
@@ -228,7 +214,7 @@ pub enum BorrowAction<'state, 'tcx> {
     RemoveBorrow(&'state Borrow<'tcx>),
 }
 
-impl <'state, 'tcx> BorrowAction<'state, 'tcx> {
+impl<'state, 'tcx> BorrowAction<'state, 'tcx> {
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         match self {
             BorrowAction::AddBorrow(borrow) => json!({
@@ -241,7 +227,6 @@ impl <'state, 'tcx> BorrowAction<'state, 'tcx> {
             }),
         }
     }
-
 }
 
 impl<'tcx> JoinSemiLattice for BorrowsDomain<'tcx> {
@@ -280,10 +265,12 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
     ) {
         state.before_start = state.after.clone();
         for loan in self.loans_invalidated_at(location, true) {
-            state.after.remove_rustc_borrow(&loan);
+            state.after.remove_rustc_borrow(&loan, &self.body);
         }
         if let Some(loan) = self.loan_issued_at_location(location, true) {
-            state.after.add_rustc_borrow(loan, &self.borrow_set);
+            state
+                .after
+                .add_rustc_borrow(loan, &self.borrow_set, location);
         }
         state.before_after = state.after.clone();
     }
@@ -296,45 +283,72 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
     ) {
         state.start = state.after.clone();
         for loan in self.loans_invalidated_at(location, false) {
-            state.after.remove_rustc_borrow(&loan);
+            state.after.remove_rustc_borrow(&loan, &self.body);
         }
         if let Some(loan) = self.loan_issued_at_location(location, false) {
-            state.after.add_rustc_borrow(loan, &self.borrow_set);
+            state
+                .after
+                .add_rustc_borrow(loan, &self.borrow_set, location);
         }
         match &statement.kind {
-            StatementKind::Assign(box (target, rvalue)) => match rvalue {
-                Rvalue::Use(Operand::Move(from)) => {
-                    for mut borrow in self.remove_loans_assigned_to(&mut state.after, *target) {
-                        borrow.assigned_place = MaybeOldPlace::OldPlace {
-                            place: (*target).into(),
-                            before: location,
-                        };
-                        state.after.add_borrow(borrow);
-                        // state.log_action(format!(
-                        //     "Removed loan assigned to {:?} due to move {:?} -> {:?}:  {:?}",
-                        //     target, from, target, borrow
-                        // ));
+            StatementKind::Assign(box (target, rvalue)) => {
+                eprintln!("Assign {:?}", rvalue);
+                match rvalue {
+                    Rvalue::Use(Operand::Move(from)) => {
+                        for mut borrow in self.remove_loans_assigned_to(&mut state.after, *target) {
+                            borrow.assigned_place = PlaceSnapshot {
+                                place: (*target).into(),
+                                at: location,
+                            };
+                            state.after.add_borrow(borrow);
+                            // state.log_action(format!(
+                            //     "Removed loan assigned to {:?} due to move {:?} -> {:?}:  {:?}",
+                            //     target, from, target, borrow
+                            // ));
+                        }
+                        let loans_to_move = self.remove_loans_assigned_to(&mut state.after, *from);
+                        for loan in loans_to_move {
+                            state.after.add_borrow(Borrow::new(
+                                BorrowKind::PCS,
+                                loan.borrowed_place.place,
+                                (*target).into(),
+                                loan.is_mut,
+                                location,
+                            ));
+                        }
                     }
-                    let loans_to_move = self.remove_loans_assigned_to(&mut state.after, *from);
-                    for loan in loans_to_move {
-                        state.after.add_borrow(Borrow::new(
-                            BorrowKind::PCS,
-                            loan.borrowed_place.place(),
-                            (*target).into(),
-                            loan.is_mut
-                        ));
-                    }
-                    self.tag_deref_of_place_with_location(
-                        &mut state.after,
-                        (*target).into(),
-                        location,
-                    );
+                    _ => {}
                 }
-                _ => {}
-            },
+                match rvalue {
+                    Rvalue::Use(Operand::Copy(place)) | Rvalue::Use(Operand::Move(place)) => {
+                        for elem in place.projection {
+                            eprintln!("Projection elem: {:?}", elem);
+                        }
+                    }
+                    Rvalue::Use(other) => eprintln!("Other: {:?}", other),
+                    Rvalue::Repeat(_, _) => todo!(),
+                    Rvalue::Ref(_, kind, place) => {
+                        if place.projection.first() == Some(&ProjectionElem::Deref) {
+                            let target_projection = &place.projection[1..];
+                            let target_place = utils::Place::new(place.local, target_projection);
+                            let target_place = PlaceSnapshot {
+                                place: target_place,
+                                at: location,
+                            };
+                            let orig_borrow_place = state
+                                .after
+                                .place_loaned_to_place(target_place.place, &self.body);
+                            if let Some(orig_borrow_place) = orig_borrow_place {
+                                state.after.add_reborrow(orig_borrow_place, target_place);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
             StatementKind::StorageDead(local) => {
                 state.after.borrows.retain(|borrow| {
-                    if borrow.assigned_place.place().local == *local {
+                    if borrow.assigned_place.place.local == *local {
                         false
                     } else {
                         true

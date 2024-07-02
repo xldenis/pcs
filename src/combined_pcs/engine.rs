@@ -125,7 +125,7 @@ impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
             match action {
                 crate::borrows::engine::BorrowAction::AddBorrow(_) => {}
                 crate::borrows::engine::BorrowAction::RemoveBorrow(bw) => match bw.assigned_place {
-                    crate::borrows::domain::MaybeOldPlace::Current { place } => {
+                    crate::borrows::domain::PlaceSnapshot { place, .. } => {
                         if let CapabilityLocal::Allocated(cap) = &mut state[place.local] {
                             let related = cap.find_all_related(place, None);
                             if related.relation == PlaceOrdering::Suffix {
@@ -149,7 +149,7 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
     ) {
         match &statement.kind {
             StatementKind::Assign(box (place, Rvalue::Use(operand))) if let Some(place) = operand.place() => {
-                if let Some(place) = state.borrows.after.reference_targeting_place(place.into(), self.cgx.mir.borrow_set.as_ref()) {
+                if let Some(place) = state.borrows.after.reference_targeting_place(place.into(), self.cgx.mir.borrow_set.as_ref(), &self.cgx.mir.body) {
                     if let CapabilityLocal::Allocated(cap) = &mut state.fpcs.after[place.local] {
                         let related = cap.find_all_related(place, Some(crate::utils::PlaceOrdering::Suffix));
                         cap.collapse(related.get_from(), place, self.cgx.rp);

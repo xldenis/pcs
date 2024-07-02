@@ -291,13 +291,13 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
         for borrow in &self.borrows_domain.borrows {
             let borrowed_place = self.insert_place_and_previous_projections(
-                borrow.borrowed_place.place().into(),
-                borrow.borrowed_place.before_location(),
+                borrow.borrowed_place.place.into(),
+                Some(borrow.borrowed_place.at),
                 None,
             );
             let assigned_place = self.insert_place_and_previous_projections(
-                borrow.assigned_place.place().into(),
-                borrow.assigned_place.before_location(),
+                borrow.assigned_place.place.into(),
+                Some(borrow.assigned_place.at),
                 None,
             );
             match borrow.kind {
@@ -321,11 +321,17 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
 
         let mut before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
         for borrow in &self.borrows_domain.borrows {
-            if let MaybeOldPlace::OldPlace { place, before } = borrow.assigned_place {
-                before_places.insert((place, before));
+            if !self
+                .borrows_domain
+                .is_current(&borrow.assigned_place, self.repacker.body())
+            {
+                before_places.insert((borrow.assigned_place.place, borrow.assigned_place.at));
             }
-            if let MaybeOldPlace::OldPlace { place, before } = borrow.borrowed_place {
-                before_places.insert((place, before));
+            if !self
+                .borrows_domain
+                .is_current(&borrow.borrowed_place, self.repacker.body())
+            {
+                before_places.insert((borrow.borrowed_place.place, borrow.borrowed_place.at));
             }
         }
         for (place, location) in before_places.iter() {
