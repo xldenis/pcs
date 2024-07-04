@@ -51,6 +51,7 @@ export type BorrowAction = {
 
 export type PathData = {
   heap: Record<string, string>;
+  pcs: string[],
   borrow_actions_start: BorrowAction[];
   borrow_actions_mid: BorrowAction[];
   borrows: {

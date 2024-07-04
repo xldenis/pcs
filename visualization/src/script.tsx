@@ -5,7 +5,7 @@ import * as dagre from "@dagrejs/dagre";
 import * as Viz from "@viz-js/viz";
 
 import BorrowsAndActions from "./components/BorrowsAndActions";
-import BasicBlockTable, {
+import {
   computeTableHeight,
   isStorageStmt,
 } from "./components/BasicBlockTable";
@@ -21,29 +21,18 @@ import {
 import Edge from "./components/Edge";
 import SymbolicHeap from "./components/SymbolicHeap";
 import BasicBlockNode from "./components/BasicBlockNode";
-
-const fetchJsonFile = async (filePath: string) => {
-  const response = await fetch(filePath);
-  return await response.json();
-};
-
-type MirGraphNode = {
-  id: string;
-  block: number;
-  stmts: string[];
-  terminator: string;
-};
-
-type MirGraphEdge = {
-  source: string;
-  target: string;
-  label: string;
-};
-
-type MirGraph = {
-  nodes: MirGraphNode[];
-  edges: MirGraphEdge[];
-};
+import PathConditions from "./components/PathConditions";
+import Assertions, { Assertion } from "./components/Assertions";
+import {
+  MirGraphEdge,
+  MirGraphNode,
+  getAssertions,
+  getFunctions,
+  getGraphData,
+  getPathData,
+  getPaths,
+} from "./api";
+import { filterNodesAndEdges } from "./mir_graph";
 
 const layoutSizedNodes = (
   nodes: DagreInputNode<BasicBlockData>[],
@@ -57,9 +46,15 @@ const layoutSizedNodes = (
 
   dagre.layout(g);
 
+  let height = g.graph().height;
+  if (!isFinite(height)) {
+    height = null;
+  }
+
   return {
     nodes: nodes as DagreNode<BasicBlockData>[],
     edges,
+    height,
   };
 };
 
@@ -77,7 +72,10 @@ function layoutUnsizedNodes(
   nodes: MirGraphNode[],
   edges: { source: string; target: string }[],
   showStorageStmts: boolean
-): DagreNode<BasicBlockData>[] {
+): {
+  nodes: DagreNode<BasicBlockData>[];
+  height: number;
+} {
   const heightCalculatedNodes = nodes.map((node) => {
     return {
       id: node.id,
@@ -91,28 +89,11 @@ function layoutUnsizedNodes(
     };
   });
   const g = layoutSizedNodes(heightCalculatedNodes, edges);
-  return g.nodes;
+  return {
+    nodes: g.nodes,
+    height: g.height,
+  };
 }
-
-async function getGraphData(func: string): Promise<MirGraph> {
-  const graphFilePath = `data/${func}/mir.json`;
-  return await fetchJsonFile(graphFilePath);
-}
-
-async function getFunctions(): Promise<Record<string, string>> {
-  return await fetchJsonFile("data/functions.json");
-}
-
-const getPaths = async (functionName: string) => {
-  try {
-    const paths: number[][] = await fetchJsonFile(
-      `data/${functionName}/paths.json`
-    );
-    return paths;
-  } catch (error) {
-    return [];
-  }
-};
 
 async function main() {
   const viz = await Viz.instance();
@@ -122,6 +103,7 @@ async function main() {
     initialFunction = Object.keys(functions)[0];
   }
   const initialPaths = await getPaths(initialFunction);
+  const initialAssertions = await getAssertions(initialFunction);
 
   let initialPath = 0;
   let initialPathStr = localStorage.getItem("selectedPath");
@@ -145,12 +127,37 @@ async function main() {
     );
     const [selectedPath, setSelectedPath] = useState<number>(initialPath);
     const [paths, setPaths] = useState<number[][]>(initialPaths);
-    const [nodes, setNodes] = useState<DagreNode<BasicBlockData>[]>([]);
-    const [edges, setEdges] = useState<DagreEdge[]>([]);
-    const [showPathBlocksOnly, setShowPathBlocksOnly] = useState(false);
-    const [graphHeight, setGraphHeight] = useState(800);
-    const [showPCS, setShowPCS] = useState(true);
-    const [showStorageStmts, setShowStorageStmts] = useState(true);
+    const [assertions, setAssertions] =
+      useState<Assertion[]>(initialAssertions);
+    const [nodes, setNodes] = useState<MirGraphNode[]>([]);
+    const [edges, setEdges] = useState<MirGraphEdge[]>([]);
+    const [showPathBlocksOnly, setShowPathBlocksOnly] = useState(
+      localStorage.getItem("showPathBlocksOnly") === "true"
+    );
+    const [showUnwindEdges, setShowUnwindEdges] = useState(false);
+    const [showPCS, setShowPCS] = useState(
+      localStorage.getItem("showPCS") === "true"
+    );
+    const [showStorageStmts, setShowStorageStmts] = useState(
+      localStorage.getItem("showStorageStmts") === "true"
+    );
+
+    const { filteredNodes, filteredEdges } = filterNodesAndEdges(nodes, edges, {
+      showUnwindEdges,
+      path:
+        showPathBlocksOnly && selectedPath < paths.length
+          ? paths[selectedPath]
+          : null,
+    });
+
+    const layoutResult = useMemo(() => {
+      return layoutUnsizedNodes(filteredNodes, filteredEdges, showStorageStmts);
+    }, [filteredNodes, filteredEdges, showStorageStmts]);
+
+    const dagreNodes = layoutResult.nodes;
+    const dagreEdges = useMemo(() => {
+      return toDagreEdges(filteredEdges);
+    }, [filteredEdges]);
 
     const fetchDotFile = async (filePath: string) => {
       const response = await fetch(filePath);
@@ -188,87 +195,41 @@ async function main() {
       if (selectedFunction) {
         (async function () {
           const mirGraph = await getGraphData(selectedFunction);
-          const edges = toDagreEdges(mirGraph.edges);
-          const nodes = layoutUnsizedNodes(
-            mirGraph.nodes,
-            edges,
-            showStorageStmts
-          );
-          setNodes(nodes);
-          setEdges(edges);
+          setNodes(mirGraph.nodes);
+          setEdges(mirGraph.edges);
           setPaths(await getPaths(selectedFunction));
         })();
       }
     }, [selectedFunction]);
 
     useEffect(() => {
-      if (nodes.length > 0 && edges.length > 0) {
-        const { filteredNodes, filteredEdges } = filterNodesAndEdges();
-        const { nodes: layoutedNodes } = layoutSizedNodes(
-          filteredNodes,
-          filteredEdges
-        );
-
-        // Update positions of visible nodes, keep others unchanged
-        setNodes(
-          nodes.map((node) => {
-            const layoutedNode = layoutedNodes.find((n) => n.id === node.id);
-            if (layoutedNode) {
-              return { ...node, x: layoutedNode.x, y: layoutedNode.y };
-            }
-            return node;
-          })
-        );
-      }
-    }, [showPathBlocksOnly, selectedPath]);
-
-    useEffect(() => {
-      const fetchHeapData = async () => {
+      const fetchPathData = async () => {
         if (paths.length === 0 || selectedPath >= paths.length) return;
 
         const currentPath = paths[selectedPath];
         const currentBlockIndex = currentPath.indexOf(currentPoint.block);
 
-        if (currentBlockIndex === -1) return;
+        if (currentBlockIndex === -1) {
+          setPathData(null);
+          return;
+        }
 
         const pathToCurrentBlock = currentPath.slice(0, currentBlockIndex + 1);
-        const heapFilePath = `data/${selectedFunction}/path_${pathToCurrentBlock.map((block) => `bb${block}`).join("_")}_stmt_${currentPoint.stmt}.json`;
 
         try {
-          const data: PathData = await fetchJsonFile(heapFilePath);
+          const data: PathData = await getPathData(
+            selectedFunction,
+            pathToCurrentBlock,
+            currentPoint.stmt
+          );
           setPathData(data);
         } catch (error) {
           console.error("Error fetching path data:", error);
         }
       };
 
-      fetchHeapData();
+      fetchPathData();
     }, [selectedFunction, selectedPath, currentPoint, paths]);
-
-    const filterNodesAndEdges = () => {
-      if (!showPathBlocksOnly || paths.length === 0) {
-        return { filteredNodes: nodes, filteredEdges: edges };
-      }
-
-      const currentPath = paths[selectedPath];
-      const filteredNodes = nodes.filter((node) =>
-        currentPath.includes(node.data.block)
-      );
-      const filteredEdges = edges.filter((edge) => {
-        const sourceNode = nodes.find((n) => n.id === edge.source);
-        const targetNode = nodes.find((n) => n.id === edge.target);
-        return (
-          sourceNode &&
-          targetNode &&
-          currentPath.includes(sourceNode.data.block) &&
-          currentPath.includes(targetNode.data.block)
-        );
-      });
-
-      return { filteredNodes, filteredEdges };
-    };
-
-    const { filteredNodes, filteredEdges } = filterNodesAndEdges();
 
     useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -281,29 +242,30 @@ async function main() {
           event.preventDefault(); // Prevent scrolling
           setCurrentPoint((prevPoint) => {
             const currentNode = nodes.find(
-              (node) => node.data.block === prevPoint.block
+              (node) => node.block === prevPoint.block
             );
             if (!currentNode) return prevPoint;
 
-            const stmtCount = currentNode.data.stmts.length + 1;
-
-            const isSelectable = (node: BasicBlockData, idx: number) => {
-              if (showStorageStmts || idx === stmtCount - 1) {
+            const isSelectable = (node: { stmts: string[] }, idx: number) => {
+              if (showStorageStmts || idx === node.stmts.length) {
                 return true;
               } else {
                 return !isStorageStmt(node.stmts[idx]);
               }
             };
 
-            const getNextStmtIdx = (node: BasicBlockData, from: number) => {
+            const getNextStmtIdx = (
+              node: { stmts: string[] },
+              from: number
+            ) => {
               const offset = direction === "up" ? -1 : 1;
               let idx = from + offset;
-              while (idx >= 0 && idx < stmtCount) {
+              while (idx >= 0 && idx <= node.stmts.length) {
                 if (isSelectable(node, idx)) {
                   return idx;
                 } else {
                   console.log(
-                    `${currentNode.data.stmts[idx]}[${currentNode.data.block}:${idx}] is not selectable`
+                    `${node.stmts[idx]}[${currentNode.block}:${idx}] is not selectable`
                   );
                 }
                 idx += offset;
@@ -314,28 +276,25 @@ async function main() {
             const direction =
               event.key === "ArrowUp" || event.key === "k" ? "up" : "down";
 
-            const nextStmtIdx = getNextStmtIdx(
-              currentNode.data,
-              prevPoint.stmt
-            );
+            const nextStmtIdx = getNextStmtIdx(currentNode, prevPoint.stmt);
             if (nextStmtIdx !== null) {
               return { ...prevPoint, stmt: nextStmtIdx };
             } else {
               const currBlockIdx = filteredNodes.findIndex(
-                (node) => node.data.block === prevPoint.block
+                (node) => node.block === prevPoint.block
               );
               if (direction === "down") {
                 const nextBlockIdx = (currBlockIdx + 1) % filteredNodes.length;
-                const data = filteredNodes[nextBlockIdx].data;
+                const data = filteredNodes[nextBlockIdx];
                 return {
-                  block: filteredNodes[nextBlockIdx].data.block,
+                  block: filteredNodes[nextBlockIdx].block,
                   stmt: getNextStmtIdx(data, -1),
                 };
               } else {
                 const nextBlockIdx =
                   (currBlockIdx - 1 + filteredNodes.length) %
                   filteredNodes.length;
-                const data = filteredNodes[nextBlockIdx].data;
+                const data = filteredNodes[nextBlockIdx];
                 return {
                   block: data.block,
                   stmt: data.stmts.length,
@@ -355,34 +314,17 @@ async function main() {
       };
     }, [nodes, showPathBlocksOnly]);
 
-    useEffect(() => {
-      if (nodes.length > 0) {
-        const maxY = Math.max(...nodes.map((node) => node.y + node.height));
-        setGraphHeight(maxY + 100); // Add some padding
-      }
-    }, [nodes]);
+    function addLocalStorageCallback(key: string, value: any) {
+      useEffect(() => {
+        localStorage.setItem(key, value.toString());
+      }, [value]);
+    }
 
-    useEffect(() => {
-      localStorage.setItem("selectedFunction", selectedFunction);
-    }, [selectedFunction]);
-
-    useEffect(() => {
-      localStorage.setItem("selectedPath", selectedPath.toString());
-    }, [selectedPath]);
-
-    useEffect(() => {
-      const resizedNodes = layoutUnsizedNodes(
-        nodes.map((node) => ({
-          id: node.id,
-          block: node.data.block,
-          stmts: node.data.stmts,
-          terminator: node.data.terminator,
-        })),
-        edges,
-        showStorageStmts
-      );
-      setNodes(resizedNodes);
-    }, [showStorageStmts]);
+    addLocalStorageCallback("selectedFunction", selectedFunction);
+    addLocalStorageCallback("selectedPath", selectedPath);
+    addLocalStorageCallback("showPathBlocksOnly", showPathBlocksOnly);
+    addLocalStorageCallback("showPCS", showPCS);
+    addLocalStorageCallback("showStorageStmts", showStorageStmts);
 
     const isBlockOnSelectedPath = useCallback(
       (block: number) => {
@@ -451,9 +393,12 @@ async function main() {
             Show storage statements
           </label>
         </div>
-        <div className="graph-container" style={{ height: graphHeight }}>
+        <div
+          className="graph-container"
+          style={{ height: layoutResult.height + 100 }}
+        >
           <div id="mir-graph">
-            {filteredNodes.map((node) => {
+            {dagreNodes.map((node) => {
               return (
                 <BasicBlockNode
                   isOnSelectedPath={isBlockOnSelectedPath(node.data.block)}
@@ -471,13 +416,17 @@ async function main() {
               );
             })}
           </div>
-          {filteredEdges.map((edge) => (
-            <Edge key={edge.id} edge={edge} nodes={filteredNodes} />
+          {dagreEdges.map((edge) => (
+            <Edge key={edge.id} edge={edge} nodes={dagreNodes} />
           ))}
         </div>
         {pathData && (
           <>
-            <SymbolicHeap heap={pathData.heap} />
+            <div style={{ position: "absolute", top: "20px", right: "20px" }}>
+              <SymbolicHeap heap={pathData.heap} />
+              <PathConditions pcs={pathData.pcs} />
+              <Assertions assertions={assertions} />
+            </div>
             {/* <BorrowsAndActions pathData={pathData} /> */}
           </>
         )}

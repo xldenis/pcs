@@ -292,7 +292,6 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         }
         match &statement.kind {
             StatementKind::Assign(box (target, rvalue)) => {
-                eprintln!("Assign {:?}", rvalue);
                 match rvalue {
                     Rvalue::Use(Operand::Move(from)) => {
                         for mut borrow in self.remove_loans_assigned_to(&mut state.after, *target) {
@@ -321,11 +320,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                 }
                 match rvalue {
                     Rvalue::Use(Operand::Copy(place)) | Rvalue::Use(Operand::Move(place)) => {
-                        for elem in place.projection {
-                            eprintln!("Projection elem: {:?}", elem);
-                        }
                     }
-                    Rvalue::Use(other) => eprintln!("Other: {:?}", other),
                     Rvalue::Repeat(_, _) => todo!(),
                     Rvalue::Ref(_, kind, place) => {
                         if place.projection.first() == Some(&ProjectionElem::Deref) {
