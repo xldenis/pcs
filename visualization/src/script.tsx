@@ -427,7 +427,7 @@ async function main() {
               <PathConditions pcs={pathData.pcs} />
               <Assertions assertions={assertions} />
             </div>
-            {/* <BorrowsAndActions pathData={pathData} /> */}
+            <BorrowsAndActions pathData={pathData} />
           </>
         )}
       </div>

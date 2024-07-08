@@ -1,10 +1,12 @@
 use std::rc::Rc;
 
 use rustc_interface::{
+    ast::Mutability,
     borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
     data_structures::fx::{FxHashMap, FxHashSet},
     dataflow::{AnalysisDomain, JoinSemiLattice},
     middle::mir::{self, Location, VarDebugInfo},
+    middle::ty::TyCtxt,
 };
 
 use crate::{rustc_interface, utils::Place};
@@ -20,6 +22,11 @@ impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
         for region_abstraction in &other.region_abstractions {
             if !self.region_abstractions.contains(region_abstraction) {
                 self.region_abstractions.push(region_abstraction.clone());
+                changed = true;
+            }
+        }
+        for reborrow in &other.reborrows.reborrows {
+            if self.reborrows.insert(reborrow.clone()) {
                 changed = true;
             }
         }
@@ -56,7 +63,16 @@ pub struct PlaceSnapshot<'tcx> {
     pub at: Location,
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+impl<'tcx> PlaceSnapshot<'tcx> {
+    pub fn project_deref(&self, tcx: TyCtxt<'tcx>) -> PlaceSnapshot<'tcx> {
+        PlaceSnapshot {
+            place: self.place.project_deref(tcx),
+            at: self.at,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
 pub enum MaybeOldPlace<'tcx> {
     Current { place: Place<'tcx> },
     OldPlace(PlaceSnapshot<'tcx>),
@@ -142,7 +158,7 @@ pub enum BorrowKind {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct BorrowsState<'tcx> {
-    pub latest: FxHashMap<Place<'tcx>, Location>,
+    latest: FxHashMap<Place<'tcx>, Location>,
     pub reborrows: ReborrowingDag<'tcx>,
     pub borrows: FxHashSet<Borrow<'tcx>>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
@@ -153,25 +169,144 @@ use serde_json::{json, Value};
 
 use super::engine::BorrowAction;
 
+#[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
+pub struct Reborrow<'tcx> {
+    pub blocked_place: MaybeOldPlace<'tcx>,
+    pub assigned_place: MaybeOldPlace<'tcx>,
+    pub mutability: Mutability,
+}
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct ReborrowingDag<'tcx> {
-    pub reborrows: FxHashSet<(PlaceSnapshot<'tcx>, PlaceSnapshot<'tcx>)>,
+    reborrows: FxHashSet<Reborrow<'tcx>>,
 }
 
 impl<'tcx> ReborrowingDag<'tcx> {
+    pub fn iter(&self) -> impl Iterator<Item = &Reborrow<'tcx>> {
+        self.reborrows.iter()
+    }
+
     pub fn new() -> Self {
         Self {
             reborrows: FxHashSet::default(),
         }
     }
-    pub fn add_reborrow(&mut self, from_place: PlaceSnapshot<'tcx>, to_place: PlaceSnapshot<'tcx>) {
-        self.reborrows.insert((from_place, to_place));
+
+    pub fn ensure_acyclic(&self) {
+        let mut reborrows = self.reborrows.clone();
+        while reborrows.len() > 0 {
+            let old_reborrows = reborrows.clone();
+            reborrows.retain(|reborrow| {
+                old_reborrows
+                    .iter()
+                    .any(|ob| ob.blocked_place == reborrow.assigned_place)
+            });
+            if reborrows.len() == old_reborrows.len() {
+                panic!("Cycle")
+            }
+        }
+    }
+
+    pub fn get_source(&self, place: Place<'tcx>) -> Option<(MaybeOldPlace<'tcx>, Mutability)> {
+        let source = self
+            .reborrows
+            .iter()
+            .find(|reborrow| {
+                reborrow.assigned_place.is_current() && reborrow.assigned_place.place() == place
+            })
+            .map(|reborrow| (reborrow.blocked_place, reborrow.mutability));
+        if let Some((mut place, mut mutability)) = source {
+            while let Some(reborrow) = self
+                .reborrows
+                .iter()
+                .find(|reborrow| reborrow.assigned_place == place)
+            {
+                place = reborrow.blocked_place;
+                mutability = reborrow.mutability;
+            }
+            return Some((place, mutability));
+        } else {
+            None
+        }
+    }
+
+    pub fn insert(&mut self, reborrow: Reborrow<'tcx>) -> bool {
+        assert!(reborrow.blocked_place != reborrow.assigned_place);
+        assert!(
+            reborrow.assigned_place.place().is_deref(),
+            "Place {:?} must be a dereference",
+            reborrow.assigned_place
+        );
+        let result = self.reborrows.insert(reborrow);
+        self.ensure_acyclic();
+        result
+    }
+
+    pub fn add_reborrow(
+        &mut self,
+        blocked_place: Place<'tcx>,
+        assigned_place: Place<'tcx>,
+        mutability: Mutability,
+    ) -> bool {
+        self.insert(Reborrow {
+            mutability,
+            blocked_place: MaybeOldPlace::Current {
+                place: blocked_place,
+            },
+            assigned_place: MaybeOldPlace::Current {
+                place: assigned_place,
+            },
+        })
+    }
+
+    pub fn kill_reborrow_of(&mut self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
+        let to_remove = self
+            .reborrows
+            .iter()
+            .find(|reborrow| reborrow.blocked_place == place)
+            .cloned();
+        if let Some(to_remove) = to_remove {
+            self.reborrows.remove(&to_remove);
+            Some(to_remove.assigned_place)
+        } else {
+            None
+        }
     }
 }
 
 impl<'tcx> BorrowsState<'tcx> {
-    pub fn add_reborrow(&mut self, from_place: PlaceSnapshot<'tcx>, to_place: PlaceSnapshot<'tcx>) {
-        self.reborrows.add_reborrow(from_place, to_place);
+    pub fn set_latest(&mut self, place: Place<'tcx>, location: Location) {
+        if let Some(old_location) = self.latest.insert(place, location) {
+            eprintln!("{:?}: {:?} -> {:?}", place, old_location, location);
+        }
+    }
+
+    pub fn get_latest(&self, place: &Place<'tcx>) -> Option<Location> {
+        self.latest.get(place).cloned()
+    }
+
+    pub fn kill_reborrows_of(&mut self, place: Place<'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
+        let mut result = vec![];
+        let mut place = MaybeOldPlace::Current { place };
+        while let Some(to_remove) = self.reborrows.kill_reborrow_of(place) {
+            place = to_remove;
+            result.push(to_remove);
+        }
+        result
+    }
+
+    pub fn add_reborrow(
+        &mut self,
+        blocked_place: Place<'tcx>,
+        assigned_place: Place<'tcx>,
+        mutability: Mutability,
+    ) {
+        self.reborrows
+            .add_reborrow(blocked_place, assigned_place, mutability);
+    }
+
+    pub fn contains_reborrow(&self, reborrow: &Reborrow<'tcx>) -> bool {
+        self.reborrows.reborrows.contains(reborrow)
     }
 
     pub fn contains_borrow(&self, borrow: &Borrow<'tcx>) -> bool {
@@ -203,7 +338,7 @@ impl<'tcx> BorrowsState<'tcx> {
     }
 
     pub fn is_current(&self, place: &PlaceSnapshot<'tcx>, body: &mir::Body<'tcx>) -> bool {
-        self.latest.get(&place.place).map_or(true, |loc| {
+        let result = self.latest.get(&place.place).map_or(true, |loc| {
             if loc.block == place.at.block {
                 loc.statement_index <= place.at.statement_index
             } else {
@@ -211,7 +346,16 @@ impl<'tcx> BorrowsState<'tcx> {
                     .dominators()
                     .dominates(loc.block, place.at.block)
             }
-        })
+        });
+        if !result {
+            eprintln!(
+                "is_current({:?}) = {:?} <{:?}>",
+                place,
+                result,
+                self.latest.get(&place.place)
+            );
+        }
+        result
     }
 
     pub fn live_borrows(&self, body: &mir::Body<'tcx>) -> Vec<&Borrow<'tcx>> {
@@ -256,23 +400,36 @@ impl<'tcx> BorrowsState<'tcx> {
         }
     }
 
-    pub fn add_borrow(&mut self, borrow: Borrow<'tcx>) {
+    pub fn add_borrow(&mut self, tcx: TyCtxt<'tcx>, borrow: Borrow<'tcx>) {
+        self.add_reborrow(
+            borrow.borrowed_place.place,
+            borrow.assigned_place.place.project_deref(tcx),
+            if borrow.is_mut {
+                Mutability::Mut
+            } else {
+                Mutability::Not
+            },
+        );
         self.borrows.insert(borrow);
     }
 
     pub fn add_rustc_borrow(
         &mut self,
+        tcx: TyCtxt<'tcx>,
         borrow: BorrowIndex,
         borrow_set: &BorrowSet<'tcx>,
         location: Location,
     ) {
-        self.borrows.insert(Borrow::new(
-            BorrowKind::Rustc(borrow),
-            borrow_set[borrow].borrowed_place.into(),
-            borrow_set[borrow].assigned_place.into(),
-            matches!(borrow_set[borrow].kind, mir::BorrowKind::Mut { .. }),
-            location,
-        ));
+        self.add_borrow(
+            tcx,
+            Borrow::new(
+                BorrowKind::Rustc(borrow),
+                borrow_set[borrow].borrowed_place.into(),
+                borrow_set[borrow].assigned_place.into(),
+                matches!(borrow_set[borrow].kind, mir::BorrowKind::Mut { .. }),
+                location,
+            ),
+        );
     }
 
     pub fn remove_rustc_borrow(&mut self, borrow: &BorrowIndex, body: &mir::Body<'tcx>) {

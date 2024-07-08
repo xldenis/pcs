@@ -147,21 +147,21 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
-        match &statement.kind {
-            StatementKind::Assign(box (place, Rvalue::Use(operand))) if let Some(place) = operand.place() => {
-                if let Some(place) = state.borrows.after.reference_targeting_place(place.into(), self.cgx.mir.borrow_set.as_ref(), &self.cgx.mir.body) {
-                    if let CapabilityLocal::Allocated(cap) = &mut state.fpcs.after[place.local] {
-                        let related = cap.find_all_related(place, Some(crate::utils::PlaceOrdering::Suffix));
-                        cap.collapse(related.get_from(), place, self.cgx.rp);
-                    }
-                }
-            }
-            _ => {}
-        }
+        // match &statement.kind {
+        //     StatementKind::Assign(box (place, Rvalue::Use(operand))) if let Some(place) = operand.place() => {
+        //         if let Some(place) = state.borrows.after.reference_targeting_place(place.into(), self.cgx.mir.borrow_set.as_ref(), &self.cgx.mir.body) {
+        //             if let CapabilityLocal::Allocated(cap) = &mut state.fpcs.after[place.local] {
+        //                 let related = cap.find_all_related(place, Some(crate::utils::PlaceOrdering::Suffix));
+        //                 cap.collapse(related.get_from(), place, self.cgx.rp);
+        //             }
+        //         }
+        //     }
+        //     _ => {}
+        // }
         self.borrows
             .apply_before_statement_effect(&mut state.borrows, statement, location);
-        let before_actions = state.borrows.actions(true);
-        self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, before_actions.clone());
+        let before_actions = state.borrows.borrow_actions(true);
+        // self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, before_actions.clone());
         self.fpcs
             .apply_before_statement_effect(&mut state.fpcs, statement, location);
     }
@@ -173,7 +173,7 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
     ) {
         self.borrows
             .apply_statement_effect(&mut state.borrows, statement, location);
-        self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, state.borrows.actions(false));
+        // self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, state.borrows.actions(false));
         self.fpcs
             .apply_statement_effect(&mut state.fpcs, statement, location);
     }

@@ -17,7 +17,7 @@ use rustc_interface::{
     abi::VariantIdx,
     middle::{
         mir::{Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
-        ty::Ty,
+        ty::{Ty, TyCtxt},
     },
 };
 
@@ -35,6 +35,13 @@ pub struct Place<'tcx>(
 impl<'tcx> Place<'tcx> {
     pub fn new(local: Local, projection: &'tcx [PlaceElem<'tcx>]) -> Self {
         Self(PlaceRef { local, projection }, DebugInfo::new_static())
+    }
+
+    pub fn project_deref(&self, tcx: TyCtxt<'tcx>) -> Self {
+        Place::new(
+            self.0.local,
+            self.0.project_deeper(&[PlaceElem::Deref], tcx).projection
+        )
     }
 
     pub(crate) fn compare_projections(
@@ -201,6 +208,10 @@ impl<'tcx> Place<'tcx> {
         } else {
             None
         }
+    }
+
+    pub fn is_deref(self) -> bool {
+        self.projection.last() == Some(&ProjectionElem::Deref)
     }
 
     pub fn target_place(self) -> Option<Self> {

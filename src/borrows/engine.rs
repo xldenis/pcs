@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashSet, ops::ControlFlow, rc::Rc};
 
 use rustc_interface::{
+    ast::Mutability,
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
@@ -28,7 +29,7 @@ use crate::{
     utils::{self, PlaceRepacker},
 };
 
-use super::domain::{Borrow, BorrowKind, BorrowsState, MaybeOldPlace};
+use super::domain::{Borrow, BorrowKind, BorrowsState, MaybeOldPlace, Reborrow};
 
 pub struct BorrowsEngine<'mir, 'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -187,7 +188,27 @@ impl<'tcx> BorrowsDomain<'tcx> {
         self.after.apply_action(action)
     }
 
-    pub fn actions<'a>(&'a self, start: bool) -> Vec<BorrowAction<'a, 'tcx>> {
+    pub fn reborrow_actions<'a>(&'a self, start: bool) -> Vec<ReborrowAction<'tcx>> {
+        let (s, e) = if start {
+            (&self.before_start, &self.start)
+        } else {
+            (&self.before_after, &self.after)
+        };
+        let mut actions = vec![];
+        for reborrow in s.reborrows.iter() {
+            if !e.contains_reborrow(reborrow) {
+                actions.push(ReborrowAction::RemoveReborrow(*reborrow));
+            }
+        }
+        for reborrow in e.reborrows.iter() {
+            if !s.contains_reborrow(reborrow) {
+                actions.push(ReborrowAction::AddReborrow(*reborrow));
+            }
+        }
+        actions
+    }
+
+    pub fn borrow_actions<'a>(&'a self, start: bool) -> Vec<BorrowAction<'a, 'tcx>> {
         let (s, e) = if start {
             (&self.before_start, &self.start)
         } else {
@@ -206,6 +227,12 @@ impl<'tcx> BorrowsDomain<'tcx> {
         }
         actions
     }
+}
+
+#[derive(Debug)]
+pub enum ReborrowAction<'tcx> {
+    AddReborrow(Reborrow<'tcx>),
+    RemoveReborrow(Reborrow<'tcx>),
 }
 
 #[derive(Debug, Clone)]
@@ -270,7 +297,17 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         if let Some(loan) = self.loan_issued_at_location(location, true) {
             state
                 .after
-                .add_rustc_borrow(loan, &self.borrow_set, location);
+                .add_rustc_borrow(self.tcx, loan, &self.borrow_set, location);
+        }
+        match &statement.kind {
+            StatementKind::Assign(box (target, rvalue)) => {
+                if let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = rvalue {
+                    let place: utils::Place<'tcx> = (*from).into();
+                    state.after.kill_reborrows_of(place);
+                }
+                state.after.set_latest((*target).into(), location);
+            }
+            _ => {}
         }
         state.before_after = state.after.clone();
     }
@@ -288,18 +325,29 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         if let Some(loan) = self.loan_issued_at_location(location, false) {
             state
                 .after
-                .add_rustc_borrow(loan, &self.borrow_set, location);
+                .add_rustc_borrow(self.tcx, loan, &self.borrow_set, location);
         }
         match &statement.kind {
             StatementKind::Assign(box (target, rvalue)) => {
                 match rvalue {
+                    Rvalue::Use(Operand::Copy(from)) => {
+                        if from.ty(self.body, self.tcx).ty.is_ref() {
+                            let from: utils::Place<'tcx> = (*from).into();
+                            let target: utils::Place<'tcx> = (*target).into();
+                            state.after.add_reborrow(
+                                from.project_deref(self.tcx),
+                                target.project_deref(self.tcx),
+                                Mutability::Not
+                            )
+                        }
+                    }
                     Rvalue::Use(Operand::Move(from)) => {
                         for mut borrow in self.remove_loans_assigned_to(&mut state.after, *target) {
                             borrow.assigned_place = PlaceSnapshot {
                                 place: (*target).into(),
                                 at: location,
                             };
-                            state.after.add_borrow(borrow);
+                            state.after.add_borrow(self.tcx, borrow);
                             // state.log_action(format!(
                             //     "Removed loan assigned to {:?} due to move {:?} -> {:?}:  {:?}",
                             //     target, from, target, borrow
@@ -307,36 +355,34 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                         }
                         let loans_to_move = self.remove_loans_assigned_to(&mut state.after, *from);
                         for loan in loans_to_move {
-                            state.after.add_borrow(Borrow::new(
-                                BorrowKind::PCS,
-                                loan.borrowed_place.place,
-                                (*target).into(),
-                                loan.is_mut,
-                                location,
-                            ));
+                            state.after.add_borrow(
+                                self.tcx,
+                                Borrow::new(
+                                    BorrowKind::PCS,
+                                    loan.borrowed_place.place,
+                                    (*target).into(),
+                                    loan.is_mut,
+                                    location,
+                                ),
+                            );
                         }
                     }
                     _ => {}
                 }
                 match rvalue {
-                    Rvalue::Use(Operand::Copy(place)) | Rvalue::Use(Operand::Move(place)) => {
-                    }
+                    Rvalue::Use(Operand::Copy(place)) | Rvalue::Use(Operand::Move(place)) => {}
                     Rvalue::Repeat(_, _) => todo!(),
-                    Rvalue::Ref(_, kind, place) => {
-                        if place.projection.first() == Some(&ProjectionElem::Deref) {
-                            let target_projection = &place.projection[1..];
-                            let target_place = utils::Place::new(place.local, target_projection);
-                            let target_place = PlaceSnapshot {
-                                place: target_place,
-                                at: location,
-                            };
-                            let orig_borrow_place = state
-                                .after
-                                .place_loaned_to_place(target_place.place, &self.body);
-                            if let Some(orig_borrow_place) = orig_borrow_place {
-                                state.after.add_reborrow(orig_borrow_place, target_place);
-                            }
-                        }
+                    Rvalue::Ref(_, kind, blocked_place) => {
+                        let blocked_place: utils::Place<'tcx> = (*blocked_place).into();
+                        let target: utils::Place<'tcx> = (*target).into();
+                        let assigned_place = target.project_deref(self.tcx);
+                        assert_eq!(
+                            self.tcx.erase_regions((*blocked_place).ty(self.body, self.tcx).ty),
+                            self.tcx.erase_regions((*assigned_place).ty(self.body, self.tcx).ty)
+                        );
+                        state
+                            .after
+                            .add_reborrow(blocked_place, assigned_place, kind.mutability());
                     }
                     _ => {}
                 }

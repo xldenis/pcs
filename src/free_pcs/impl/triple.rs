@@ -5,8 +5,8 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use rustc_interface::middle::mir::{
-    visit::Visitor, Local, Location, Operand, Rvalue, Statement, StatementKind, Terminator,
-    TerminatorKind, RETURN_PLACE,
+    visit::Visitor, Local, Location, Operand, ProjectionElem, Rvalue, Statement, StatementKind,
+    Terminator, TerminatorKind, RETURN_PLACE,
 };
 
 use crate::{
@@ -35,6 +35,7 @@ impl<'tcx> Triple<'tcx> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum Condition<'tcx> {
     Capability(Place<'tcx>, CapabilityKind),
     AllocateOrDeallocate(Local),
@@ -98,15 +99,43 @@ impl<'a, 'b, 'tcx> TripleWalker<'a, 'b, 'tcx> {
     }
 }
 
+fn get_place_to_expand_to<'b, 'tcx>(
+    place: Place<'tcx>,
+    repacker: PlaceRepacker<'b, 'tcx>,
+) -> Place<'tcx> {
+    for (place, elem) in place.iter_projections() {
+        let place: Place<'tcx> = place.into();
+        if elem == ProjectionElem::Deref && !place.ty(repacker).ty.is_box() {
+            return place;
+        }
+    }
+    return place.into();
+}
+
+fn belongs_to_reborrow_dag<'b, 'tcx>(
+    place: Place<'tcx>,
+    repacker: PlaceRepacker<'b, 'tcx>,
+) -> bool {
+    place.iter_projections().any(|(place, elem)| {
+        let place: Place<'tcx> = place.into();
+        elem == ProjectionElem::Deref && !place.ty(repacker).ty.is_box()
+    })
+}
+
 impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
     fn visit_operand(&mut self, operand: &Operand<'tcx>, location: Location) {
         self.super_operand(operand, location);
         let t = match *operand {
             Operand::Copy(place) => {
                 let place: Place<'tcx> = place.into();
+                let place_to_expand_to = get_place_to_expand_to(place, self.repacker);
+                if !place.projection.is_empty() {
+                    eprintln!("Expand {place:?} to {place_to_expand_to:?}");
+                }
+                let pre = Condition::Capability(place_to_expand_to, CapabilityKind::Exclusive);
                 Triple {
-                    pre: Condition::Capability(place, CapabilityKind::Exclusive),
-                    post: Condition::Unchanged
+                    pre,
+                    post: Condition::Unchanged,
                 }
             }
             Operand::Move(place) => Triple {
@@ -137,13 +166,20 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
             | &AddressOf(_, place)
             | &Len(place)
             | &Discriminant(place)
-            | &CopyForDeref(place) => self.triple(
-                Stage::Before,
-                Triple {
-                    pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
-                    post: Condition::Unchanged,
-                },
-            ),
+            | &CopyForDeref(place) => {
+                let place: Place<'tcx> = place.into();
+                let place_to_expand_to = get_place_to_expand_to(place, self.repacker);
+                if !place.projection.is_empty() {
+                    eprintln!("Expand {place:?} to {place_to_expand_to:?}");
+                }
+                self.triple(
+                    Stage::Before,
+                    Triple {
+                        pre: Condition::Capability(place_to_expand_to, CapabilityKind::Exclusive),
+                        post: Condition::Unchanged,
+                    },
+                )
+            }
         }
     }
 
@@ -153,9 +189,11 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
         let t = match &statement.kind {
             &Assign(box (place, ref rvalue)) => {
                 let place: Place<'_> = place.into();
+                let place_to_expand_to = get_place_to_expand_to(place, self.repacker);
+                let cond = Condition::Capability(place_to_expand_to, CapabilityKind::Exclusive);
                 Triple {
-                    pre: Condition::capability(place, CapabilityKind::Exclusive),
-                    post: Condition::capability(place, CapabilityKind::Exclusive),
+                    pre: cond.clone(),
+                    post: cond,
                 }
             }
             &FakeRead(box (_, place)) => Triple {
