@@ -14,7 +14,7 @@ use rustc_interface::{
 };
 
 use crate::{
-    combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary}, free_pcs::{
+    combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary, UnblockTree}, free_pcs::{
         engine::FpcsEngine, CapabilitySummary, FreePlaceCapabilitySummary, RepackOp, RepackingBridgeSemiLattice
     }, rustc_interface, utils::PlaceRepacker
 };
@@ -57,7 +57,7 @@ pub struct FreePcsAnalysis<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, 
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx>+ HasExtra<T>, E: Analysis<'tcx, Domain = D>> FreePcsAnalysis<'mir, 'tcx, T, D, E> {
+impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Domain = D>> FreePcsAnalysis<'mir, 'tcx, T, D, E> {
     pub(crate) fn new(cursor: Cursor<'mir, 'tcx, E>) -> Self {
         Self {
             cursor,

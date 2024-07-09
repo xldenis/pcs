@@ -5,23 +5,29 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use std::{
-    cell::{RefCell, Cell},
-    fmt::{Debug, Formatter, Result}, rc::Rc,
+    cell::{Cell, RefCell},
+    fmt::{Debug, Formatter, Result},
+    rc::Rc,
 };
 
 use derive_more::{Deref, DerefMut};
 use rustc_interface::{
+    dataflow::fmt::DebugWithContext,
     dataflow::JoinSemiLattice,
-    dataflow::fmt::DebugWithContext, index::IndexVec, middle::mir::{BasicBlock, Location, START_BLOCK},
+    index::IndexVec,
+    middle::mir::{BasicBlock, Location, START_BLOCK},
 };
 
 use crate::{
-    borrows::engine::BorrowsDomain, free_pcs::{
-        CapabilityLocal, CapabilityProjections, FreePlaceCapabilitySummary, HasFpcs, RepackOp
-    }, rustc_interface, utils::{Place, PlaceRepacker}
+    borrows::engine::{BorrowsDomain, ReborrowAction},
+    free_pcs::{
+        CapabilityLocal, CapabilityProjections, FreePlaceCapabilitySummary, HasFpcs, RepackOp,
+    },
+    rustc_interface,
+    utils::{Place, PlaceRepacker},
 };
 
-use super::{PcsContext, PcsEngine};
+use super::{PcsContext, PcsEngine, UnblockTree};
 use crate::borrows::domain::BorrowsState;
 
 #[derive(Clone)]
@@ -37,7 +43,12 @@ impl<'a, 'tcx> PlaceCapabilitySummary<'a, 'tcx> {
     pub fn new(cgx: Rc<PcsContext<'a, 'tcx>>, block: BasicBlock) -> Self {
         let fpcs = FreePlaceCapabilitySummary::new(cgx.rp);
         let borrows = BorrowsDomain::new();
-        Self { cgx, block, fpcs, borrows }
+        Self {
+            cgx,
+            block,
+            fpcs,
+            borrows,
+        }
     }
 }
 

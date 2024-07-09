@@ -161,7 +161,7 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
 pub struct BorrowsDomain<'tcx> {
     before_start: BorrowsState<'tcx>,
     before_after: BorrowsState<'tcx>,
-    start: BorrowsState<'tcx>,
+    pub start: BorrowsState<'tcx>,
     pub after: BorrowsState<'tcx>,
 }
 
@@ -190,17 +190,17 @@ impl<'tcx> BorrowsDomain<'tcx> {
 
     pub fn reborrow_actions<'a>(&'a self, start: bool) -> Vec<ReborrowAction<'tcx>> {
         let (s, e) = if start {
-            (&self.before_start, &self.start)
+            (&self.before_start, &self.before_after)
         } else {
             (&self.before_after, &self.after)
         };
         let mut actions = vec![];
-        for reborrow in s.reborrows.iter() {
+        for reborrow in s.reborrows().iter() {
             if !e.contains_reborrow(reborrow) {
                 actions.push(ReborrowAction::RemoveReborrow(*reborrow));
             }
         }
-        for reborrow in e.reborrows.iter() {
+        for reborrow in e.reborrows().iter() {
             if !s.contains_reborrow(reborrow) {
                 actions.push(ReborrowAction::AddReborrow(*reborrow));
             }
@@ -229,10 +229,31 @@ impl<'tcx> BorrowsDomain<'tcx> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ReborrowAction<'tcx> {
     AddReborrow(Reborrow<'tcx>),
     RemoveReborrow(Reborrow<'tcx>),
+}
+
+impl<'tcx> ReborrowAction<'tcx> {
+    pub fn reborrow(self) -> Reborrow<'tcx> {
+        match self {
+            ReborrowAction::AddReborrow(reborrow) => reborrow,
+            ReborrowAction::RemoveReborrow(reborrow) => reborrow,
+        }
+    }
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        match self {
+            ReborrowAction::AddReborrow(reborrow) => json!({
+                "action": "AddReborrow",
+                "reborrow": reborrow.to_json(repacker)
+            }),
+            ReborrowAction::RemoveReborrow(reborrow) => json!({
+                "action": "RemoveReborrow",
+                "reborrow": reborrow.to_json(repacker)
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -303,7 +324,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
             StatementKind::Assign(box (target, rvalue)) => {
                 if let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = rvalue {
                     let place: utils::Place<'tcx> = (*from).into();
-                    state.after.kill_reborrows_of(place);
+                    state.after.kill_reborrow_blocking(MaybeOldPlace::Current { place });
                 }
                 state.after.set_latest((*target).into(), location);
             }
@@ -337,7 +358,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                             state.after.add_reborrow(
                                 from.project_deref(self.tcx),
                                 target.project_deref(self.tcx),
-                                Mutability::Not
+                                Mutability::Not,
                             )
                         }
                     }
@@ -377,8 +398,10 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                         let target: utils::Place<'tcx> = (*target).into();
                         let assigned_place = target.project_deref(self.tcx);
                         assert_eq!(
-                            self.tcx.erase_regions((*blocked_place).ty(self.body, self.tcx).ty),
-                            self.tcx.erase_regions((*assigned_place).ty(self.body, self.tcx).ty)
+                            self.tcx
+                                .erase_regions((*blocked_place).ty(self.body, self.tcx).ty),
+                            self.tcx
+                                .erase_regions((*assigned_place).ty(self.body, self.tcx).ty)
                         );
                         state
                             .after

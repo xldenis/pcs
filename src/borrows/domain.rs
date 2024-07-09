@@ -25,7 +25,7 @@ impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
                 changed = true;
             }
         }
-        for reborrow in &other.reborrows.reborrows {
+        for reborrow in other.reborrows.iter() {
             if self.reborrows.insert(reborrow.clone()) {
                 changed = true;
             }
@@ -159,15 +159,16 @@ pub enum BorrowKind {
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct BorrowsState<'tcx> {
     latest: FxHashMap<Place<'tcx>, Location>,
-    pub reborrows: ReborrowingDag<'tcx>,
+    reborrows: ReborrowingDag<'tcx>,
     pub borrows: FxHashSet<Borrow<'tcx>>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
+    pub logs: Vec<String>
 }
 
 use crate::utils::PlaceRepacker;
 use serde_json::{json, Value};
 
-use super::engine::BorrowAction;
+use super::{engine::BorrowAction, reborrowing_dag::ReborrowingDag};
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
 pub struct Reborrow<'tcx> {
@@ -176,105 +177,50 @@ pub struct Reborrow<'tcx> {
     pub mutability: Mutability,
 }
 
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct ReborrowingDag<'tcx> {
-    reborrows: FxHashSet<Reborrow<'tcx>>,
-}
-
-impl<'tcx> ReborrowingDag<'tcx> {
-    pub fn iter(&self) -> impl Iterator<Item = &Reborrow<'tcx>> {
-        self.reborrows.iter()
-    }
-
-    pub fn new() -> Self {
-        Self {
-            reborrows: FxHashSet::default(),
-        }
-    }
-
-    pub fn ensure_acyclic(&self) {
-        let mut reborrows = self.reborrows.clone();
-        while reborrows.len() > 0 {
-            let old_reborrows = reborrows.clone();
-            reborrows.retain(|reborrow| {
-                old_reborrows
-                    .iter()
-                    .any(|ob| ob.blocked_place == reborrow.assigned_place)
-            });
-            if reborrows.len() == old_reborrows.len() {
-                panic!("Cycle")
-            }
-        }
-    }
-
-    pub fn get_source(&self, place: Place<'tcx>) -> Option<(MaybeOldPlace<'tcx>, Mutability)> {
-        let source = self
-            .reborrows
-            .iter()
-            .find(|reborrow| {
-                reborrow.assigned_place.is_current() && reborrow.assigned_place.place() == place
-            })
-            .map(|reborrow| (reborrow.blocked_place, reborrow.mutability));
-        if let Some((mut place, mut mutability)) = source {
-            while let Some(reborrow) = self
-                .reborrows
-                .iter()
-                .find(|reborrow| reborrow.assigned_place == place)
-            {
-                place = reborrow.blocked_place;
-                mutability = reborrow.mutability;
-            }
-            return Some((place, mutability));
-        } else {
-            None
-        }
-    }
-
-    pub fn insert(&mut self, reborrow: Reborrow<'tcx>) -> bool {
-        assert!(reborrow.blocked_place != reborrow.assigned_place);
-        assert!(
-            reborrow.assigned_place.place().is_deref(),
-            "Place {:?} must be a dereference",
-            reborrow.assigned_place
-        );
-        let result = self.reborrows.insert(reborrow);
-        self.ensure_acyclic();
-        result
-    }
-
-    pub fn add_reborrow(
-        &mut self,
-        blocked_place: Place<'tcx>,
-        assigned_place: Place<'tcx>,
-        mutability: Mutability,
-    ) -> bool {
-        self.insert(Reborrow {
-            mutability,
-            blocked_place: MaybeOldPlace::Current {
-                place: blocked_place,
-            },
-            assigned_place: MaybeOldPlace::Current {
-                place: assigned_place,
-            },
+impl<'tcx> Reborrow<'tcx> {
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        json!({
+            "blocked_place": self.blocked_place.to_json(repacker),
+            "assigned_place": self.assigned_place.to_json(repacker),
+            "is_mut": self.mutability == Mutability::Mut
         })
     }
+}
 
-    pub fn kill_reborrow_of(&mut self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
-        let to_remove = self
-            .reborrows
-            .iter()
-            .find(|reborrow| reborrow.blocked_place == place)
-            .cloned();
-        if let Some(to_remove) = to_remove {
-            self.reborrows.remove(&to_remove);
-            Some(to_remove.assigned_place)
-        } else {
-            None
+pub struct TerminatedReborrows<'tcx>(Vec<Reborrow<'tcx>>);
+
+impl<'tcx> TerminatedReborrows<'tcx> {
+    pub fn new(mut unordered_reborrows: Vec<Reborrow<'tcx>>) -> Self {
+        let mut reborrows = vec![];
+        if !unordered_reborrows.is_empty() {
+            eprintln!("-----");
+            eprintln!("Unordered reborrows: {:?}", unordered_reborrows);
+            while unordered_reborrows.len() > 0 {
+                let (leafs, remaining) = unordered_reborrows.iter().partition(|reborrow| {
+                    !unordered_reborrows
+                        .iter()
+                        .any(|r| r.blocked_place == reborrow.assigned_place)
+                });
+                eprintln!("Leafs: {:?}", leafs);
+                reborrows.extend(leafs);
+                unordered_reborrows = remaining;
+            }
+            eprintln!("-----");
         }
+        Self(reborrows)
+    }
+
+    pub fn reborrows(self) -> Vec<Reborrow<'tcx>> {
+        self.0
     }
 }
 
 impl<'tcx> BorrowsState<'tcx> {
+
+    pub fn reborrows(&self) -> &ReborrowingDag<'tcx> {
+        &self.reborrows
+    }
+
     pub fn set_latest(&mut self, place: Place<'tcx>, location: Location) {
         if let Some(old_location) = self.latest.insert(place, location) {
             eprintln!("{:?}: {:?} -> {:?}", place, old_location, location);
@@ -285,14 +231,12 @@ impl<'tcx> BorrowsState<'tcx> {
         self.latest.get(place).cloned()
     }
 
-    pub fn kill_reborrows_of(&mut self, place: Place<'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
-        let mut result = vec![];
-        let mut place = MaybeOldPlace::Current { place };
-        while let Some(to_remove) = self.reborrows.kill_reborrow_of(place) {
-            place = to_remove;
-            result.push(to_remove);
-        }
-        result
+    pub fn find_reborrow_blocking(&self, place: MaybeOldPlace<'tcx>) -> Option<&Reborrow<'tcx>> {
+        self.reborrows.iter().find(|rb| rb.blocked_place == place)
+    }
+
+    pub fn kill_reborrow_blocking(&mut self, place: MaybeOldPlace<'tcx>) {
+        self.reborrows.kill_reborrow_blocking(place);
     }
 
     pub fn add_reborrow(
@@ -303,10 +247,11 @@ impl<'tcx> BorrowsState<'tcx> {
     ) {
         self.reborrows
             .add_reborrow(blocked_place, assigned_place, mutability);
+        self.log("Add reborrow".to_string());
     }
 
     pub fn contains_reborrow(&self, reborrow: &Reborrow<'tcx>) -> bool {
-        self.reborrows.reborrows.contains(reborrow)
+        self.reborrows.contains(reborrow)
     }
 
     pub fn contains_borrow(&self, borrow: &Borrow<'tcx>) -> bool {
@@ -334,7 +279,12 @@ impl<'tcx> BorrowsState<'tcx> {
             reborrows: ReborrowingDag::new(),
             borrows: FxHashSet::default(),
             region_abstractions: vec![],
+            logs: vec![]
         }
+    }
+
+    fn log(&mut self, log: String) {
+        self.logs.push(log);
     }
 
     pub fn is_current(&self, place: &PlaceSnapshot<'tcx>, body: &mir::Body<'tcx>) -> bool {
@@ -433,10 +383,15 @@ impl<'tcx> BorrowsState<'tcx> {
     }
 
     pub fn remove_rustc_borrow(&mut self, borrow: &BorrowIndex, body: &mir::Body<'tcx>) {
-        let mut borrows = self.borrows.clone();
-        borrows.retain(|b| {
-            !self.is_current(&b.borrowed_place, body) || b.kind != BorrowKind::Rustc(*borrow)
-        });
-        self.borrows = borrows;
+        let borrow = self
+            .borrows
+            .iter()
+            .find(|b| b.kind == BorrowKind::Rustc(*borrow));
+        if let Some(borrow) = borrow {
+            self.reborrows.kill_reborrow_blocking(MaybeOldPlace::Current {
+                place: borrow.borrowed_place.place,
+            });
+            self.borrows.remove(&borrow.clone());
+        }
     }
 }

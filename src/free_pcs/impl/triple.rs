@@ -103,12 +103,12 @@ fn get_place_to_expand_to<'b, 'tcx>(
     place: Place<'tcx>,
     repacker: PlaceRepacker<'b, 'tcx>,
 ) -> Place<'tcx> {
-    for (place, elem) in place.iter_projections() {
-        let place: Place<'tcx> = place.into();
-        if elem == ProjectionElem::Deref && !place.ty(repacker).ty.is_box() {
-            return place;
-        }
-    }
+    // for (place, elem) in place.iter_projections() {
+    //     let place: Place<'tcx> = place.into();
+    //     if elem == ProjectionElem::Deref && !place.ty(repacker).ty.is_box() {
+    //         return place;
+    //     }
+    // }
     return place.into();
 }
 
@@ -129,9 +129,6 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
             Operand::Copy(place) => {
                 let place: Place<'tcx> = place.into();
                 let place_to_expand_to = get_place_to_expand_to(place, self.repacker);
-                if !place.projection.is_empty() {
-                    eprintln!("Expand {place:?} to {place_to_expand_to:?}");
-                }
                 let pre = Condition::Capability(place_to_expand_to, CapabilityKind::Exclusive);
                 Triple {
                     pre,
@@ -169,9 +166,6 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
             | &CopyForDeref(place) => {
                 let place: Place<'tcx> = place.into();
                 let place_to_expand_to = get_place_to_expand_to(place, self.repacker);
-                if !place.projection.is_empty() {
-                    eprintln!("Expand {place:?} to {place_to_expand_to:?}");
-                }
                 self.triple(
                     Stage::Before,
                     Triple {

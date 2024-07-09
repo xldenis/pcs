@@ -44,9 +44,20 @@ export type Borrow = {
   kind: string;
 };
 
+export type Reborrow = {
+  blocked_place: MaybeOldPlace;
+  assigned_place: MaybeOldPlace;
+  is_mut: boolean;
+};
+
 export type BorrowAction = {
   action: "AddBorrow" | "RemoveBorrow";
   borrow: Borrow;
+};
+
+export type ReborrowAction = {
+  action: "AddReborrow" | "RemoveReborrow";
+  reborrow: Reborrow;
 };
 
 export type PathData = {
@@ -54,6 +65,8 @@ export type PathData = {
   pcs: string[],
   borrow_actions_start: BorrowAction[];
   borrow_actions_mid: BorrowAction[];
+  reborrow_actions_start: ReborrowAction[];
+  reborrow_actions_mid: ReborrowAction[];
   borrows: {
     borrows: Borrow[]
   }

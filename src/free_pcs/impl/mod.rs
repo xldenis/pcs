@@ -13,7 +13,7 @@ mod triple;
 mod update;
 mod bridge;
 
-pub(crate) use fpcs::*;
+pub use fpcs::*;
 pub(crate) use local::*;
 pub use bridge::*;
 pub use place::*;

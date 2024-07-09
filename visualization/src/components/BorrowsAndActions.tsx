@@ -1,5 +1,15 @@
 import React from "react";
-import { PathData, Borrow, BorrowAction } from "../types";
+import { PathData, Borrow, BorrowAction, Reborrow, ReborrowAction } from "../types";
+
+function ReborrowDisplay({ reborrow }: { reborrow: Reborrow }) {
+  return (
+    <div>
+      <p>Assigned Place: {reborrow?.assigned_place?.place}</p>
+      <p>Blocked Place: {reborrow?.blocked_place?.place}</p>
+      <p>Mutable: {reborrow?.is_mut ? "Yes" : "No"}</p>
+    </div>
+  );
+}
 
 function BorrowDisplay({ borrow }: { borrow: Borrow }) {
   return (
@@ -8,6 +18,15 @@ function BorrowDisplay({ borrow }: { borrow: Borrow }) {
       <p>Borrowed: {borrow?.borrowed_place?.place}</p>
       <p>Is Mutable: {borrow?.is_mut ? "Yes" : "No"}</p>
       <p>Kind: {borrow?.kind}</p>
+    </div>
+  );
+}
+
+function ReborrowActionDisplay({ action }: { action: ReborrowAction }) {
+  return (
+    <div>
+      <p>Action: {action.action}</p>
+      <ReborrowDisplay reborrow={action.reborrow} />
     </div>
   );
 }
@@ -21,7 +40,7 @@ function BorrowActionDisplay({ action }: { action: BorrowAction }) {
   );
 }
 
-export default function BorrowsAndActions({ pathData }: { pathData: PathData }) {
+export default function PCSActions({ pathData }: { pathData: PathData }) {
   return (
     <div
       style={{
@@ -36,7 +55,6 @@ export default function BorrowsAndActions({ pathData }: { pathData: PathData }) 
         maxHeight: "80vh",
       }}
     >
-      <h3>Borrows and Actions</h3>
       <h4>Borrow Actions (Start)</h4>
       {pathData.borrow_actions_start.map((action, index) => (
         <BorrowActionDisplay key={`start-${index}`} action={action} />
@@ -45,9 +63,13 @@ export default function BorrowsAndActions({ pathData }: { pathData: PathData }) 
       {pathData.borrow_actions_mid.map((action, index) => (
         <BorrowActionDisplay key={`mid-${index}`} action={action} />
       ))}
-      <h4>Current Borrows</h4>
-      {pathData.borrows.borrows.map((borrow, index) => (
-        <BorrowDisplay key={index} borrow={borrow} />
+      <h4>Reborrow Actions (Start)</h4>
+      {pathData.reborrow_actions_start.map((action, index) => (
+        <ReborrowActionDisplay key={`start-${index}`} action={action} />
+      ))}
+      <h4>Reborrow Actions (Mid)</h4>
+      {pathData.reborrow_actions_mid.map((action, index) => (
+        <ReborrowActionDisplay key={`mid-${index}`} action={action} />
       ))}
       <h4>Repacks (Start)</h4>
       <ul>

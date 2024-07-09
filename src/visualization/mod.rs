@@ -347,7 +347,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
                 }
             }
         }
-        for reborrow in self.borrows_domain.reborrows.iter() {
+        for reborrow in self.borrows_domain.reborrows().iter() {
             let borrowed_place = self.insert_maybe_old_place(reborrow.blocked_place);
             let assigned_place = self.insert_maybe_old_place(reborrow.assigned_place);
             self.edges.insert(GraphEdge::ReborrowEdge {

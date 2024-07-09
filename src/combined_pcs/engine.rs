@@ -23,13 +23,16 @@ use rustc_interface::{
 };
 
 use crate::{
-    borrows::{domain::BorrowsState, engine::BorrowsEngine},
+    borrows::{
+        domain::{BorrowsState, MaybeOldPlace, Reborrow},
+        engine::{BorrowsEngine, ReborrowAction},
+    },
     free_pcs::{
         engine::FpcsEngine, CapabilityKind, CapabilityLocal, CapabilitySummary,
         FreePlaceCapabilitySummary,
     },
     rustc_interface,
-    utils::{PlaceOrdering, PlaceRepacker},
+    utils::{Place, PlaceOrdering, PlaceRepacker},
 };
 
 use super::domain::PlaceCapabilitySummary;
@@ -93,7 +96,7 @@ impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
             cgx,
             block: Cell::new(START_BLOCK),
             fpcs,
-            borrows,
+            borrows
         }
     }
 }
@@ -115,19 +118,90 @@ impl<'a, 'tcx> AnalysisDomain<'tcx> for PcsEngine<'a, 'tcx> {
     }
 }
 
+#[derive(Clone)]
+pub enum UnblockTree<'tcx> {
+    Reborrow(Reborrow<'tcx>, Option<Box<UnblockTree<'tcx>>>),
+    Collapse(Place<'tcx>, Vec<UnblockTree<'tcx>>),
+}
+
+impl<'tcx> UnblockTree<'tcx> {
+
+    pub fn root_place(&self) -> MaybeOldPlace<'tcx> {
+        match self {
+            UnblockTree::Reborrow(reborrow, _) => reborrow.blocked_place,
+            UnblockTree::Collapse(place, _) => MaybeOldPlace::Current { place: *place },
+        }
+    }
+
+    fn places_blocking_collapse(
+        place: Place<'tcx>,
+        state: &CapabilitySummary<'tcx>,
+    ) -> Vec<Place<'tcx>> {
+        match &state[place.local] {
+            CapabilityLocal::Unallocated => vec![],
+            CapabilityLocal::Allocated(cap) => {
+                let related = cap.find_all_related(place, None);
+                match related.relation {
+                    PlaceOrdering::Prefix => todo!(),
+                    PlaceOrdering::Equal => vec![],
+                    PlaceOrdering::Suffix => related.from.into_iter().map(|p| p.0).collect(),
+                    PlaceOrdering::Both => todo!(),
+                }
+            }
+        }
+    }
+
+    fn unblock_place<'a>(place: Place<'tcx>, borrows: &BorrowsState<'tcx>, fpcs: &CapabilitySummary<'tcx>) -> Self {
+        if let Some(reborrow) = borrows
+            .find_reborrow_blocking(MaybeOldPlace::Current { place })
+        {
+            UnblockTree::unblock_reborrow(reborrow.clone(), borrows, fpcs)
+        } else {
+            eprintln!("A1");
+            UnblockTree::Collapse(
+                place,
+                UnblockTree::places_blocking_collapse(place, fpcs)
+                    .into_iter()
+                    .map(|p| UnblockTree::unblock_place(p, borrows, fpcs))
+                    .collect(),
+            )
+        }
+    }
+    pub fn unblock_reborrow<'a>(
+        reborrow: Reborrow<'tcx>,
+        borrows: &BorrowsState<'tcx>,
+        fpcs: &CapabilitySummary<'tcx>,
+    ) -> Self {
+        let subtree = if let Some(next) = borrows
+            .find_reborrow_blocking(reborrow.assigned_place)
+        {
+            Some(Box::new(UnblockTree::unblock_reborrow(*next, borrows, fpcs)))
+        } else {
+            match reborrow.assigned_place {
+                MaybeOldPlace::Current { place } => {
+                    Some(Box::new(UnblockTree::unblock_place(place, borrows, fpcs)))
+                }
+                MaybeOldPlace::OldPlace(_) => None,
+            }
+        };
+        UnblockTree::Reborrow(reborrow, subtree)
+    }
+}
+
 impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
-    fn apply_borrow_actions_to_fpcs<'state>(
+    fn apply_reborrow_actions_to_fpcs<'state>(
         &self,
         state: &'state mut CapabilitySummary<'tcx>,
-        actions: Vec<crate::borrows::engine::BorrowAction<'state, 'tcx>>,
+        actions: Vec<ReborrowAction<'tcx>>,
     ) {
         for action in actions {
             match action {
-                crate::borrows::engine::BorrowAction::AddBorrow(_) => {}
-                crate::borrows::engine::BorrowAction::RemoveBorrow(bw) => match bw.assigned_place {
-                    crate::borrows::domain::PlaceSnapshot { place, .. } => {
+                ReborrowAction::AddReborrow(_) => {}
+                ReborrowAction::RemoveReborrow(bw) => match bw.assigned_place {
+                    MaybeOldPlace::Current { place, .. } => {
                         if let CapabilityLocal::Allocated(cap) = &mut state[place.local] {
                             let related = cap.find_all_related(place, None);
+                            // todo!("Found {related:?} for {place:?}");
                             if related.relation == PlaceOrdering::Suffix {
                                 cap.collapse(related.get_from(), place, self.cgx.rp);
                             }
@@ -160,8 +234,16 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
         // }
         self.borrows
             .apply_before_statement_effect(&mut state.borrows, statement, location);
-        let before_actions = state.borrows.borrow_actions(true);
-        // self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, before_actions.clone());
+        let reborrow_actions = state.borrows.reborrow_actions(true);
+        if reborrow_actions.len() > 0 {
+            eprintln!(
+                "{} reborrow actions at {location:?}",
+                reborrow_actions.len()
+            );
+            eprintln!("{:?}", reborrow_actions);
+            eprintln!("{:?}", state.borrows.start.logs);
+            // self.apply_reborrow_actions_to_fpcs(&mut state.fpcs.after, reborrow_actions);
+        }
         self.fpcs
             .apply_before_statement_effect(&mut state.fpcs, statement, location);
     }
@@ -173,7 +255,14 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
     ) {
         self.borrows
             .apply_statement_effect(&mut state.borrows, statement, location);
-        // self.apply_borrow_actions_to_fpcs(&mut state.fpcs.after, state.borrows.actions(false));
+        let reborrow_actions = state.borrows.reborrow_actions(false);
+        if reborrow_actions.len() > 0 {
+            eprintln!(
+                "{} reborrow actions at {location:?} (after)",
+                reborrow_actions.len()
+            );
+            // self.apply_reborrow_actions_to_fpcs(&mut state.fpcs.after, reborrow_actions);
+        }
         self.fpcs
             .apply_statement_effect(&mut state.fpcs, statement, location);
     }

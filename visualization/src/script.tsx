@@ -4,7 +4,7 @@ import ReactDOMServer from "react-dom/server";
 import * as dagre from "@dagrejs/dagre";
 import * as Viz from "@viz-js/viz";
 
-import BorrowsAndActions from "./components/BorrowsAndActions";
+import PCSActions from "./components/BorrowsAndActions";
 import {
   computeTableHeight,
   isStorageStmt,
@@ -427,7 +427,7 @@ async function main() {
               <PathConditions pcs={pathData.pcs} />
               <Assertions assertions={assertions} />
             </div>
-            <BorrowsAndActions pathData={pathData} />
+            <PCSActions pathData={pathData} />
           </>
         )}
       </div>
