@@ -142,7 +142,7 @@ impl<'tcx> UnblockTree<'tcx> {
             CapabilityLocal::Allocated(cap) => {
                 let related = cap.find_all_related(place, None);
                 match related.relation {
-                    PlaceOrdering::Prefix => todo!(),
+                    PlaceOrdering::Prefix => vec![],
                     PlaceOrdering::Equal => vec![],
                     PlaceOrdering::Suffix => related.from.into_iter().map(|p| p.0).collect(),
                     PlaceOrdering::Both => todo!(),

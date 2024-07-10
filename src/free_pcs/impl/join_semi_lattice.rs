@@ -106,6 +106,7 @@ impl<'tcx> RepackingJoinSemiLattice<'tcx> for CapabilityProjections<'tcx> {
                     changed = true;
 
                     let cp = related.common_prefix(place);
+                    // todo!("Collapse {place:?} to {:?}", cp);
                     self.collapse(related.get_from(), cp, repacker);
                     Some(cp)
                 }
