@@ -343,6 +343,9 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                 .add_rustc_borrow(self.tcx, self.body, loan, &self.borrow_set, location);
         }
         match &statement.kind {
+            StatementKind::FakeRead(box (_, place)) => {
+                self.ensure_expansion_to(state, (*place).into());
+            }
             StatementKind::Assign(box (target, rvalue)) => {
                 if let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = rvalue {
                     let place: utils::Place<'tcx> = (*from).into();

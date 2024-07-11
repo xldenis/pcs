@@ -191,7 +191,10 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
                 }
             }
             &FakeRead(box (_, place)) => Triple {
-                pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
+                pre: Condition::capability(
+                    get_place_to_expand_to(place.into(), self.repacker),
+                    CapabilityKind::Exclusive,
+                ),
                 post: Condition::Unchanged,
             },
             &PlaceMention(box place) => Triple {
