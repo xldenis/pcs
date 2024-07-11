@@ -103,12 +103,12 @@ fn get_place_to_expand_to<'b, 'tcx>(
     place: Place<'tcx>,
     repacker: PlaceRepacker<'b, 'tcx>,
 ) -> Place<'tcx> {
-    // for (place, elem) in place.iter_projections() {
-    //     let place: Place<'tcx> = place.into();
-    //     if elem == ProjectionElem::Deref && !place.ty(repacker).ty.is_box() {
-    //         return place;
-    //     }
-    // }
+    for (place, elem) in place.iter_projections() {
+        let place: Place<'tcx> = place.into();
+        if elem == ProjectionElem::Deref && place.ty(repacker).ty.is_ref() {
+            return place;
+        }
+    }
     return place.into();
 }
 

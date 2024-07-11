@@ -14,13 +14,13 @@ export type DagreInputNode<T> = {
 };
 
 export type DagreEdge = {
-  id: string,
+  id: string;
   source: string;
   target: string;
   data: {
     label: string;
   };
-  type: string
+  type: string;
 };
 
 export type DagreNode<T> = {
@@ -55,21 +55,26 @@ export type BorrowAction = {
   borrow: Borrow;
 };
 
-export type ReborrowAction = {
-  action: "AddReborrow" | "RemoveReborrow";
-  reborrow: Reborrow;
-};
+export type ReborrowAction =
+  | {
+      action: "AddReborrow" | "RemoveReborrow";
+      reborrow: Reborrow;
+    }
+  | {
+      action: "ExpandPlace";
+      place: MaybeOldPlace;
+    };
 
 export type PathData = {
-  heap: Record<string, string>;
-  pcs: string[],
+  heap: Record<string, { value: string; ty: string }>;
+  pcs: string[];
   borrow_actions_start: BorrowAction[];
   borrow_actions_mid: BorrowAction[];
   reborrow_actions_start: ReborrowAction[];
   reborrow_actions_mid: ReborrowAction[];
   borrows: {
-    borrows: Borrow[]
-  }
-  repacks_middle: string[]
-  repacks_start: string[]
+    borrows: Borrow[];
+  };
+  repacks_middle: string[];
+  repacks_start: string[];
 };

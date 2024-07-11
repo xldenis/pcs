@@ -15,9 +15,10 @@ use derive_more::{Deref, DerefMut};
 
 use rustc_interface::{
     abi::VariantIdx,
+    ast::Mutability,
     middle::{
-        mir::{Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
-        ty::{Ty, TyCtxt},
+        mir::{Body, Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
+        ty::{Ty, TyCtxt, TyKind},
     },
 };
 
@@ -37,10 +38,28 @@ impl<'tcx> Place<'tcx> {
         Self(PlaceRef { local, projection }, DebugInfo::new_static())
     }
 
+    pub fn belongs_to_fpcs(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+        !self.iter_projections().any(|(place, elem)| {
+            let place: Place<'tcx> = place.into();
+            place.is_ref(body, tcx)
+        })
+    }
+
+    pub fn is_mut_ref(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+        matches!(
+            self.0.ty(body, tcx).ty.kind(),
+            TyKind::Ref(_, _, Mutability::Mut)
+        )
+    }
+
+    pub fn is_ref(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+        self.0.ty(body, tcx).ty.is_ref()
+    }
+
     pub fn project_deref(&self, tcx: TyCtxt<'tcx>) -> Self {
         Place::new(
             self.0.local,
-            self.0.project_deeper(&[PlaceElem::Deref], tcx).projection
+            self.0.project_deeper(&[PlaceElem::Deref], tcx).projection,
         )
     }
 

@@ -326,6 +326,27 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
                 }
             }
         }
+        for deref_expansion in self.borrows_domain.deref_expansions.iter() {
+            let base = self.insert_maybe_old_place(deref_expansion.base);
+            for expansion in deref_expansion.expansion.iter() {
+                let place = match deref_expansion.base {
+                    MaybeOldPlace::Current { place } => {
+                        MaybeOldPlace::Current { place: *expansion }
+                    }
+                    MaybeOldPlace::OldPlace(snapshot_place) => {
+                        MaybeOldPlace::OldPlace(PlaceSnapshot {
+                            place: *expansion,
+                            at: snapshot_place.at,
+                        })
+                    }
+                };
+                let place = self.insert_maybe_old_place(place);
+                self.edges.insert(GraphEdge::ProjectionEdge {
+                    source: place,
+                    target: base,
+                });
+            }
+        }
         for borrow in &self.borrows_domain.borrows {
             let borrowed_place = self.insert_snapshot_place(borrow.borrowed_place);
             let assigned_place = self.insert_snapshot_place(borrow.assigned_place);

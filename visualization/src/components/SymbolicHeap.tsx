@@ -3,12 +3,16 @@ import Table from "./Table";
 export default function SymbolicHeap({
   heap,
 }: {
-  heap: Record<string, string>;
+  heap: Record<string, { value: string; ty: string }>;
 }) {
   return (
     <Table
-      columns={["Location", "Value"]}
-      data={Object.entries(heap).map(([symbol, value]) => [symbol, value])}
+      columns={["Location", "Value", "Type"]}
+      data={Object.entries(heap).map(([symbol, value]) => [
+        symbol,
+        value.value,
+        value.ty,
+      ])}
     />
   );
 }

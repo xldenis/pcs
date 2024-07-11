@@ -5,6 +5,7 @@ authors = ["Prusti Devs <prusti_developers@sympa.ethz.ch>"]
 edition = "2021"
 
 [dependencies]
+itertools = "0.12.0"
 derive_more = "0.99"
 dot = "0.1"
 smallvec = { version = "^1.11", features = ["union", "const_new"] }

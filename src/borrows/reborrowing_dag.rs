@@ -99,14 +99,6 @@ impl<'tcx> ReborrowingDag<'tcx> {
         })
     }
 
-    // // TODO: old places
-    // fn reborrows_blocking(&self, place: MaybeOldPlace<'tcx>) -> Vec<&Reborrow<'tcx>> {
-    //     self.reborrows
-    //         .iter()
-    //         .filter(|reborrow| reborrow.blocked_place.place().is_prefix(place.place()))
-    //         .collect()
-    // }
-
     pub fn kill_reborrow_blocking(&mut self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
         let to_remove = self
             .reborrows
@@ -120,12 +112,4 @@ impl<'tcx> ReborrowingDag<'tcx> {
             None
         }
     }
-    // pub fn unblock(&mut self, mut place: MaybeOldPlace<'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
-    //     let mut result = vec![];
-    //     while let blocking_reborrows = self.reborrows_blocking(place) {
-    //         place = to_remove;
-    //         result.push(to_remove);
-    //     }
-    //     result
-    // }
 }

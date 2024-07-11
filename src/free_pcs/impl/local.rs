@@ -13,7 +13,9 @@ use rustc_interface::{
 };
 
 use crate::{
-    free_pcs::{CapabilityKind, RelatedSet, RepackOp}, rustc_interface, utils::{Place, PlaceOrdering, PlaceRepacker}
+    free_pcs::{CapabilityKind, RelatedSet, RepackOp},
+    rustc_interface,
+    utils::{Place, PlaceOrdering, PlaceRepacker},
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -136,6 +138,7 @@ impl<'tcx> CapabilityProjections<'tcx> {
         to: Place<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> Vec<RepackOp<'tcx>> {
+        assert!(!from.is_mut_ref(repacker.body(), repacker.tcx()));
         debug_assert!(!self.contains_key(&to));
         let (expanded, mut others) = from.expand(to, repacker);
         let mut perm = self.remove(&from).unwrap();

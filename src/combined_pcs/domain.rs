@@ -27,7 +27,7 @@ use crate::{
     utils::{Place, PlaceRepacker},
 };
 
-use super::{PcsContext, PcsEngine, UnblockTree};
+use super::{PcsContext, PcsEngine};
 use crate::borrows::domain::BorrowsState;
 
 #[derive(Clone)]

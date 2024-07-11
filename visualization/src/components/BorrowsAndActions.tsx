@@ -1,5 +1,12 @@
 import React from "react";
-import { PathData, Borrow, BorrowAction, Reborrow, ReborrowAction } from "../types";
+import {
+  PathData,
+  Borrow,
+  BorrowAction,
+  Reborrow,
+  ReborrowAction,
+  MaybeOldPlace,
+} from "../types";
 
 function ReborrowDisplay({ reborrow }: { reborrow: Reborrow }) {
   return (
@@ -7,6 +14,14 @@ function ReborrowDisplay({ reborrow }: { reborrow: Reborrow }) {
       <p>Assigned Place: {reborrow?.assigned_place?.place}</p>
       <p>Blocked Place: {reborrow?.blocked_place?.place}</p>
       <p>Mutable: {reborrow?.is_mut ? "Yes" : "No"}</p>
+    </div>
+  );
+}
+
+function ReborrowEC({ place }: { place: MaybeOldPlace }) {
+  return (
+    <div>
+      <p>Place: {place.place}</p>
     </div>
   );
 }
@@ -26,7 +41,10 @@ function ReborrowActionDisplay({ action }: { action: ReborrowAction }) {
   return (
     <div>
       <p>Action: {action.action}</p>
-      <ReborrowDisplay reborrow={action.reborrow} />
+      {action.action === "AddReborrow" && (
+        <ReborrowDisplay reborrow={action.reborrow} />
+      )}
+      {action.action === "ExpandPlace" && <ReborrowEC place={action.place} />}
     </div>
   );
 }

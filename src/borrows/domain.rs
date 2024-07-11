@@ -9,7 +9,7 @@ use rustc_interface::{
     middle::ty::TyCtxt,
 };
 
-use crate::{rustc_interface, utils::Place};
+use crate::{free_pcs::CapabilityProjections, rustc_interface, utils::Place};
 
 impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
@@ -27,6 +27,22 @@ impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
         }
         for reborrow in other.reborrows.iter() {
             if self.reborrows.insert(reborrow.clone()) {
+                changed = true;
+            }
+        }
+        if self.deref_expansions.join(&other.deref_expansions) {
+            changed = true;
+        }
+        changed
+    }
+}
+
+impl<'tcx> JoinSemiLattice for DerefExpansions<'tcx> {
+    fn join(&mut self, other: &Self) -> bool {
+        // TODO: this is not the correct algorithm
+        let mut changed = false;
+        for expansion in &other.0 {
+            if self.0.insert(expansion.clone()) {
                 changed = true;
             }
         }
@@ -79,6 +95,14 @@ pub enum MaybeOldPlace<'tcx> {
 }
 
 impl<'tcx> MaybeOldPlace<'tcx> {
+    pub fn new(place: Place<'tcx>, at: Option<Location>) -> Self {
+        if let Some(at) = at {
+            Self::OldPlace(PlaceSnapshot { place, at })
+        } else {
+            Self::Current { place }
+        }
+    }
+
     pub fn is_current(&self) -> bool {
         matches!(self, MaybeOldPlace::Current { .. })
     }
@@ -157,12 +181,109 @@ pub enum BorrowKind {
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
+pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);
+
+impl<'tcx> DerefExpansions<'tcx> {
+    pub fn new() -> Self {
+        Self(FxHashSet::default())
+    }
+
+    pub fn get(&self, place: MaybeOldPlace<'tcx>) -> Option<Vec<Place<'tcx>>> {
+        self.0.iter().find(|expansion| expansion.base == place).map(|expansion| expansion.expansion.clone())
+    }
+
+    pub fn ensure_expansion_to(
+        &mut self,
+        place: MaybeOldPlace<'tcx>,
+        body: &mir::Body<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) {
+        let location = place.location();
+        let mut in_dag = false;
+        for (place, elem) in place.place().iter_projections() {
+            let place: Place<'tcx> = place.into();
+            if place.is_ref(body, tcx) {
+                in_dag = true;
+            }
+            if in_dag {
+                let origin_place = MaybeOldPlace::new(place, location);
+                if !self.contains_projection_from(origin_place) {
+                    self.insert(
+                        origin_place,
+                        vec![place.project_deeper(&[elem], tcx).into()],
+                    );
+                }
+            }
+        }
+        self.delete_descendants_of(place)
+    }
+
+    fn delete(&mut self, place: MaybeOldPlace<'tcx>) {
+        let expansion = self
+            .iter()
+            .find(|expansion| expansion.base == place)
+            .cloned();
+        if let Some(expansion) = expansion {
+            self.0.remove(&expansion);
+        }
+    }
+
+    fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>) {
+        eprintln!("Deleting expansion from {:?}", place);
+        let expansion = self
+            .iter()
+            .find(|expansion| expansion.base == place)
+            .cloned();
+
+        if let Some(expansion) = expansion {
+            for e in expansion.expansion.iter() {
+                let p = MaybeOldPlace::new(*e, None);
+                self.delete_descendants_of(p);
+                self.delete(p);
+            }
+        }
+    }
+
+    fn insert(&mut self, place: MaybeOldPlace<'tcx>, expansion: Vec<Place<'tcx>>) {
+        for p in expansion.iter() {
+            assert!(p.projection.len() > place.place().projection.len());
+        }
+        self.0.insert(DerefExpansion::new(place, expansion));
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &DerefExpansion<'tcx>> {
+        self.0.iter()
+    }
+
+    pub fn contains_projection_from(&self, place: MaybeOldPlace<'tcx>) -> bool {
+        self.0.iter().any(|expansion| expansion.base == place)
+    }
+
+    pub fn contains(&self, expansion: &DerefExpansion<'tcx>) -> bool {
+        self.0.contains(expansion)
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub struct DerefExpansion<'tcx> {
+    pub base: MaybeOldPlace<'tcx>,
+    pub expansion: Vec<Place<'tcx>>,
+}
+
+impl<'tcx> DerefExpansion<'tcx> {
+    pub fn new(base: MaybeOldPlace<'tcx>, expansion: Vec<Place<'tcx>>) -> Self {
+        Self { base, expansion }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct BorrowsState<'tcx> {
     latest: FxHashMap<Place<'tcx>, Location>,
-    reborrows: ReborrowingDag<'tcx>,
+    pub reborrows: ReborrowingDag<'tcx>,
     pub borrows: FxHashSet<Borrow<'tcx>>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
-    pub logs: Vec<String>
+    pub deref_expansions: DerefExpansions<'tcx>,
+    pub logs: Vec<String>,
 }
 
 use crate::utils::PlaceRepacker;
@@ -216,6 +337,14 @@ impl<'tcx> TerminatedReborrows<'tcx> {
 }
 
 impl<'tcx> BorrowsState<'tcx> {
+    pub fn ensure_expansion_to(
+        &mut self,
+        tcx: TyCtxt<'tcx>,
+        body: &mir::Body<'tcx>,
+        place: MaybeOldPlace<'tcx>,
+    ) {
+        self.deref_expansions.ensure_expansion_to(place, body, tcx);
+    }
 
     pub fn reborrows(&self) -> &ReborrowingDag<'tcx> {
         &self.reborrows
@@ -275,11 +404,12 @@ impl<'tcx> BorrowsState<'tcx> {
 
     pub fn new() -> Self {
         Self {
+            deref_expansions: DerefExpansions::new(),
             latest: FxHashMap::default(),
             reborrows: ReborrowingDag::new(),
             borrows: FxHashSet::default(),
             region_abstractions: vec![],
-            logs: vec![]
+            logs: vec![],
         }
     }
 
@@ -350,10 +480,21 @@ impl<'tcx> BorrowsState<'tcx> {
         }
     }
 
-    pub fn add_borrow(&mut self, tcx: TyCtxt<'tcx>, borrow: Borrow<'tcx>) {
+    pub fn add_borrow(&mut self, tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>, borrow: Borrow<'tcx>) {
+        let assigned_place = borrow.assigned_place.place;
+        let deref_of_assigned_place = assigned_place.project_deref(tcx);
+
+        self.ensure_expansion_to(
+            tcx,
+            body,
+            MaybeOldPlace::Current {
+                place: deref_of_assigned_place,
+            },
+        );
+
         self.add_reborrow(
             borrow.borrowed_place.place,
-            borrow.assigned_place.place.project_deref(tcx),
+            deref_of_assigned_place,
             if borrow.is_mut {
                 Mutability::Mut
             } else {
@@ -366,12 +507,14 @@ impl<'tcx> BorrowsState<'tcx> {
     pub fn add_rustc_borrow(
         &mut self,
         tcx: TyCtxt<'tcx>,
+        body: &mir::Body<'tcx>,
         borrow: BorrowIndex,
         borrow_set: &BorrowSet<'tcx>,
         location: Location,
     ) {
         self.add_borrow(
             tcx,
+            body,
             Borrow::new(
                 BorrowKind::Rustc(borrow),
                 borrow_set[borrow].borrowed_place.into(),
@@ -388,9 +531,14 @@ impl<'tcx> BorrowsState<'tcx> {
             .iter()
             .find(|b| b.kind == BorrowKind::Rustc(*borrow));
         if let Some(borrow) = borrow {
-            self.reborrows.kill_reborrow_blocking(MaybeOldPlace::Current {
-                place: borrow.borrowed_place.place,
-            });
+            self.deref_expansions
+                .delete_descendants_of(MaybeOldPlace::Current {
+                    place: borrow.assigned_place.place,
+                });
+            self.reborrows
+                .kill_reborrow_blocking(MaybeOldPlace::Current {
+                    place: borrow.borrowed_place.place,
+                });
             self.borrows.remove(&borrow.clone());
         }
     }

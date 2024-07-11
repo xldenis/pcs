@@ -14,7 +14,7 @@ use rustc_interface::{
 };
 
 use crate::{
-    combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary, UnblockTree}, free_pcs::{
+    combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary}, free_pcs::{
         engine::FpcsEngine, CapabilitySummary, FreePlaceCapabilitySummary, RepackOp, RepackingBridgeSemiLattice
     }, rustc_interface, utils::PlaceRepacker
 };

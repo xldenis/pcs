@@ -24,9 +24,7 @@ use rustc_interface::{
 use serde_json::{json, Value};
 
 use crate::{
-    borrows::domain::{PlaceSnapshot, RegionAbstraction},
-    rustc_interface,
-    utils::{self, PlaceRepacker},
+    borrows::domain::{PlaceSnapshot, RegionAbstraction}, combined_pcs::UnblockGraph, rustc_interface, utils::{self, PlaceRepacker}
 };
 
 use super::domain::{Borrow, BorrowKind, BorrowsState, MaybeOldPlace, Reborrow};
@@ -40,6 +38,11 @@ pub struct BorrowsEngine<'mir, 'tcx> {
     region_inference_context: Rc<RegionInferenceContext<'tcx>>,
 }
 impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
+    fn ensure_expansion_to(&self, state: &mut BorrowsDomain<'tcx>, place: utils::Place<'tcx>) {
+        state
+            .after
+            .ensure_expansion_to(self.tcx, self.body, MaybeOldPlace::Current { place })
+    }
     pub fn new(
         tcx: TyCtxt<'tcx>,
         body: &'mir Body<'tcx>,
@@ -159,8 +162,8 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct BorrowsDomain<'tcx> {
-    before_start: BorrowsState<'tcx>,
-    before_after: BorrowsState<'tcx>,
+    pub before_start: BorrowsState<'tcx>,
+    pub before_after: BorrowsState<'tcx>,
     pub start: BorrowsState<'tcx>,
     pub after: BorrowsState<'tcx>,
 }
@@ -205,6 +208,21 @@ impl<'tcx> BorrowsDomain<'tcx> {
                 actions.push(ReborrowAction::AddReborrow(*reborrow));
             }
         }
+
+        for exp in s.deref_expansions.iter() {
+            if !e.deref_expansions.contains(&exp) {
+                actions.push(ReborrowAction::CollapsePlace(
+                    exp.expansion.clone(),
+                    exp.base,
+                ));
+            }
+        }
+
+        for exp in e.deref_expansions.iter() {
+            if !s.deref_expansions.contains(&exp) {
+                actions.push(ReborrowAction::ExpandPlace(exp.base, exp.expansion.clone()));
+            }
+        }
         actions
     }
 
@@ -233,15 +251,11 @@ impl<'tcx> BorrowsDomain<'tcx> {
 pub enum ReborrowAction<'tcx> {
     AddReborrow(Reborrow<'tcx>),
     RemoveReborrow(Reborrow<'tcx>),
+    ExpandPlace(MaybeOldPlace<'tcx>, Vec<utils::Place<'tcx>>),
+    CollapsePlace(Vec<utils::Place<'tcx>>, MaybeOldPlace<'tcx>),
 }
 
 impl<'tcx> ReborrowAction<'tcx> {
-    pub fn reborrow(self) -> Reborrow<'tcx> {
-        match self {
-            ReborrowAction::AddReborrow(reborrow) => reborrow,
-            ReborrowAction::RemoveReborrow(reborrow) => reborrow,
-        }
-    }
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         match self {
             ReborrowAction::AddReborrow(reborrow) => json!({
@@ -251,6 +265,14 @@ impl<'tcx> ReborrowAction<'tcx> {
             ReborrowAction::RemoveReborrow(reborrow) => json!({
                 "action": "RemoveReborrow",
                 "reborrow": reborrow.to_json(repacker)
+            }),
+            ReborrowAction::ExpandPlace(place, _) => json!({
+                "action": "ExpandPlace",
+                "place": place.to_json(repacker),
+            }),
+            ReborrowAction::CollapsePlace(_, place) => json!({
+                "action": "CollapsePlace",
+                "place": place.to_json(repacker),
             }),
         }
     }
@@ -318,14 +340,21 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         if let Some(loan) = self.loan_issued_at_location(location, true) {
             state
                 .after
-                .add_rustc_borrow(self.tcx, loan, &self.borrow_set, location);
+                .add_rustc_borrow(self.tcx, self.body, loan, &self.borrow_set, location);
         }
         match &statement.kind {
             StatementKind::Assign(box (target, rvalue)) => {
                 if let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = rvalue {
                     let place: utils::Place<'tcx> = (*from).into();
-                    state.after.kill_reborrow_blocking(MaybeOldPlace::Current { place });
+                    state
+                        .after
+                        .kill_reborrow_blocking(MaybeOldPlace::Current { place });
+                    self.ensure_expansion_to(state, (*from).into());
                 }
+                if let Rvalue::Ref(_, _, blocked_place) = rvalue {
+                    self.ensure_expansion_to(state, (*blocked_place).into());
+                }
+                self.ensure_expansion_to(state, (*target).into());
                 state.after.set_latest((*target).into(), location);
             }
             _ => {}
@@ -346,7 +375,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         if let Some(loan) = self.loan_issued_at_location(location, false) {
             state
                 .after
-                .add_rustc_borrow(self.tcx, loan, &self.borrow_set, location);
+                .add_rustc_borrow(self.tcx, self.body, loan, &self.borrow_set, location);
         }
         match &statement.kind {
             StatementKind::Assign(box (target, rvalue)) => {
@@ -368,7 +397,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                                 place: (*target).into(),
                                 at: location,
                             };
-                            state.after.add_borrow(self.tcx, borrow);
+                            state.after.add_borrow(self.tcx, self.body, borrow);
                             // state.log_action(format!(
                             //     "Removed loan assigned to {:?} due to move {:?} -> {:?}:  {:?}",
                             //     target, from, target, borrow
@@ -378,6 +407,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                         for loan in loans_to_move {
                             state.after.add_borrow(
                                 self.tcx,
+                                self.body,
                                 Borrow::new(
                                     BorrowKind::PCS,
                                     loan.borrowed_place.place,
