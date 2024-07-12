@@ -189,7 +189,10 @@ impl<'tcx> DerefExpansions<'tcx> {
     }
 
     pub fn get(&self, place: MaybeOldPlace<'tcx>) -> Option<Vec<Place<'tcx>>> {
-        self.0.iter().find(|expansion| expansion.base == place).map(|expansion| expansion.expansion.clone())
+        self.0
+            .iter()
+            .find(|expansion| expansion.base == place)
+            .map(|expansion| expansion.expansion.clone())
     }
 
     pub fn ensure_expansion_to(
@@ -208,10 +211,13 @@ impl<'tcx> DerefExpansions<'tcx> {
             if in_dag {
                 let origin_place = MaybeOldPlace::new(place, location);
                 if !self.contains_projection_from(origin_place) {
-                    self.insert(
-                        origin_place,
-                        vec![place.project_deeper(&[elem], tcx).into()],
-                    );
+                    let expansion = match elem {
+                        mir::ProjectionElem::Downcast(_, _) => {
+                            vec![place.project_deeper(&[elem], tcx).into()]
+                        }
+                        _ => place.expand_field(None, PlaceRepacker::new(&body, tcx)),
+                    };
+                    self.insert(origin_place, expansion);
                 }
             }
         }
@@ -229,7 +235,6 @@ impl<'tcx> DerefExpansions<'tcx> {
     }
 
     fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>) {
-        eprintln!("Deleting expansion from {:?}", place);
         let expansion = self
             .iter()
             .find(|expansion| expansion.base == place)

@@ -74,7 +74,7 @@ pub struct PcsContext<'a, 'tcx> {
 
 impl<'a, 'tcx> PcsContext<'a, 'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, mir: &'a BodyWithBorrowckFacts<'tcx>) -> Self {
-        let rp = PlaceRepacker::new(&mir.body, &mir.promoted, tcx);
+        let rp = PlaceRepacker::new(&mir.body, tcx);
         Self { rp, mir }
     }
 }

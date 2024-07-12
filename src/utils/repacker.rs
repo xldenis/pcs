@@ -53,17 +53,15 @@ impl ProjectionRefKind {
 // TODO: modified version of fns taken from `prusti-interface/src/utils.rs`; deduplicate
 pub struct PlaceRepacker<'a, 'tcx: 'a> {
     pub(super) mir: &'a Body<'tcx>,
-    pub(super) promoted: &'a IndexVec<Promoted, Body<'tcx>>,
     pub(super) tcx: TyCtxt<'tcx>,
 }
 
 impl<'a, 'tcx: 'a> PlaceRepacker<'a, 'tcx> {
     pub fn new(
         mir: &'a Body<'tcx>,
-        promoted: &'a IndexVec<Promoted, Body<'tcx>>,
         tcx: TyCtxt<'tcx>,
     ) -> Self {
-        Self { mir, promoted, tcx }
+        Self { mir, tcx }
     }
 
     pub fn local_count(self) -> usize {
@@ -84,10 +82,6 @@ impl<'a, 'tcx: 'a> PlaceRepacker<'a, 'tcx> {
 
     pub fn body(self) -> &'a Body<'tcx> {
         self.mir
-    }
-
-    pub fn promoted(self) -> &'a IndexVec<Promoted, Body<'tcx>> {
-        self.promoted
     }
 
     pub fn tcx(self) -> TyCtxt<'tcx> {
