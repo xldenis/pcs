@@ -24,7 +24,10 @@ use rustc_interface::{
 use serde_json::{json, Value};
 
 use crate::{
-    borrows::domain::{PlaceSnapshot, RegionAbstraction}, combined_pcs::UnblockGraph, rustc_interface, utils::{self, PlaceRepacker}
+    borrows::domain::{PlaceSnapshot, RegionAbstraction},
+    combined_pcs::UnblockGraph,
+    rustc_interface,
+    utils::{self, PlaceRepacker},
 };
 
 use super::domain::{Borrow, BorrowKind, BorrowsState, MaybeOldPlace, Reborrow};
@@ -37,12 +40,71 @@ pub struct BorrowsEngine<'mir, 'tcx> {
     borrow_set: Rc<BorrowSet<'tcx>>,
     region_inference_context: Rc<RegionInferenceContext<'tcx>>,
 }
-impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
-    fn ensure_expansion_to(&self, state: &mut BorrowsDomain<'tcx>, place: utils::Place<'tcx>) {
-        state
+
+struct ExpansionVisitor<'tcx, 'mir, 'state> {
+    tcx: TyCtxt<'tcx>,
+    body: &'mir Body<'tcx>,
+    state: &'state mut BorrowsDomain<'tcx>,
+}
+
+impl<'tcx, 'mir, 'state> ExpansionVisitor<'tcx, 'mir, 'state> {
+    fn ensure_expansion_to(&mut self, place: utils::Place<'tcx>) {
+        self.state
             .after
             .ensure_expansion_to(self.tcx, self.body, MaybeOldPlace::Current { place })
     }
+}
+
+impl<'tcx, 'mir, 'state> Visitor<'tcx> for ExpansionVisitor<'tcx, 'mir, 'state> {
+    fn visit_operand(&mut self, operand: &Operand<'tcx>, location: Location) {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => {
+                self.ensure_expansion_to((*place).into());
+            }
+            _ => {}
+        }
+    }
+
+    fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
+        self.super_statement(statement, location);
+        match &statement.kind {
+            StatementKind::Assign(box (target, _)) => {
+                self.ensure_expansion_to((*target).into());
+            }
+            StatementKind::FakeRead(box (_, place)) => {
+                self.ensure_expansion_to((*place).into());
+            }
+            _ => {}
+        }
+    }
+
+    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
+        self.super_rvalue(rvalue, location);
+        use Rvalue::*;
+        match rvalue {
+            Use(_)
+            | Repeat(_, _)
+            | ThreadLocalRef(_)
+            | Cast(_, _, _)
+            | BinaryOp(_, _)
+            | CheckedBinaryOp(_, _)
+            | NullaryOp(_, _)
+            | UnaryOp(_, _)
+            | Aggregate(_, _)
+            | ShallowInitBox(_, _) => {}
+
+            &Ref(_, _, place)
+            | &AddressOf(_, place)
+            | &Len(place)
+            | &Discriminant(place)
+            | &CopyForDeref(place) => {
+                self.ensure_expansion_to(place.into());
+            }
+        }
+    }
+}
+
+impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         body: &'mir Body<'tcx>,
@@ -334,6 +396,11 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         location: Location,
     ) {
         state.before_start = state.after.clone();
+        ExpansionVisitor {
+            tcx: self.tcx,
+            body: self.body,
+            state
+        }.visit_statement(statement, location);
         for loan in self.loans_invalidated_at(location, true) {
             state.after.remove_rustc_borrow(&loan, &self.body);
         }
@@ -343,21 +410,13 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                 .add_rustc_borrow(self.tcx, self.body, loan, &self.borrow_set, location);
         }
         match &statement.kind {
-            StatementKind::FakeRead(box (_, place)) => {
-                self.ensure_expansion_to(state, (*place).into());
-            }
             StatementKind::Assign(box (target, rvalue)) => {
                 if let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = rvalue {
                     let place: utils::Place<'tcx> = (*from).into();
                     state
                         .after
                         .kill_reborrow_blocking(MaybeOldPlace::Current { place });
-                    self.ensure_expansion_to(state, (*from).into());
                 }
-                if let Rvalue::Ref(_, _, blocked_place) = rvalue {
-                    self.ensure_expansion_to(state, (*blocked_place).into());
-                }
-                self.ensure_expansion_to(state, (*target).into());
                 state.after.set_latest((*target).into(), location);
             }
             _ => {}
