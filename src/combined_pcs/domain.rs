@@ -27,7 +27,7 @@ use crate::{
     utils::{Place, PlaceRepacker},
 };
 
-use super::{PcsContext, PcsEngine};
+use super::{PcsContext, PcsEngine, UnblockGraph};
 use crate::borrows::domain::BorrowsState;
 
 #[derive(Clone)]
@@ -68,7 +68,28 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
     fn join(&mut self, other: &Self) -> bool {
         let fpcs = self.fpcs.join(&other.fpcs);
         let borrows = self.borrows.join(&other.borrows);
-        fpcs || borrows
+        let mut g = UnblockGraph::new();
+        for root in self.borrows.after.reborrow_roots() {
+            match &self.fpcs.after[root.local] {
+                CapabilityLocal::Unallocated => {
+                    g.unblock_place(
+                        crate::borrows::domain::MaybeOldPlace::Current { place: root },
+                        &self.borrows.after,
+                    );
+                }
+                CapabilityLocal::Allocated(projs) => {
+                    if !(*projs).contains_key(&root) {
+                        g.unblock_place(
+                            crate::borrows::domain::MaybeOldPlace::Current { place: root },
+                            &self.borrows.after,
+                        );
+                    }
+
+                }
+            }
+        }
+        let ub = self.borrows.after.apply_unblock_graph(g);
+        fpcs || borrows || ub
     }
 }
 

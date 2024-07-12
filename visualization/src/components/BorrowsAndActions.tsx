@@ -41,7 +41,8 @@ function ReborrowActionDisplay({ action }: { action: ReborrowAction }) {
   return (
     <div>
       <p>Action: {action.action}</p>
-      {action.action === "AddReborrow" && (
+      {(action.action === "AddReborrow" ||
+        action.action === "RemoveReborrow") && (
         <ReborrowDisplay reborrow={action.reborrow} />
       )}
       {action.action === "ExpandPlace" && <ReborrowEC place={action.place} />}

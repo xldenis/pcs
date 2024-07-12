@@ -19,7 +19,10 @@ pub mod visualization;
 
 use std::{fs::create_dir_all, rc::Rc};
 
-use borrows::{domain::BorrowsState, engine::BorrowsDomain};
+use borrows::{
+    domain::BorrowsState,
+    engine::{BorrowsDomain, ReborrowAction},
+};
 use combined_pcs::{BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary};
 use free_pcs::HasExtra;
 use rustc_interface::{
@@ -43,8 +46,22 @@ pub type FpcsOutput<'mir, 'tcx> = free_pcs::FreePcsAnalysis<
 >;
 
 impl<'mir, 'tcx> HasExtra<BorrowsDomain<'tcx>> for PlaceCapabilitySummary<'mir, 'tcx> {
+    type ExtraOp = ReborrowAction<'tcx>;
     fn get_extra(&self) -> BorrowsDomain<'tcx> {
         self.borrows.clone()
+    }
+
+    fn bridge_between_stmts(
+        lhs: BorrowsDomain<'tcx>,
+        rhs: BorrowsDomain<'tcx>,
+    ) -> (Vec<Self::ExtraOp>, Vec<Self::ExtraOp>) {
+        let start = lhs.after.bridge(&rhs.before_start);
+        let middle = rhs.before_start.bridge(&rhs.before_after);
+        (start, middle)
+    }
+
+    fn bridge_terminator(lhs: &BorrowsDomain<'tcx>, rhs: BorrowsDomain<'tcx>) -> Vec<Self::ExtraOp> {
+        lhs.after.bridge(&rhs.after)
     }
 }
 

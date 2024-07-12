@@ -197,7 +197,7 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         state: &mut BorrowsState<'tcx>,
         assigned_to: Place<'tcx>,
     ) -> FxHashSet<Borrow<'tcx>> {
-        state.remove_loans_assigned_to(assigned_to.into())
+        state.remove_loans_assigned_to(self.tcx, assigned_to.into())
     }
 
     fn outlives_or_eq(&self, sup: RegionVid, sub: RegionVid) -> bool {
@@ -211,93 +211,6 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
                         && (sub == constraint.sub || self.outlives_or_eq(constraint.sub, sub))
                 })
         }
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct BorrowsDomain<'tcx> {
-    pub before_start: BorrowsState<'tcx>,
-    pub before_after: BorrowsState<'tcx>,
-    pub start: BorrowsState<'tcx>,
-    pub after: BorrowsState<'tcx>,
-}
-
-impl<'tcx> BorrowsDomain<'tcx> {
-    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
-        json!({
-            "before_start": self.before_start.to_json(repacker),
-            "before_after": self.before_after.to_json(repacker),
-            "start": self.start.to_json(repacker),
-            "after": self.after.to_json(repacker),
-        })
-    }
-
-    pub fn new() -> Self {
-        Self {
-            before_start: BorrowsState::new(),
-            before_after: BorrowsState::new(),
-            start: BorrowsState::new(),
-            after: BorrowsState::new(),
-        }
-    }
-
-    fn apply_to_end_state(&mut self, action: BorrowAction<'_, 'tcx>) {
-        self.after.apply_action(action)
-    }
-
-    pub fn reborrow_actions<'a>(&'a self, start: bool) -> Vec<ReborrowAction<'tcx>> {
-        let (s, e) = if start {
-            (&self.before_start, &self.before_after)
-        } else {
-            (&self.before_after, &self.after)
-        };
-        let mut actions = vec![];
-        for reborrow in s.reborrows().iter() {
-            if !e.contains_reborrow(reborrow) {
-                actions.push(ReborrowAction::RemoveReborrow(*reborrow));
-            }
-        }
-        for reborrow in e.reborrows().iter() {
-            if !s.contains_reborrow(reborrow) {
-                actions.push(ReborrowAction::AddReborrow(*reborrow));
-            }
-        }
-
-        for exp in s.deref_expansions.iter() {
-            if !e.deref_expansions.contains(&exp) {
-                actions.push(ReborrowAction::CollapsePlace(
-                    exp.expansion.clone(),
-                    exp.base,
-                ));
-            }
-        }
-
-        for exp in e.deref_expansions.iter() {
-            if !s.deref_expansions.contains(&exp) {
-                actions.push(ReborrowAction::ExpandPlace(exp.base, exp.expansion.clone()));
-            }
-        }
-        actions
-    }
-
-    pub fn borrow_actions<'a>(&'a self, start: bool) -> Vec<BorrowAction<'a, 'tcx>> {
-        let (s, e) = if start {
-            (&self.before_start, &self.start)
-        } else {
-            (&self.before_after, &self.after)
-        };
-        let mut actions = vec![];
-        for borrow in s.borrows().iter() {
-            if !e.contains_borrow(borrow) {
-                actions.push(BorrowAction::RemoveBorrow(borrow));
-            }
-        }
-        for borrow in e.borrows().iter() {
-            if !s.contains_borrow(borrow) {
-                actions.push(BorrowAction::AddBorrow(Cow::Borrowed(borrow)));
-            }
-        }
-        actions
     }
 }
 
@@ -395,7 +308,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         }
         .visit_statement(statement, location);
         for loan in self.loans_invalidated_at(location, true) {
-            if state.after.remove_rustc_borrow(&loan, &self.body) {
+            if state.after.remove_rustc_borrow(self.tcx, &loan, &self.body) {
                 eprintln!("loan {loan:?} removed at {location:?} (start)");
             }
         }
@@ -427,7 +340,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
     ) {
         state.start = state.after.clone();
         for loan in self.loans_invalidated_at(location, false) {
-            if state.after.remove_rustc_borrow(&loan, &self.body) {
+            if state.after.remove_rustc_borrow(self.tcx, &loan, &self.body) {
                 eprintln!("loan {loan:?} removed at {location:?}");
             }
         }
@@ -500,7 +413,10 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                 }
             }
             StatementKind::StorageDead(local) => {
-                state.after.remove_borrows_assigned_to_local(*local)
+                // state.after.remove_loans_assigned_to(
+                //     self.tcx,
+                //     Place::from(*local).into(),
+                // );
             }
             _ => {}
         }
@@ -578,5 +494,64 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         return_places: CallReturnPlaces<'_, 'tcx>,
     ) {
         todo!()
+    }
+}
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct BorrowsDomain<'tcx> {
+    pub before_start: BorrowsState<'tcx>,
+    pub before_after: BorrowsState<'tcx>,
+    pub start: BorrowsState<'tcx>,
+    pub after: BorrowsState<'tcx>,
+}
+
+impl<'tcx> BorrowsDomain<'tcx> {
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
+        json!({
+            "before_start": self.before_start.to_json(repacker),
+            "before_after": self.before_after.to_json(repacker),
+            "start": self.start.to_json(repacker),
+            "after": self.after.to_json(repacker),
+        })
+    }
+
+    pub fn new() -> Self {
+        Self {
+            before_start: BorrowsState::new(),
+            before_after: BorrowsState::new(),
+            start: BorrowsState::new(),
+            after: BorrowsState::new(),
+        }
+    }
+
+    fn apply_to_end_state(&mut self, action: BorrowAction<'_, 'tcx>) {
+        self.after.apply_action(action)
+    }
+
+    pub fn reborrow_actions(&self, start: bool) -> Vec<ReborrowAction<'tcx>> {
+        if start {
+            self.before_start.bridge(&self.start)
+        } else {
+            self.before_after.bridge(&self.after)
+        }
+    }
+
+    pub fn borrow_actions<'a>(&'a self, start: bool) -> Vec<BorrowAction<'a, 'tcx>> {
+        let (s, e) = if start {
+            (&self.before_start, &self.start)
+        } else {
+            (&self.before_after, &self.after)
+        };
+        let mut actions = vec![];
+        for borrow in s.borrows().iter() {
+            if !e.contains_borrow(borrow) {
+                actions.push(BorrowAction::RemoveBorrow(borrow));
+            }
+        }
+        for borrow in e.borrows().iter() {
+            if !s.contains_borrow(borrow) {
+                actions.push(BorrowAction::AddBorrow(Cow::Borrowed(borrow)));
+            }
+        }
+        actions
     }
 }

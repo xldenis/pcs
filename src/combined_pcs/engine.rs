@@ -169,6 +169,10 @@ impl<'tcx> UnblockGraph<'tcx> {
         Self(HashSet::new())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn actions(self) -> Vec<UnblockAction<'tcx>> {
         let mut edges = self.0;
         let mut actions = vec![];
@@ -242,10 +246,9 @@ impl<'tcx> UnblockGraph<'tcx> {
         &mut self,
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'tcx>,
-        fpcs: &CapabilitySummary<'tcx>,
     ) {
         if let Some(reborrow) = borrows.find_reborrow_blocking(place) {
-            self.unblock_reborrow(reborrow.clone(), borrows, fpcs)
+            self.unblock_reborrow(reborrow.clone(), borrows)
         }
         for (idx, child_place) in borrows
             .deref_expansions
@@ -256,7 +259,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         {
             let child_place = MaybeOldPlace::new(child_place, place.location());
             self.add_dependency(place, child_place, UnblockEdgeType::Projection(idx));
-            self.unblock_place(child_place, borrows, fpcs);
+            self.unblock_place(child_place, borrows);
         }
     }
 
@@ -271,14 +274,13 @@ impl<'tcx> UnblockGraph<'tcx> {
         &mut self,
         reborrow: Reborrow<'tcx>,
         borrows: &BorrowsState<'tcx>,
-        fpcs: &CapabilitySummary<'tcx>,
     ) {
         self.add_dependency(
             reborrow.blocked_place,
             reborrow.assigned_place,
             UnblockEdgeType::Reborrow,
         );
-        self.unblock_place(reborrow.assigned_place, borrows, fpcs);
+        self.unblock_place(reborrow.assigned_place, borrows);
     }
 }
 

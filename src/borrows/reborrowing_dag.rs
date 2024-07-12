@@ -47,27 +47,17 @@ impl<'tcx> ReborrowingDag<'tcx> {
         }
     }
 
-    pub fn get_source(&self, place: Place<'tcx>) -> Option<(MaybeOldPlace<'tcx>, Mutability)> {
-        let source = self
-            .reborrows
-            .iter()
-            .find(|reborrow| {
-                reborrow.assigned_place.is_current() && reborrow.assigned_place.place() == place
-            })
-            .map(|reborrow| (reborrow.blocked_place, reborrow.mutability));
-        if let Some((mut place, mut mutability)) = source {
-            while let Some(reborrow) = self
-                .reborrows
-                .iter()
-                .find(|reborrow| reborrow.assigned_place == place)
-            {
-                place = reborrow.blocked_place;
-                mutability = reborrow.mutability;
-            }
-            return Some((place, mutability));
-        } else {
-            None
+    pub fn roots(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        let mut candidates: FxHashSet<MaybeOldPlace<'tcx>> =
+            self.reborrows.iter().map(|r| r.blocked_place).collect();
+        for reborrow in self.reborrows.iter() {
+            candidates.remove(&reborrow.assigned_place);
         }
+        candidates
+    }
+
+    pub fn get_place_blocking(&self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
+        self.reborrows.iter().find(|r| r.assigned_place == place).map(|r| r.blocked_place)
     }
 
     pub fn insert(&mut self, reborrow: Reborrow<'tcx>) -> bool {
@@ -99,7 +89,10 @@ impl<'tcx> ReborrowingDag<'tcx> {
         })
     }
 
-    pub fn kill_reborrow_blocking(&mut self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
+    pub fn kill_reborrow_blocking(
+        &mut self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> Option<MaybeOldPlace<'tcx>> {
         let to_remove = self
             .reborrows
             .iter()

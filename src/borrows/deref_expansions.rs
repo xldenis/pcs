@@ -31,6 +31,16 @@ impl<'tcx> DerefExpansions<'tcx> {
             .map(|expansion| expansion.expansion.clone())
     }
 
+    pub fn get_parent(&self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
+        self.0
+            .iter()
+            .find(|expansion| {
+                expansion.base.location() == place.location()
+                    && expansion.expansion.contains(&place.place())
+            })
+            .map(|expansion| expansion.base)
+    }
+
     pub fn ensure_expansion_to(
         &mut self,
         place: MaybeOldPlace<'tcx>,
@@ -57,31 +67,41 @@ impl<'tcx> DerefExpansions<'tcx> {
                 }
             }
         }
-        self.delete_descendants_of(place)
+        self.delete_descendants_of(place);
     }
 
-    fn delete(&mut self, place: MaybeOldPlace<'tcx>) {
+    fn delete(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
         let expansion = self
             .iter()
             .find(|expansion| expansion.base == place)
             .cloned();
         if let Some(expansion) = expansion {
-            self.0.remove(&expansion);
+            self.0.remove(&expansion)
+        } else {
+            false
         }
     }
 
-    pub fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>) {
+    pub fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
         let expansion = self
             .iter()
             .find(|expansion| expansion.base == place)
             .cloned();
 
+        let mut changed = false;
         if let Some(expansion) = expansion {
             for e in expansion.expansion.iter() {
                 let p = MaybeOldPlace::new(*e, None);
-                self.delete_descendants_of(p);
-                self.delete(p);
+                if self.delete_descendants_of(p) {
+                    changed = true;
+                }
+                if self.delete(p) {
+                    changed = true;
+                }
             }
+            changed
+        } else {
+            false
         }
     }
 
