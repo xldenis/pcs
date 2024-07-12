@@ -198,16 +198,28 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
                 post: Condition::Unchanged,
             },
             &PlaceMention(box place) => Triple {
-                pre: Condition::capability(place.into(), CapabilityKind::Write),
+                pre: Condition::capability(
+                    get_place_to_expand_to(place.into(), self.repacker),
+                    CapabilityKind::Write,
+                ),
                 post: Condition::Unchanged,
             },
             &SetDiscriminant { box place, .. } => Triple {
-                pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
+                pre: Condition::capability(
+                    get_place_to_expand_to(place.into(), self.repacker),
+                    CapabilityKind::Exclusive,
+                ),
                 post: Condition::Unchanged,
             },
             &Deinit(box place) => Triple {
-                pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
-                post: Condition::capability(place.into(), CapabilityKind::Write),
+                pre: Condition::capability(
+                    get_place_to_expand_to(place.into(), self.repacker),
+                    CapabilityKind::Exclusive,
+                ),
+                post: Condition::capability(
+                    get_place_to_expand_to(place.into(), self.repacker),
+                    CapabilityKind::Write,
+                ),
             },
             &StorageLive(local) => Triple {
                 pre: Condition::Unalloc(local),
@@ -218,7 +230,10 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
                 post: Condition::Unalloc(local),
             },
             &Retag(_, box place) => Triple {
-                pre: Condition::capability(place.into(), CapabilityKind::Exclusive),
+                pre: Condition::capability(
+                    get_place_to_expand_to(place.into(), self.repacker),
+                    CapabilityKind::Exclusive,
+                ),
                 post: Condition::Unchanged,
             },
             AscribeUserType(..) | Coverage(..) | Intrinsic(..) | ConstEvalCounter | Nop => return,
@@ -261,12 +276,24 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
                 return;
             }
             &Drop { place, .. } => Triple {
-                pre: Condition::Capability(place.into(), CapabilityKind::Write),
-                post: Condition::Capability(place.into(), CapabilityKind::Write),
+                pre: Condition::Capability(
+                    get_place_to_expand_to(place.into(), self.repacker),
+                    CapabilityKind::Write,
+                ),
+                post: Condition::Capability(
+                    get_place_to_expand_to(place.into(), self.repacker),
+                    CapabilityKind::Write,
+                ),
             },
             &Call { destination, .. } => Triple {
-                pre: Condition::Capability(destination.into(), CapabilityKind::Write),
-                post: Condition::Capability(destination.into(), CapabilityKind::Exclusive),
+                pre: Condition::Capability(
+                    get_place_to_expand_to(destination.into(), self.repacker),
+                    CapabilityKind::Write,
+                ),
+                post: Condition::Capability(
+                    get_place_to_expand_to(destination.into(), self.repacker),
+                    CapabilityKind::Exclusive,
+                ),
             },
             &Yield { resume_arg, .. } => Triple {
                 pre: Condition::Capability(resume_arg.into(), CapabilityKind::Write),

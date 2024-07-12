@@ -66,7 +66,7 @@ fn format_bin_op(op: &BinOp) -> String {
         BinOp::SubUnchecked => todo!(),
         BinOp::MulUnchecked => todo!(),
         BinOp::BitXor => todo!(),
-        BinOp::BitAnd => todo!(),
+        BinOp::BitAnd => "&".to_string(),
         BinOp::BitOr => todo!(),
         BinOp::Shl => "<<".to_string(),
         BinOp::ShlUnchecked => "<<".to_string(),
@@ -124,7 +124,9 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
             )
         }
         Rvalue::NullaryOp(_, _) => todo!(),
-        Rvalue::UnaryOp(_, _) => todo!(),
+        Rvalue::UnaryOp(op, val) => {
+            format!("{:?} {}", op, format_operand(val, debug_info))
+        }
         Rvalue::Discriminant(place) => format!("Discriminant({})", format_place(place, debug_info)),
         Rvalue::Aggregate(kind, ops) => {
             format!(

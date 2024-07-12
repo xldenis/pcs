@@ -138,7 +138,11 @@ impl<'tcx> CapabilityProjections<'tcx> {
         to: Place<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> Vec<RepackOp<'tcx>> {
-        assert!(!from.is_mut_ref(repacker.body(), repacker.tcx()));
+        assert!(
+            !from.is_mut_ref(repacker.body(), repacker.tcx()),
+            "Mutable reference {:?} should be expanded in reborrowing dag, not PCS",
+            from
+        );
         debug_assert!(!self.contains_key(&to));
         let (expanded, mut others) = from.expand(to, repacker);
         let mut perm = self.remove(&from).unwrap();
