@@ -347,7 +347,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
                 });
             }
         }
-        for borrow in &self.borrows_domain.borrows {
+        for borrow in self.borrows_domain.borrows().iter() {
             let borrowed_place = self.insert_snapshot_place(borrow.borrowed_place);
             let assigned_place = self.insert_snapshot_place(borrow.assigned_place);
             match borrow.kind {
@@ -378,7 +378,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
 
         let mut before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
-        for borrow in &self.borrows_domain.borrows {
+        for borrow in self.borrows_domain.borrows().iter() {
             if !self
                 .borrows_domain
                 .is_current(&borrow.assigned_place, self.repacker.body())

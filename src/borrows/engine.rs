@@ -197,15 +197,7 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         state: &mut BorrowsState<'tcx>,
         assigned_to: Place<'tcx>,
     ) -> FxHashSet<Borrow<'tcx>> {
-        let (to_remove, to_keep): (FxHashSet<_>, FxHashSet<_>) = state
-            .borrows
-            .clone()
-            .into_iter()
-            .partition(|borrow| borrow.assigned_place.place == assigned_to.into());
-
-        state.borrows = to_keep;
-
-        to_remove
+        state.remove_loans_assigned_to(assigned_to.into())
     }
 
     fn outlives_or_eq(&self, sup: RegionVid, sub: RegionVid) -> bool {
@@ -295,12 +287,12 @@ impl<'tcx> BorrowsDomain<'tcx> {
             (&self.before_after, &self.after)
         };
         let mut actions = vec![];
-        for borrow in s.borrows.iter() {
+        for borrow in s.borrows().iter() {
             if !e.contains_borrow(borrow) {
                 actions.push(BorrowAction::RemoveBorrow(borrow));
             }
         }
-        for borrow in e.borrows.iter() {
+        for borrow in e.borrows().iter() {
             if !s.contains_borrow(borrow) {
                 actions.push(BorrowAction::AddBorrow(Cow::Borrowed(borrow)));
             }
@@ -399,10 +391,13 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         ExpansionVisitor {
             tcx: self.tcx,
             body: self.body,
-            state
-        }.visit_statement(statement, location);
+            state,
+        }
+        .visit_statement(statement, location);
         for loan in self.loans_invalidated_at(location, true) {
-            state.after.remove_rustc_borrow(&loan, &self.body);
+            if state.after.remove_rustc_borrow(&loan, &self.body) {
+                eprintln!("loan {loan:?} removed at {location:?} (start)");
+            }
         }
         if let Some(loan) = self.loan_issued_at_location(location, true) {
             state
@@ -432,7 +427,9 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
     ) {
         state.start = state.after.clone();
         for loan in self.loans_invalidated_at(location, false) {
-            state.after.remove_rustc_borrow(&loan, &self.body);
+            if state.after.remove_rustc_borrow(&loan, &self.body) {
+                eprintln!("loan {loan:?} removed at {location:?}");
+            }
         }
         if let Some(loan) = self.loan_issued_at_location(location, false) {
             state
@@ -503,13 +500,7 @@ impl<'tcx, 'a> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
                 }
             }
             StatementKind::StorageDead(local) => {
-                state.after.borrows.retain(|borrow| {
-                    if borrow.assigned_place.place.local == *local {
-                        false
-                    } else {
-                        true
-                    }
-                });
+                state.after.remove_borrows_assigned_to_local(*local)
             }
             _ => {}
         }
