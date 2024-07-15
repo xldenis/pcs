@@ -43,22 +43,21 @@ impl EdgeOptions {
     }
 }
 
-impl GraphDrawer {
-    pub fn new(file_path: &str) -> Self {
-        let file = File::create(file_path).unwrap();
-        Self { file }
+impl<T: io::Write> GraphDrawer<T> {
+    pub fn new(out: T) -> Self {
+        Self { out }
     }
 
     pub fn draw(mut self, graph: Graph) -> io::Result<()> {
-        writeln!(self.file, "digraph CapabilitySummary {{")?;
-        writeln!(self.file, "node [shape=rect]")?;
+        writeln!(self.out, "digraph CapabilitySummary {{")?;
+        writeln!(self.out, "node [shape=rect]")?;
         for node in graph.nodes {
             self.draw_node(node)?;
         }
         for edge in graph.edges {
             self.draw_edge(edge)?;
         }
-        writeln!(&mut self.file, "}}")
+        writeln!(&mut self.out, "}}")
     }
 
     fn escape_html(input: String) -> String {
@@ -86,7 +85,7 @@ impl GraphDrawer {
                     None => "".to_string(),
                 };
                 writeln!(
-                    self.file,
+                    self.out,
                     "    \"{}\" [label=<<FONT FACE=\"courier\">{}</FONT>&nbsp;{}{}>, fontcolor=\"{}\", color=\"{}\"];",
                     node.id, Self::escape_html(label), Self::escape_html(capability_text), location_text, color, color
                 )?;
@@ -116,7 +115,7 @@ impl GraphDrawer {
         };
 
         writeln!(
-            self.file,
+            self.out,
             "    \"{}\" -> \"{}\" [label=\"{}\"{}{}{}]",
             source, target, options.label, style_part, arrowhead_part, color_part
         )
@@ -139,23 +138,44 @@ impl GraphDrawer {
                 )?;
             }
             GraphEdge::ProjectionEdge { source, target } => {
-                self.draw_dot_edge(
-                    source,
-                    target,
-                    EdgeOptions::new()
-                        .directed(false),
-                )?;
+                self.draw_dot_edge(source, target, EdgeOptions::new().directed(false))?;
             }
             GraphEdge::ReborrowEdge {
                 borrowed_place,
                 assigned_place,
+                location,
             } => {
                 self.draw_dot_edge(
                     assigned_place,
                     borrowed_place,
                     EdgeOptions::new()
                         .with_color("orange".to_string())
+                        .with_label(format!("{:?}", location))
                         .directed(true),
+                )?;
+            }
+            GraphEdge::DerefExpansionEdge {
+                source,
+                target,
+                block,
+            } => {
+                self.draw_dot_edge(
+                    source,
+                    target,
+                    EdgeOptions::new()
+                        .with_color("green".to_string())
+                        .with_label(format!("{:?}", block))
+                        .directed(false),
+                )?;
+            }
+            GraphEdge::UnblockReborrowEdge {
+                blocked_place,
+                blocking_place,
+            } => {
+                self.draw_dot_edge(
+                    blocking_place,
+                    blocked_place,
+                    EdgeOptions::new().with_color("red".to_string()),
                 )?;
             }
         }

@@ -12,6 +12,7 @@ use std::{
 
 use itertools::Itertools;
 use rustc_interface::{
+    ast::Mutability,
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{self, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext},
@@ -30,7 +31,9 @@ use rustc_interface::{
 
 use crate::{
     borrows::{
-        deref_expansions::DerefExpansions, domain::{BorrowsState, MaybeOldPlace, Reborrow}, engine::{BorrowsEngine, ReborrowAction}
+        deref_expansions::DerefExpansions,
+        domain::{BorrowsState, MaybeOldPlace, Reborrow},
+        engine::{BorrowsEngine, ReborrowAction},
     },
     free_pcs::{
         engine::FpcsEngine, CapabilityKind, CapabilityLocal, CapabilitySummary,
@@ -38,6 +41,7 @@ use crate::{
     },
     rustc_interface,
     utils::{Place, PlaceOrdering, PlaceRepacker},
+    visualization::generate_unblock_dot_graph,
 };
 
 use super::domain::PlaceCapabilitySummary;
@@ -125,7 +129,7 @@ impl<'a, 'tcx> AnalysisDomain<'tcx> for PcsEngine<'a, 'tcx> {
 
 #[derive(Eq, PartialEq, Hash, Clone, Debug)]
 pub enum UnblockEdgeType {
-    Reborrow,
+    Reborrow { is_mut: bool },
     Projection(usize),
 }
 
@@ -144,15 +148,17 @@ pub enum UnblockAction<'tcx> {
     TerminateReborrow {
         blocked_place: MaybeOldPlace<'tcx>,
         assigned_place: MaybeOldPlace<'tcx>,
+        is_mut: bool,
     },
     Collapse(MaybeOldPlace<'tcx>, Vec<MaybeOldPlace<'tcx>>),
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct UnblockEdge<'tcx> {
-    blocked: MaybeOldPlace<'tcx>,
-    blocker: MaybeOldPlace<'tcx>,
-    edge_type: UnblockEdgeType,
+    pub blocked: MaybeOldPlace<'tcx>,
+    pub blocker: MaybeOldPlace<'tcx>,
+    pub block: BasicBlock,
+    pub edge_type: UnblockEdgeType,
 }
 
 impl<'tcx> UnblockEdge<'tcx> {
@@ -165,12 +171,56 @@ impl<'tcx> UnblockEdge<'tcx> {
 pub struct UnblockGraph<'tcx>(HashSet<UnblockEdge<'tcx>>);
 
 impl<'tcx> UnblockGraph<'tcx> {
+    pub fn edges(&self) -> impl Iterator<Item = &UnblockEdge<'tcx>> {
+        self.0.iter()
+    }
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        let dot_graph = generate_unblock_dot_graph(&repacker, self).unwrap();
+        serde_json::json!({
+            "empty": self.is_empty(),
+            "dot_graph": dot_graph
+        })
+    }
     pub fn new() -> Self {
         Self(HashSet::new())
     }
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+        let edges_to_kill = self
+            .0
+            .iter()
+            .cloned()
+            .filter(|edge| !path.contains(&edge.block))
+            .collect::<Vec<_>>();
+        for edge in edges_to_kill {
+            self.remove_edge_and_trim(&edge);
+        }
+    }
+
+    fn remove_edge_and_trim(&mut self, edge: &UnblockEdge<'tcx>) {
+        self.0.remove(edge);
+        if self.edges_blocked_by(edge.blocker).is_empty() {
+            let edges_to_kill = self
+                .edges_blocking(edge.blocker)
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            for edge in edges_to_kill {
+                self.remove_edge_and_trim(&edge.clone());
+            }
+        }
+    }
+
+    fn edges_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> Vec<&UnblockEdge<'tcx>> {
+        self.0.iter().filter(|e| e.blocker == place).collect()
+    }
+
+    fn edges_blocking(&self, place: MaybeOldPlace<'tcx>) -> Vec<&UnblockEdge<'tcx>> {
+        self.0.iter().filter(|e| e.blocked == place).collect()
     }
 
     pub fn actions(self) -> Vec<UnblockAction<'tcx>> {
@@ -181,11 +231,12 @@ impl<'tcx> UnblockGraph<'tcx> {
             let is_leaf = |node| edges.iter().all(|e| e.blocked != node);
             for edge in edges.iter() {
                 match edge.edge_type {
-                    UnblockEdgeType::Reborrow => {
+                    UnblockEdgeType::Reborrow { is_mut } => {
                         if is_leaf(edge.blocker) {
                             actions.push(UnblockAction::TerminateReborrow {
                                 blocked_place: edge.blocked,
                                 assigned_place: edge.blocker,
+                                is_mut,
                             });
                             to_keep.remove(edge);
                         }
@@ -234,11 +285,13 @@ impl<'tcx> UnblockGraph<'tcx> {
         blocked: MaybeOldPlace<'tcx>,
         blocker: MaybeOldPlace<'tcx>,
         edge_type: UnblockEdgeType,
+        block: BasicBlock,
     ) {
         self.0.insert(UnblockEdge {
             blocked,
             blocker,
             edge_type,
+            block,
         });
     }
 
@@ -246,6 +299,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         &mut self,
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'tcx>,
+        block: BasicBlock,
     ) {
         if let Some(reborrow) = borrows.find_reborrow_blocking(place) {
             self.unblock_reborrow(reborrow.clone(), borrows)
@@ -258,8 +312,8 @@ impl<'tcx> UnblockGraph<'tcx> {
             .enumerate()
         {
             let child_place = MaybeOldPlace::new(child_place, place.location());
-            self.add_dependency(place, child_place, UnblockEdgeType::Projection(idx));
-            self.unblock_place(child_place, borrows);
+            self.add_dependency(place, child_place, UnblockEdgeType::Projection(idx), block);
+            self.unblock_place(child_place, borrows, block);
         }
     }
 
@@ -270,17 +324,17 @@ impl<'tcx> UnblockGraph<'tcx> {
         state.get(place).unwrap_or_default()
     }
 
-    pub fn unblock_reborrow<'a>(
-        &mut self,
-        reborrow: Reborrow<'tcx>,
-        borrows: &BorrowsState<'tcx>,
-    ) {
+    pub fn unblock_reborrow<'a>(&mut self, reborrow: Reborrow<'tcx>, borrows: &BorrowsState<'tcx>) {
         self.add_dependency(
             reborrow.blocked_place,
             reborrow.assigned_place,
-            UnblockEdgeType::Reborrow,
+            UnblockEdgeType::Reborrow {
+                is_mut: reborrow.mutability == Mutability::Mut,
+            },
+            reborrow.location.block, // TODO: Confirm this is the right block to use
         );
-        self.unblock_place(reborrow.assigned_place, borrows);
+        self.unblock_place(reborrow.assigned_place, borrows, reborrow.location.block);
+        // TODO: confirm right block
     }
 }
 
@@ -305,8 +359,8 @@ impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
                     }
                     _ => {}
                 },
-                ReborrowAction::ExpandPlace(_, _) => {}
-                ReborrowAction::CollapsePlace(_, _) => {}
+                ReborrowAction::ExpandPlace(..) => {}
+                ReborrowAction::CollapsePlace(..) => {}
             }
         }
     }

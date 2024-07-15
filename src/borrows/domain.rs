@@ -5,12 +5,13 @@ use rustc_interface::{
     borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
     data_structures::fx::{FxHashMap, FxHashSet},
     dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, Local, Location, VarDebugInfo},
+    middle::mir::{self, BasicBlock, Local, Location, VarDebugInfo},
     middle::ty::TyCtxt,
 };
 
 use crate::{
     combined_pcs::UnblockGraph, free_pcs::CapabilityProjections, rustc_interface, utils::Place,
+    ReborrowBridge,
 };
 
 impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
@@ -111,13 +112,8 @@ impl<'tcx> MaybeOldPlace<'tcx> {
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
-        let place_str = match self.place().to_string(repacker) {
-            crate::utils::display::PlaceDisplay::Temporary(p) => format!("{:?}", p),
-            crate::utils::display::PlaceDisplay::User(_, s) => s,
-        };
-
         json!({
-            "place": place_str,
+            "place": self.place().to_json(repacker),
             "at": self.location().map(|loc| format!("{:?}", loc)),
         })
     }
@@ -125,59 +121,62 @@ impl<'tcx> MaybeOldPlace<'tcx> {
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Borrow<'tcx> {
-    pub kind: BorrowKind,
-    pub borrowed_place: PlaceSnapshot<'tcx>,
-    pub assigned_place: PlaceSnapshot<'tcx>,
+    pub index: BorrowIndex,
+    pub borrowed_place: Place<'tcx>,
+    pub assigned_place: Place<'tcx>,
     pub is_mut: bool,
+    pub location: Location,
 }
 
 impl<'tcx> Borrow<'tcx> {
     pub fn new(
-        kind: BorrowKind,
+        index: BorrowIndex,
         borrowed_place: Place<'tcx>,
         assigned_place: Place<'tcx>,
         is_mut: bool,
         location: Location,
     ) -> Self {
         Self {
-            kind,
-            borrowed_place: PlaceSnapshot {
-                place: borrowed_place,
-                at: location,
-            },
-            assigned_place: PlaceSnapshot {
-                place: assigned_place,
-                at: location,
-            },
+            index,
+            borrowed_place,
+            assigned_place,
             is_mut,
+            location,
         }
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         json!({
-            "kind": format!("{:?}", self.kind),
-            // "borrowed_place": self.borrowed_place.to_json(repacker),
-            // "assigned_place": self.assigned_place.to_json(repacker),
+            "index": format!("{:?}", self.index),
+            "borrowed_place": self.borrowed_place.to_json(repacker),
+            "assigned_place": self.assigned_place.to_json(repacker),
+            "location": format!("{:?}", self.location),
             "is_mut": self.is_mut,
         })
     }
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum BorrowKind {
-    Rustc(BorrowIndex),
-    PCS,
-}
-
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct DerefExpansion<'tcx> {
     pub base: MaybeOldPlace<'tcx>,
     pub expansion: Vec<Place<'tcx>>,
+    pub block: BasicBlock,
 }
 
 impl<'tcx> DerefExpansion<'tcx> {
-    pub fn new(base: MaybeOldPlace<'tcx>, expansion: Vec<Place<'tcx>>) -> Self {
-        Self { base, expansion }
+    pub fn new(base: MaybeOldPlace<'tcx>, expansion: Vec<Place<'tcx>>, block: BasicBlock) -> Self {
+        Self {
+            base,
+            expansion,
+            block,
+        }
+    }
+
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        json!({
+            "base": self.base.to_json(repacker),
+            "expansion": self.expansion.iter().map(|p| p.to_json(repacker)).collect::<Vec<_>>(),
+        })
     }
 }
 
@@ -205,6 +204,9 @@ pub struct Reborrow<'tcx> {
     pub blocked_place: MaybeOldPlace<'tcx>,
     pub assigned_place: MaybeOldPlace<'tcx>,
     pub mutability: Mutability,
+
+    /// The location when the reborrow was created
+    pub location: Location,
 }
 
 impl<'tcx> Reborrow<'tcx> {
@@ -218,43 +220,52 @@ impl<'tcx> Reborrow<'tcx> {
 }
 
 impl<'tcx> BorrowsState<'tcx> {
-    pub fn bridge(&self, to: &Self) -> Vec<ReborrowAction<'tcx>> {
-        let mut actions = vec![];
+    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+        self.reborrows.filter_for_path(path);
+    }
+    pub fn bridge(&self, to: &Self, block: BasicBlock) -> ReborrowBridge<'tcx> {
+        let added_reborrows: FxHashSet<Reborrow<'tcx>> = to
+            .reborrows()
+            .iter()
+            .filter(|rb| !self.contains_reborrow(rb))
+            .cloned()
+            .collect();
+        let expands: FxHashSet<DerefExpansion<'tcx>> = to
+            .deref_expansions
+            .iter()
+            .filter(|exp| !self.deref_expansions.contains(exp))
+            .cloned()
+            .collect();
+
+        let mut ug = UnblockGraph::new();
+
         for reborrow in self.reborrows().iter() {
             if !to.contains_reborrow(reborrow) {
-                actions.push(ReborrowAction::RemoveReborrow(*reborrow));
-            }
-        }
-        for reborrow in to.reborrows().iter() {
-            if !self.contains_reborrow(reborrow) {
-                actions.push(ReborrowAction::AddReborrow(*reborrow));
+                ug.unblock_reborrow(*reborrow, self)
             }
         }
 
         for exp in self.deref_expansions.iter() {
             if !to.deref_expansions.contains(&exp) {
-                actions.push(ReborrowAction::CollapsePlace(
-                    exp.expansion.clone(),
-                    exp.base,
-                ));
+                ug.unblock_place(exp.base, self, block);
             }
         }
 
-        for exp in to.deref_expansions.iter() {
-            if !self.deref_expansions.contains(&exp) {
-                actions.push(ReborrowAction::ExpandPlace(exp.base, exp.expansion.clone()));
-            }
+        ReborrowBridge {
+            added_reborrows,
+            expands,
+            ug,
         }
-
-        actions
     }
     pub fn ensure_expansion_to(
         &mut self,
         tcx: TyCtxt<'tcx>,
         body: &mir::Body<'tcx>,
         place: MaybeOldPlace<'tcx>,
+        block: BasicBlock,
     ) {
-        self.deref_expansions.ensure_expansion_to(place, body, tcx);
+        self.deref_expansions
+            .ensure_expansion_to(place, body, tcx, block);
     }
 
     pub fn root_of(&self, place: MaybeOldPlace<'tcx>) -> MaybeOldPlace<'tcx> {
@@ -283,11 +294,11 @@ impl<'tcx> BorrowsState<'tcx> {
     pub fn apply_unblock_graph(&mut self, graph: UnblockGraph<'tcx>) -> bool {
         let mut changed = false;
         for action in graph.actions() {
-            eprintln!("ACTION: {:?}", action);
             match action {
                 crate::combined_pcs::UnblockAction::TerminateReborrow {
                     blocked_place,
                     assigned_place,
+                    ..
                 } => {
                     if self
                         .reborrows
@@ -338,9 +349,10 @@ impl<'tcx> BorrowsState<'tcx> {
         blocked_place: Place<'tcx>,
         assigned_place: Place<'tcx>,
         mutability: Mutability,
+        location: Location,
     ) {
         self.reborrows
-            .add_reborrow(blocked_place, assigned_place, mutability);
+            .add_reborrow(blocked_place, assigned_place, mutability, location);
         self.log("Add reborrow".to_string());
     }
 
@@ -403,41 +415,28 @@ impl<'tcx> BorrowsState<'tcx> {
         result
     }
 
-    pub fn live_borrows(&self, body: &mir::Body<'tcx>) -> Vec<&Borrow<'tcx>> {
-        self.borrows
-            .iter()
-            .filter(|borrow| {
-                self.is_current(&borrow.assigned_place, body)
-                    && self.is_current(&borrow.borrowed_place, body)
-            })
-            .collect()
-    }
+    // pub fn place_loaned_to_place(
+    //     &self,
+    //     place: Place<'tcx>,
+    //     body: &mir::Body<'tcx>,
+    // ) -> Option<PlaceSnapshot<'tcx>> {
+    //     self.live_borrows(body)
+    //         .iter()
+    //         .find(|borrow| borrow.assigned_place == place)
+    //         .map(|borrow| borrow.borrowed_place)
+    // }
 
-    pub fn place_loaned_to_place(
-        &self,
-        place: Place<'tcx>,
-        body: &mir::Body<'tcx>,
-    ) -> Option<PlaceSnapshot<'tcx>> {
-        self.live_borrows(body)
-            .iter()
-            .find(|borrow| borrow.assigned_place.place == place)
-            .map(|borrow| borrow.borrowed_place)
-    }
-
-    pub fn reference_targeting_place(
-        &self,
-        place: Place<'tcx>,
-        borrow_set: &BorrowSet<'tcx>,
-        body: &mir::Body<'tcx>,
-    ) -> Option<Place<'tcx>> {
-        self.live_borrows(body)
-            .iter()
-            .find(|borrow| {
-                self.is_current(&borrow.borrowed_place, body)
-                    && borrow.borrowed_place.place == place
-            })
-            .map(|borrow| borrow.assigned_place.place)
-    }
+    // pub fn reference_targeting_place(
+    //     &self,
+    //     place: Place<'tcx>,
+    //     borrow_set: &BorrowSet<'tcx>,
+    //     body: &mir::Body<'tcx>,
+    // ) -> Option<Place<'tcx>> {
+    //     self.live_borrows(body)
+    //         .iter()
+    //         .find(|borrow| borrow.borrowed_place == place)
+    //         .map(|borrow| borrow.assigned_place)
+    // }
 
     pub fn add_region_abstraction(&mut self, abstraction: RegionAbstraction<'tcx>) {
         if !self.region_abstractions.contains(&abstraction) {
@@ -446,26 +445,8 @@ impl<'tcx> BorrowsState<'tcx> {
     }
 
     pub fn add_borrow(&mut self, tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>, borrow: Borrow<'tcx>) {
-        let assigned_place = borrow.assigned_place.place;
+        let assigned_place = borrow.assigned_place;
         let deref_of_assigned_place = assigned_place.project_deref(tcx);
-
-        self.ensure_expansion_to(
-            tcx,
-            body,
-            MaybeOldPlace::Current {
-                place: deref_of_assigned_place,
-            },
-        );
-
-        self.add_reborrow(
-            borrow.borrowed_place.place,
-            deref_of_assigned_place,
-            if borrow.is_mut {
-                Mutability::Mut
-            } else {
-                Mutability::Not
-            },
-        );
         self.borrows.insert(borrow);
     }
 
@@ -481,7 +462,7 @@ impl<'tcx> BorrowsState<'tcx> {
             tcx,
             body,
             Borrow::new(
-                BorrowKind::Rustc(borrow),
+                borrow,
                 borrow_set[borrow].borrowed_place.into(),
                 borrow_set[borrow].assigned_place.into(),
                 matches!(borrow_set[borrow].kind, mir::BorrowKind::Mut { .. }),
@@ -490,16 +471,24 @@ impl<'tcx> BorrowsState<'tcx> {
         );
     }
 
-    pub fn remove_borrow(&mut self, tcx: TyCtxt<'tcx>, borrow: &Borrow<'tcx>) -> bool {
+    pub fn remove_borrow(
+        &mut self,
+        tcx: TyCtxt<'tcx>,
+        borrow: &Borrow<'tcx>,
+        block: BasicBlock,
+    ) -> bool {
         let mut g = UnblockGraph::new();
 
         // TODO: old places
         g.unblock_place(
             MaybeOldPlace::Current {
-                place: borrow.borrowed_place.place,
+                place: borrow.borrowed_place,
             },
             &self,
+            block,
         );
+
+        self.apply_unblock_graph(g);
 
         self.borrows.remove(&borrow.clone())
     }
@@ -509,13 +498,11 @@ impl<'tcx> BorrowsState<'tcx> {
         tcx: TyCtxt<'tcx>,
         rustc_borrow: &BorrowIndex,
         body: &mir::Body<'tcx>,
+        block: BasicBlock,
     ) -> bool {
-        let borrow = self
-            .borrows
-            .iter()
-            .find(|b| b.kind == BorrowKind::Rustc(*rustc_borrow));
+        let borrow = self.borrows.iter().find(|b| b.index == *rustc_borrow);
         if let Some(borrow) = borrow {
-            self.remove_borrow(tcx, &borrow.clone())
+            self.remove_borrow(tcx, &borrow.clone(), block)
         } else {
             false
         }
@@ -524,17 +511,18 @@ impl<'tcx> BorrowsState<'tcx> {
         &mut self,
         tcx: TyCtxt<'tcx>,
         place: Place<'tcx>,
+        block: BasicBlock,
     ) -> FxHashSet<Borrow<'tcx>> {
         let (to_remove, to_keep): (FxHashSet<_>, FxHashSet<_>) = self
             .borrows
             .clone()
             .into_iter()
-            .partition(|borrow| borrow.assigned_place.place == place);
+            .partition(|borrow| borrow.assigned_place == place);
 
         self.borrows = to_keep;
 
         for borrow in to_remove.iter() {
-            self.remove_borrow(tcx, borrow);
+            self.remove_borrow(tcx, borrow, block);
         }
 
         to_remove

@@ -7,7 +7,7 @@ use crate::{
         data_structures::fx::{FxHashMap, FxHashSet},
         dataflow::{AnalysisDomain, JoinSemiLattice},
         middle::{
-            mir::{self, Location, VarDebugInfo},
+            mir::{self, BasicBlock, Location, VarDebugInfo},
             ty::TyCtxt,
         },
     },
@@ -46,6 +46,7 @@ impl<'tcx> DerefExpansions<'tcx> {
         place: MaybeOldPlace<'tcx>,
         body: &mir::Body<'tcx>,
         tcx: TyCtxt<'tcx>,
+        block: BasicBlock
     ) {
         let location = place.location();
         let mut in_dag = false;
@@ -63,7 +64,7 @@ impl<'tcx> DerefExpansions<'tcx> {
                         }
                         _ => place.expand_field(None, PlaceRepacker::new(&body, tcx)),
                     };
-                    self.insert(origin_place, expansion);
+                    self.insert(origin_place, expansion, block);
                 }
             }
         }
@@ -105,11 +106,16 @@ impl<'tcx> DerefExpansions<'tcx> {
         }
     }
 
-    fn insert(&mut self, place: MaybeOldPlace<'tcx>, expansion: Vec<Place<'tcx>>) {
+    fn insert(
+        &mut self,
+        place: MaybeOldPlace<'tcx>,
+        expansion: Vec<Place<'tcx>>,
+        block: BasicBlock,
+    ) {
         for p in expansion.iter() {
             assert!(p.projection.len() > place.place().projection.len());
         }
-        self.0.insert(DerefExpansion::new(place, expansion));
+        self.0.insert(DerefExpansion::new(place, expansion, block));
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &DerefExpansion<'tcx>> {

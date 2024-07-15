@@ -65,13 +65,23 @@ export type ReborrowAction =
       place: MaybeOldPlace;
     };
 
+export type PlaceExpand = {
+  base: MaybeOldPlace,
+  expansion: string[]
+}
+
+export type ReborrowBridge = {
+  expands: PlaceExpand[];
+  added_reborrows: Reborrow[];
+};
+
 export type PathData = {
   heap: Record<string, { value: string; ty: string }>;
   pcs: string[];
   borrow_actions_start: BorrowAction[];
   borrow_actions_mid: BorrowAction[];
-  reborrow_actions_start: ReborrowAction[];
-  reborrow_actions_mid: ReborrowAction[];
+  reborrow_start: ReborrowBridge;
+  reborrow_middle?: ReborrowBridge;
   borrows: {
     borrows: Borrow[];
   };

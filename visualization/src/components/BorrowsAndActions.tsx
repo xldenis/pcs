@@ -6,6 +6,8 @@ import {
   Reborrow,
   ReborrowAction,
   MaybeOldPlace,
+  ReborrowBridge,
+  PlaceExpand,
 } from "../types";
 
 function ReborrowDisplay({ reborrow }: { reborrow: Reborrow }) {
@@ -18,10 +20,14 @@ function ReborrowDisplay({ reborrow }: { reborrow: Reborrow }) {
   );
 }
 
-function ReborrowEC({ place }: { place: MaybeOldPlace }) {
+function BridgeExpands({ expands }: { expands: PlaceExpand[] }) {
   return (
     <div>
-      <p>Place: {place.place}</p>
+      {expands.map((expand, idx) => (
+        <div key={`expand-${idx}`}>
+          {expand.base.place} -&gt; {expand.expansion.join(", ")}
+        </div>
+      ))}
     </div>
   );
 }
@@ -37,15 +43,27 @@ function BorrowDisplay({ borrow }: { borrow: Borrow }) {
   );
 }
 
-function ReborrowActionDisplay({ action }: { action: ReborrowAction }) {
+function ReborrowBridgeDisplay({ bridge }: { bridge: ReborrowBridge }) {
   return (
     <div>
-      <p>Action: {action.action}</p>
-      {(action.action === "AddReborrow" ||
-        action.action === "RemoveReborrow") && (
-        <ReborrowDisplay reborrow={action.reborrow} />
+      {bridge.expands.length > 0 && (
+        <div>
+          Expands
+          <BridgeExpands expands={bridge.expands} />
+        </div>
       )}
-      {action.action === "ExpandPlace" && <ReborrowEC place={action.place} />}
+      {bridge.added_reborrows.length > 0 && (
+        <div>
+          Reborrows
+          <ul>
+            {bridge.added_reborrows.map((reborrow, index) => (
+              <li key={`reborrow-${index}`}>
+                <ReborrowDisplay reborrow={reborrow} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -74,22 +92,14 @@ export default function PCSActions({ pathData }: { pathData: PathData }) {
         maxHeight: "80vh",
       }}
     >
-      <h4>Borrow Actions (Start)</h4>
-      {pathData.borrow_actions_start.map((action, index) => (
-        <BorrowActionDisplay key={`start-${index}`} action={action} />
-      ))}
-      <h4>Borrow Actions (Mid)</h4>
-      {pathData.borrow_actions_mid.map((action, index) => (
-        <BorrowActionDisplay key={`mid-${index}`} action={action} />
-      ))}
-      <h4>Reborrow Actions (Start)</h4>
-      {pathData.reborrow_actions_start.map((action, index) => (
-        <ReborrowActionDisplay key={`start-${index}`} action={action} />
-      ))}
-      <h4>Reborrow Actions (Mid)</h4>
-      {pathData.reborrow_actions_mid.map((action, index) => (
-        <ReborrowActionDisplay key={`mid-${index}`} action={action} />
-      ))}
+      <h4>Reborrow Bridge (Start)</h4>
+      <ReborrowBridgeDisplay bridge={pathData.reborrow_start} />
+      {pathData.reborrow_middle && (
+        <>
+          <h4>Reborrow Bridge (Mid)</h4>
+          <ReborrowBridgeDisplay bridge={pathData.reborrow_middle} />
+        </>
+      )}
       <h4>Repacks (Start)</h4>
       <ul>
         {pathData.repacks_start.map((repack, index) => (

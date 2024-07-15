@@ -75,6 +75,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                     g.unblock_place(
                         crate::borrows::domain::MaybeOldPlace::Current { place: root },
                         &self.borrows.after,
+                        self.block, // TODO: Check
                     );
                 }
                 CapabilityLocal::Allocated(projs) => {
@@ -82,6 +83,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                         g.unblock_place(
                             crate::borrows::domain::MaybeOldPlace::Current { place: root },
                             &self.borrows.after,
+                            self.block, // TODO: Check
                         );
                     }
 

@@ -51,10 +51,14 @@ impl<'mir, 'tcx> HasCgContext<'mir, 'tcx> for PcsEngine<'mir, 'tcx> {
 type Cursor<'mir, 'tcx, E> = ResultsCursor<'mir, 'tcx, E>;
 
 pub trait HasExtra<T> {
-    type ExtraOp;
+    type ExtraBridge;
     fn get_extra(&self) -> T;
-    fn bridge_between_stmts(lhs: T, rhs: T) -> (Vec<Self::ExtraOp>, Vec<Self::ExtraOp>);
-    fn bridge_terminator(lhs: &T, rhs: T) -> Vec<Self::ExtraOp>;
+    fn bridge_between_stmts(
+        lhs: T,
+        rhs: T,
+        block: BasicBlock,
+    ) -> (Self::ExtraBridge, Self::ExtraBridge);
+    fn bridge_terminator(lhs: &T, rhs: T, block: BasicBlock) -> Self::ExtraBridge;
 }
 
 pub struct FreePcsAnalysis<
@@ -107,7 +111,7 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Doma
     pub fn initial_state(&self) -> &CapabilitySummary<'tcx> {
         &self.cursor.get().get_curr_fpcs().after
     }
-    pub fn next(&mut self, exp_loc: Location) -> FreePcsLocation<'tcx, T, D::ExtraOp> {
+    pub fn next(&mut self, exp_loc: Location) -> FreePcsLocation<'tcx, T, D::ExtraBridge> {
         let location = self.curr_stmt.unwrap();
         assert_eq!(location, exp_loc);
         assert!(location < self.end_stmt.unwrap());
@@ -119,18 +123,18 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Doma
         let c = self.cursor.get().get_curr_fpcs();
         let (repacks_start, repacks_middle) = c.repack_ops(&after);
         let (extra_start, extra_middle) =
-            D::bridge_between_stmts(extra_after, self.cursor.get().get_extra());
+            D::bridge_between_stmts(extra_after, self.cursor.get().get_extra(), location.block);
         FreePcsLocation {
             location,
             state: c.after.clone(),
             repacks_start,
             repacks_middle,
             extra_start,
-            extra_middle,
+            extra_middle: Some(extra_middle),
             extra: self.cursor.get().get_extra(),
         }
     }
-    pub fn terminator(&mut self) -> FreePcsTerminator<'tcx, T, D::ExtraOp> {
+    pub fn terminator(&mut self) -> FreePcsTerminator<'tcx, T, D::ExtraBridge> {
         let location = self.curr_stmt.unwrap();
         assert!(location == self.end_stmt.unwrap());
         self.curr_stmt = None;
@@ -158,8 +162,8 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Doma
                     repacks_start: state.after.bridge(&to.after, rp),
                     repacks_middle: Vec::new(),
                     extra: entry_set.get_extra(),
-                    extra_start: D::bridge_terminator(&extra, extra_to),
-                    extra_middle: Vec::new(),
+                    extra_start: D::bridge_terminator(&extra, extra_to, succ),
+                    extra_middle: None,
                 }
             })
             .collect();
@@ -168,7 +172,10 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Doma
 
     /// Recommended interface.
     /// Does *not* require that one calls `analysis_for_bb` first
-    pub fn get_all_for_bb(&mut self, block: BasicBlock) -> FreePcsBasicBlock<'tcx, T, D::ExtraOp> {
+    pub fn get_all_for_bb(
+        &mut self,
+        block: BasicBlock,
+    ) -> FreePcsBasicBlock<'tcx, T, D::ExtraBridge> {
         self.analysis_for_bb(block);
         let mut statements = Vec::new();
         while self.curr_stmt.unwrap() != self.end_stmt.unwrap() {
@@ -197,8 +204,8 @@ pub struct FreePcsLocation<'tcx, T, A> {
     pub repacks_middle: Vec<RepackOp<'tcx>>,
     /// State after the statement
     pub state: CapabilitySummary<'tcx>,
-    pub extra_start: Vec<A>,
-    pub extra_middle: Vec<A>,
+    pub extra_start: A,
+    pub extra_middle: Option<A>,
     pub extra: T,
 }
 

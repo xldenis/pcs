@@ -17,22 +17,27 @@ pub mod rustc_interface;
 pub mod utils;
 pub mod visualization;
 
-use std::{fs::create_dir_all, rc::Rc};
+use std::{collections::HashMap, fs::create_dir_all, rc::Rc};
 
 use borrows::{
-    domain::BorrowsState,
+    domain::{BorrowsState, DerefExpansion, Reborrow},
     engine::{BorrowsDomain, ReborrowAction},
 };
-use combined_pcs::{BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary};
+use combined_pcs::{
+    BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary, UnblockGraph,
+};
 use free_pcs::HasExtra;
 use rustc_interface::{
+    data_structures::fx::FxHashSet,
     dataflow::Analysis,
     index::IndexVec,
     middle::{
-        mir::{Body, Promoted, START_BLOCK},
+        mir::{Body, Promoted, START_BLOCK, BasicBlock},
         ty::TyCtxt,
     },
 };
+use serde_json::json;
+use utils::PlaceRepacker;
 use visualization::mir_graph::generate_json_from_mir;
 
 use crate::visualization::generate_dot_graph;
@@ -45,8 +50,25 @@ pub type FpcsOutput<'mir, 'tcx> = free_pcs::FreePcsAnalysis<
     PcsEngine<'mir, 'tcx>,
 >;
 
+#[derive(Clone)]
+pub struct ReborrowBridge<'tcx> {
+    pub expands: FxHashSet<DerefExpansion<'tcx>>,
+    pub added_reborrows: FxHashSet<Reborrow<'tcx>>,
+    pub ug: UnblockGraph<'tcx>,
+}
+
+impl<'tcx> ReborrowBridge<'tcx> {
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        json!({
+            "expands": self.expands.iter().map(|e| e.to_json(repacker)).collect::<Vec<_>>(),
+            "added_reborrows": self.added_reborrows.iter().map(|r| r.to_json(repacker)).collect::<Vec<_>>(),
+            "ug": self.ug.to_json(repacker)
+        })
+    }
+}
+
 impl<'mir, 'tcx> HasExtra<BorrowsDomain<'tcx>> for PlaceCapabilitySummary<'mir, 'tcx> {
-    type ExtraOp = ReborrowAction<'tcx>;
+    type ExtraBridge = ReborrowBridge<'tcx>;
     fn get_extra(&self) -> BorrowsDomain<'tcx> {
         self.borrows.clone()
     }
@@ -54,14 +76,15 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'tcx>> for PlaceCapabilitySummary<'mir, 
     fn bridge_between_stmts(
         lhs: BorrowsDomain<'tcx>,
         rhs: BorrowsDomain<'tcx>,
-    ) -> (Vec<Self::ExtraOp>, Vec<Self::ExtraOp>) {
-        let start = lhs.after.bridge(&rhs.before_start);
-        let middle = rhs.before_start.bridge(&rhs.before_after);
+        block: BasicBlock,
+    ) -> (Self::ExtraBridge, Self::ExtraBridge) {
+        let start = lhs.after.bridge(&rhs.before_start, block);
+        let middle = rhs.before_after.bridge(&rhs.start, block);
         (start, middle)
     }
 
-    fn bridge_terminator(lhs: &BorrowsDomain<'tcx>, rhs: BorrowsDomain<'tcx>) -> Vec<Self::ExtraOp> {
-        lhs.after.bridge(&rhs.after)
+    fn bridge_terminator(lhs: &BorrowsDomain<'tcx>, rhs: BorrowsDomain<'tcx>, block: BasicBlock) -> Self::ExtraBridge {
+        lhs.after.bridge(&rhs.after, block)
     }
 }
 
@@ -104,7 +127,7 @@ pub fn run_free_pcs<'mir, 'tcx>(
                 );
                 generate_dot_graph(
                     statement.location,
-                    Rc::new(rp),
+                    rp,
                     &statement.state,
                     &statement.extra.after,
                     &mir.borrow_set,

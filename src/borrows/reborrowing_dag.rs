@@ -5,7 +5,7 @@ use rustc_interface::{
     borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
     data_structures::fx::{FxHashMap, FxHashSet},
     dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, Location, VarDebugInfo},
+    middle::mir::{self, BasicBlock, Location, VarDebugInfo},
     middle::ty::TyCtxt,
 };
 
@@ -18,6 +18,13 @@ pub struct ReborrowingDag<'tcx> {
 }
 
 impl<'tcx> ReborrowingDag<'tcx> {
+
+    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+        self.reborrows.retain(|reborrow| {
+            path.contains(&reborrow.location.block)
+        });
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Reborrow<'tcx>> {
         self.reborrows.iter()
     }
@@ -77,6 +84,7 @@ impl<'tcx> ReborrowingDag<'tcx> {
         blocked_place: Place<'tcx>,
         assigned_place: Place<'tcx>,
         mutability: Mutability,
+        location: Location,
     ) -> bool {
         self.insert(Reborrow {
             mutability,
@@ -86,6 +94,7 @@ impl<'tcx> ReborrowingDag<'tcx> {
             assigned_place: MaybeOldPlace::Current {
                 place: assigned_place,
             },
+            location
         })
     }
 

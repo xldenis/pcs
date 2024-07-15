@@ -46,6 +46,15 @@ impl<'tcx> PlaceDisplay<'tcx> {
 }
 
 impl<'tcx> Place<'tcx> {
+
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        let place_str = match self.to_string(repacker) {
+            crate::utils::display::PlaceDisplay::Temporary(p) => format!("{:?}", p),
+            crate::utils::display::PlaceDisplay::User(_, s) => s,
+        };
+        serde_json::Value::String(place_str)
+    }
+
     pub fn to_string(&self, repacker: PlaceRepacker<'_, 'tcx>) -> PlaceDisplay<'tcx> {
         // Get the local's debug name from the Body's VarDebugInfo
         let local_name = if self.local == RETURN_PLACE {
