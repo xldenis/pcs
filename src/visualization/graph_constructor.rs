@@ -1,7 +1,5 @@
 use crate::{
-    borrows::domain::{
-        Borrow, BorrowsState, MaybeOldPlace, PlaceSnapshot, RegionAbstraction,
-    },
+    borrows::domain::{Borrow, BorrowsState, MaybeOldPlace, PlaceSnapshot, RegionAbstraction},
     combined_pcs::{UnblockEdgeType, UnblockGraph},
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
@@ -37,7 +35,7 @@ use rustc_interface::{
 };
 
 use super::{
-    get_source_name_from_local, get_source_name_from_place, Graph, GraphEdge, GraphNode, NodeId,
+  Graph, GraphEdge, GraphNode, NodeId,
     NodeType, ReferenceEdgeType,
 };
 
@@ -102,12 +100,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
             return node_id;
         }
         let id = self.node_id(place, location);
-        let label = get_source_name_from_place(
-            place.local,
-            place.projection,
-            &self.repacker.body().var_debug_info,
-        )
-        .unwrap_or_else(|| format!("{:?}: {}", place, place.ty(self.repacker).ty));
+        let label = format!("{:?}", place.to_string(self.repacker));
         let node = GraphNode {
             id,
             node_type: NodeType::PlaceNode {
@@ -154,12 +147,17 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                         .insert(GraphEdge::UnblockReborrowEdge {
                             blocked_place: source,
                             blocking_place: target,
+                            block: edge.block,
                         });
                 }
                 UnblockEdgeType::Projection(_) => {
                     self.constructor
                         .edges
-                        .insert(GraphEdge::ProjectionEdge { source, target });
+                        .insert(GraphEdge::UnblockProjectionEdge {
+                            blocked_place: source,
+                            blocking_place: target,
+                            block: edge.block,
+                        });
                 }
             }
         }
@@ -285,16 +283,16 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                     });
             }
         }
-        for borrow in self.borrows_domain.borrows().iter() {
-            let borrowed_place = self.insert_place(borrow.borrowed_place);
-            let assigned_place = self.insert_place(borrow.assigned_place);
-            let borrow_data = &self.borrow_set[borrow.index];
-            self.constructor.edges.insert(GraphEdge::ReferenceEdge {
-                borrowed_place,
-                assigned_place,
-                edge_type: ReferenceEdgeType::RustcBorrow(borrow.index, borrow_data.region),
-            });
-        }
+        // for borrow in self.borrows_domain.borrows().iter() {
+        //     let borrowed_place = self.insert_place(borrow.borrowed_place);
+        //     let assigned_place = self.insert_place(borrow.assigned_place);
+        //     let borrow_data = &self.borrow_set[borrow.index];
+        //     self.constructor.edges.insert(GraphEdge::ReferenceEdge {
+        //         borrowed_place,
+        //         assigned_place,
+        //         edge_type: ReferenceEdgeType::RustcBorrow(borrow.index, borrow_data.region),
+        //     });
+        // }
         for reborrow in self.borrows_domain.reborrows().iter() {
             let borrowed_place = self.insert_maybe_old_place(reborrow.blocked_place);
             let assigned_place = self.insert_maybe_old_place(reborrow.assigned_place);

@@ -54,6 +54,9 @@ struct ExpansionVisitor<'tcx, 'mir, 'state> {
 }
 
 impl<'tcx, 'mir, 'state> ExpansionVisitor<'tcx, 'mir, 'state> {
+    fn repacker(&self) -> PlaceRepacker<'_, 'tcx> {
+        PlaceRepacker::new(self.body, self.tcx)
+    }
     pub fn preparing(
         engine: &BorrowsEngine<'mir, 'tcx>,
         state: &'state mut BorrowsDomain<'tcx>,
@@ -169,18 +172,15 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for ExpansionVisitor<'tcx, 'mir, 'state> 
 
         if self.preparing {
             for loan in self.loans_invalidated_at(location, self.before) {
-                if self
-                    .state
+                self.state
                     .after
-                    .remove_rustc_borrow(self.tcx, &loan, &self.body, location.block)
-                {
-                    eprintln!("loan {loan:?} removed at {location:?} (start)");
-                }
+                    .remove_rustc_borrow(self.tcx, &loan, &self.body, location.block);
             }
         }
 
         // It doesn't matter if this happens before or during the statement, we
         // arbitrarily choose before
+        // TODO: perhaps dont even keep track of borrows
         if self.before {
             if let Some(loan) = self.loan_issued_at_location(location, self.preparing) {
                 self.state.after.add_rustc_borrow(
@@ -193,12 +193,25 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for ExpansionVisitor<'tcx, 'mir, 'state> 
             }
         }
 
+        // Stuff in this block will be included as "bridge" ops that are visible
+        // to Prusti
         if self.preparing && !self.before {
             match &statement.kind {
                 StatementKind::Assign(box (target, _)) => {
                     if !self.before {
                         self.ensure_expansion_to((*target).into(), location.block);
                     }
+                }
+                StatementKind::StorageDead(local) => {
+                    let mut ug = UnblockGraph::new();
+                    ug.unblock_place(
+                        MaybeOldPlace::Current {
+                            place: (*local).into(),
+                        },
+                        &self.state.after,
+                        location.block,
+                    );
+                    self.state.after.apply_unblock_graph(ug);
                 }
                 _ => {}
             }
@@ -215,41 +228,38 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for ExpansionVisitor<'tcx, 'mir, 'state> 
 
         if !self.preparing && !self.before {
             match &statement.kind {
-                StatementKind::Assign(box (target, rvalue)) => {
-                    match rvalue {
-                        Rvalue::Use(Operand::Copy(from)) => {
-                            if from.ty(self.body, self.tcx).ty.is_ref() {
-                                let from: utils::Place<'tcx> = (*from).into();
-                                let target: utils::Place<'tcx> = (*target).into();
-                                self.state.after.add_reborrow(
-                                    from.project_deref(self.tcx),
-                                    target.project_deref(self.tcx),
-                                    Mutability::Not,
-                                    location,
-                                )
-                            }
-                        }
-                        Rvalue::Ref(_, kind, blocked_place) => {
-                            let blocked_place: utils::Place<'tcx> = (*blocked_place).into();
+                StatementKind::Assign(box (target, rvalue)) => match rvalue {
+                    Rvalue::Use(Operand::Copy(from)) => {
+                        if from.ty(self.body, self.tcx).ty.is_ref() {
+                            let from: utils::Place<'tcx> = (*from).into();
                             let target: utils::Place<'tcx> = (*target).into();
-                            let assigned_place = target.project_deref(self.tcx);
-                            assert_eq!(
-                                self.tcx
-                                    .erase_regions((*blocked_place).ty(self.body, self.tcx).ty),
-                                self.tcx
-                                    .erase_regions((*assigned_place).ty(self.body, self.tcx).ty)
-                            );
                             self.state.after.add_reborrow(
-                                blocked_place,
-                                assigned_place,
-                                kind.mutability(),
+                                from.project_deref(self.repacker()),
+                                target.project_deref(self.repacker()),
+                                Mutability::Not,
                                 location,
-                            );
+                            )
                         }
-                        _ => {}
                     }
-                }
-                StatementKind::StorageDead(local) => {}
+                    Rvalue::Ref(_, kind, blocked_place) => {
+                        let blocked_place: utils::Place<'tcx> = (*blocked_place).into();
+                        let target: utils::Place<'tcx> = (*target).into();
+                        let assigned_place = target.project_deref(self.repacker());
+                        assert_eq!(
+                            self.tcx
+                                .erase_regions((*blocked_place).ty(self.body, self.tcx).ty),
+                            self.tcx
+                                .erase_regions((*assigned_place).ty(self.body, self.tcx).ty)
+                        );
+                        self.state.after.add_reborrow(
+                            blocked_place,
+                            assigned_place,
+                            kind.mutability(),
+                            location,
+                        );
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -381,27 +391,6 @@ impl<'tcx> ReborrowAction<'tcx> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum BorrowAction<'state, 'tcx> {
-    AddBorrow(Cow<'state, Borrow<'tcx>>),
-    RemoveBorrow(&'state Borrow<'tcx>),
-}
-
-impl<'state, 'tcx> BorrowAction<'state, 'tcx> {
-    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
-        match self {
-            BorrowAction::AddBorrow(borrow) => json!({
-                "action": "AddBorrow",
-                "borrow": borrow.to_json(repacker)
-            }),
-            BorrowAction::RemoveBorrow(borrow) => json!({
-                "action": "RemoveBorrow",
-                "borrow": borrow.to_json(repacker)
-            }),
-        }
-    }
-}
-
 impl<'tcx> JoinSemiLattice for BorrowsDomain<'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         self.after.join(&other.after)
@@ -504,29 +493,5 @@ impl<'tcx> BorrowsDomain<'tcx> {
             start: BorrowsState::new(),
             after: BorrowsState::new(),
         }
-    }
-
-    fn apply_to_end_state(&mut self, action: BorrowAction<'_, 'tcx>) {
-        self.after.apply_action(action)
-    }
-
-    pub fn borrow_actions<'a>(&'a self, start: bool) -> Vec<BorrowAction<'a, 'tcx>> {
-        let (s, e) = if start {
-            (&self.before_start, &self.start)
-        } else {
-            (&self.before_after, &self.after)
-        };
-        let mut actions = vec![];
-        for borrow in s.borrows().iter() {
-            if !e.contains_borrow(borrow) {
-                actions.push(BorrowAction::RemoveBorrow(borrow));
-            }
-        }
-        for borrow in e.borrows().iter() {
-            if !s.contains_borrow(borrow) {
-                actions.push(BorrowAction::AddBorrow(Cow::Borrowed(borrow)));
-            }
-        }
-        actions
     }
 }

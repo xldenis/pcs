@@ -119,6 +119,7 @@ async function main() {
   const App: React.FC<{}> = () => {
     const [pathData, setPathData] = useState<PathData | null>(null);
     const [currentPoint, setCurrentPoint] = useState<CurrentPoint>({
+      type: "stmt",
       block: 0,
       stmt: 0,
     });
@@ -165,13 +166,17 @@ async function main() {
     };
 
     async function loadPCSDotGraph() {
-      const dotFilePath = `data/${selectedFunction}/block_${currentPoint.block}_stmt_${currentPoint.stmt}.dot`;
-      const dotData = await fetchDotFile(dotFilePath);
       const dotGraph = document.getElementById("dot-graph");
       if (!dotGraph) {
         console.error("Dot graph element not found");
         return;
       }
+      if (currentPoint.type !== "stmt") {
+        dotGraph.innerHTML = "";
+        return;
+      }
+      const dotFilePath = `data/${selectedFunction}/block_${currentPoint.block}_stmt_${currentPoint.stmt}.dot`;
+      const dotData = await fetchDotFile(dotFilePath);
       Viz.instance().then(function (viz) {
         dotGraph.innerHTML = "";
         dotGraph.appendChild(viz.renderSVGElement(dotData));
@@ -207,7 +212,11 @@ async function main() {
         if (paths.length === 0 || selectedPath >= paths.length) return;
 
         const currentPath = paths[selectedPath];
-        const currentBlockIndex = currentPath.indexOf(currentPoint.block);
+        const currentBlockIndex = currentPath.indexOf(
+          currentPoint.type === "stmt"
+            ? currentPoint.block
+            : currentPoint.block1
+        );
 
         if (currentBlockIndex === -1) {
           setPathData(null);
@@ -220,7 +229,13 @@ async function main() {
           const data: PathData = await getPathData(
             selectedFunction,
             pathToCurrentBlock,
-            currentPoint.stmt
+            currentPoint.type === "stmt"
+              ? {
+                  stmt: currentPoint.stmt,
+                }
+              : {
+                  terminator: currentPoint.block2,
+                }
           );
           setPathData(data);
         } catch (error) {
@@ -240,7 +255,13 @@ async function main() {
           event.key === "k"
         ) {
           event.preventDefault(); // Prevent scrolling
-          setCurrentPoint((prevPoint) => {
+          const direction =
+            event.key === "ArrowUp" || event.key === "k" ? "up" : "down";
+
+          setCurrentPoint((prevPoint: CurrentPoint) => {
+            if (prevPoint.type === "terminator") {
+              return; // TODO
+            }
             const currentNode = nodes.find(
               (node) => node.block === prevPoint.block
             );
@@ -273,9 +294,6 @@ async function main() {
               return null;
             };
 
-            const direction =
-              event.key === "ArrowUp" || event.key === "k" ? "up" : "down";
-
             const nextStmtIdx = getNextStmtIdx(currentNode, prevPoint.stmt);
             if (nextStmtIdx !== null) {
               return { ...prevPoint, stmt: nextStmtIdx };
@@ -287,6 +305,7 @@ async function main() {
                 const nextBlockIdx = (currBlockIdx + 1) % filteredNodes.length;
                 const data = filteredNodes[nextBlockIdx];
                 return {
+                  type: "stmt",
                   block: filteredNodes[nextBlockIdx].block,
                   stmt: getNextStmtIdx(data, -1),
                 };
@@ -296,6 +315,7 @@ async function main() {
                   filteredNodes.length;
                 const data = filteredNodes[nextBlockIdx];
                 return {
+                  type: "stmt",
                   block: data.block,
                   stmt: data.stmts.length,
                 };
@@ -304,7 +324,7 @@ async function main() {
           });
         } else if (event.key >= "0" && event.key <= "9") {
           const newBlock = parseInt(event.key);
-          setCurrentPoint({ block: newBlock, stmt: 0 });
+          setCurrentPoint({ type: "stmt", block: newBlock, stmt: 0 });
         }
       };
 
@@ -416,9 +436,38 @@ async function main() {
               );
             })}
           </div>
-          {dagreEdges.map((edge) => (
-            <Edge key={edge.id} edge={edge} nodes={dagreNodes} />
-          ))}
+          <svg
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              height: "100%",
+              pointerEvents: "none",
+            }}
+          >
+            {dagreEdges.map((edge) => (
+              <Edge
+                key={edge.id}
+                edge={edge}
+                nodes={dagreNodes}
+                selected={
+                  currentPoint.type == "terminator" &&
+                  currentPoint.block1 ==
+                    nodes.find((n) => n.id == edge.source)?.block &&
+                  currentPoint.block2 ==
+                    nodes.find((n) => n.id == edge.target)?.block
+                }
+                onSelect={() => {
+                  setCurrentPoint({
+                    type: "terminator",
+                    block1: nodes.find((n) => n.id == edge.source)?.block,
+                    block2: nodes.find((n) => n.id == edge.target)?.block,
+                  });
+                }}
+              />
+            ))}
+          </svg>
         </div>
         {pathData && (
           <>

@@ -202,10 +202,11 @@ impl<'tcx> UnblockGraph<'tcx> {
     }
 
     fn remove_edge_and_trim(&mut self, edge: &UnblockEdge<'tcx>) {
+        eprintln!("Kill {:?}", edge);
         self.0.remove(edge);
-        if self.edges_blocked_by(edge.blocker).is_empty() {
+        if self.edges_blocking(edge.blocked).is_empty() {
             let edges_to_kill = self
-                .edges_blocking(edge.blocker)
+                .edges_blocked_by(edge.blocked)
                 .into_iter()
                 .cloned()
                 .collect::<Vec<_>>();
@@ -295,14 +296,35 @@ impl<'tcx> UnblockGraph<'tcx> {
         });
     }
 
+    pub fn kill_reborrows_assigned_to<'a>(
+        &mut self,
+        place: MaybeOldPlace<'tcx>,
+        borrows: &BorrowsState<'tcx>,
+        block: BasicBlock,
+    ) {
+        for reborrow in borrows.reborrows_assigned_to(place) {
+            self.kill_reborrow(reborrow.clone(), borrows)
+        }
+    }
+
+    pub fn kill_place<'a>(
+        &mut self,
+        place: MaybeOldPlace<'tcx>,
+        borrows: &BorrowsState<'tcx>,
+        block: BasicBlock,
+    ) {
+        self.unblock_place(place, borrows, block);
+        self.kill_reborrows_assigned_to(place, borrows, block);
+    }
+
     pub fn unblock_place<'a>(
         &mut self,
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'tcx>,
         block: BasicBlock,
     ) {
-        if let Some(reborrow) = borrows.find_reborrow_blocking(place) {
-            self.unblock_reborrow(reborrow.clone(), borrows)
+        for reborrow in borrows.reborrows_blocking(place) {
+            self.kill_reborrow(reborrow.clone(), borrows)
         }
         for (idx, child_place) in borrows
             .deref_expansions
@@ -313,7 +335,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         {
             let child_place = MaybeOldPlace::new(child_place, place.location());
             self.add_dependency(place, child_place, UnblockEdgeType::Projection(idx), block);
-            self.unblock_place(child_place, borrows, block);
+            self.kill_place(child_place, borrows, block);
         }
     }
 
@@ -324,7 +346,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         state.get(place).unwrap_or_default()
     }
 
-    pub fn unblock_reborrow<'a>(&mut self, reborrow: Reborrow<'tcx>, borrows: &BorrowsState<'tcx>) {
+    pub fn kill_reborrow<'a>(&mut self, reborrow: Reborrow<'tcx>, borrows: &BorrowsState<'tcx>) {
         self.add_dependency(
             reborrow.blocked_place,
             reborrow.assigned_place,

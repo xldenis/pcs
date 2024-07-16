@@ -45,12 +45,20 @@ export default function BasicBlockTable({
           return (
             <tr
               className={
-                i === currentPoint.stmt && data.block === currentPoint.block
+                currentPoint.type === "stmt" &&
+                i === currentPoint.stmt &&
+                data.block === currentPoint.block
                   ? "highlight"
                   : ""
               }
               key={i}
-              onClick={() => setCurrentPoint({ block: data.block, stmt: i })}
+              onClick={() =>
+                setCurrentPoint({
+                  type: "stmt",
+                  block: data.block,
+                  stmt: i,
+                })
+              }
             >
               <td>{i}</td>
               <td>
@@ -61,13 +69,18 @@ export default function BasicBlockTable({
         })}
         <tr
           className={
+            currentPoint.type === "stmt" &&
             currentPoint.stmt == data.stmts.length &&
             data.block === currentPoint.block
               ? "highlight"
               : ""
           }
           onClick={() =>
-            setCurrentPoint({ block: data.block, stmt: data.stmts.length })
+            setCurrentPoint({
+              type: "stmt",
+              block: data.block,
+              stmt: data.stmts.length,
+            })
           }
         >
           <td>T</td>
@@ -88,7 +101,7 @@ export function computeTableHeight(
   container.innerHTML = ReactDOMServer.renderToString(
     BasicBlockTable({
       isOnSelectedPath: false,
-      currentPoint: { block: 0, stmt: 0 },
+      currentPoint: { type: "stmt", block: 0, stmt: 0 },
       data: {
         block: data.block,
         stmts: data.stmts,

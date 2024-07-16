@@ -9,6 +9,7 @@ import {
   ReborrowBridge,
   PlaceExpand,
 } from "../types";
+import * as Viz from "@viz-js/viz";
 
 function ReborrowDisplay({ reborrow }: { reborrow: Reborrow }) {
   return (
@@ -63,6 +64,25 @@ function ReborrowBridgeDisplay({ bridge }: { bridge: ReborrowBridge }) {
             ))}
           </ul>
         </div>
+      )}
+      {!bridge.ug.empty && (
+        <a
+          href="#"
+          onClick={(event) => {
+            event.preventDefault();
+            Viz.instance().then((viz) => {
+              const svgElement = viz.renderSVGElement(bridge.ug.dot_graph);
+              const popup = window.open(
+                "",
+                "Dot Graph",
+                "width=800,height=600"
+              );
+              popup.document.body.appendChild(svgElement);
+            });
+          }}
+        >
+          View Dot Graph
+        </a>
       )}
     </div>
   );

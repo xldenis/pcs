@@ -9,9 +9,7 @@ pub mod graph_constructor;
 pub mod mir_graph;
 
 use crate::{
-    borrows::domain::{
-        Borrow, BorrowsState, MaybeOldPlace, PlaceSnapshot, RegionAbstraction,
-    },
+    borrows::domain::{Borrow, BorrowsState, MaybeOldPlace, PlaceSnapshot, RegionAbstraction},
     combined_pcs::UnblockGraph,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
@@ -101,6 +99,12 @@ enum GraphEdge {
     UnblockReborrowEdge {
         blocked_place: NodeId,
         blocking_place: NodeId,
+        block: BasicBlock,
+    },
+    UnblockProjectionEdge {
+        blocked_place: NodeId,
+        blocking_place: NodeId,
+        block: BasicBlock,
     },
     ReborrowEdge {
         borrowed_place: NodeId,
@@ -134,61 +138,61 @@ impl Graph {
     }
 }
 
-pub fn get_source_name_from_local(local: &Local, debug_info: &[VarDebugInfo]) -> Option<String> {
-    if local.as_usize() == 0 {
-        return None;
-    }
-    debug_info.get(&local.as_usize() - 1).map(|source_info| {
-        let name = source_info.name.as_str();
-        let mut shadow_count = 0;
-        for i in 0..local.as_usize() - 1 {
-            if debug_info[i].name.as_str() == name {
-                shadow_count += 1;
-            }
-        }
-        if shadow_count == 0 {
-            format!("{}", name)
-        } else {
-            format!("{}$shadow{}", name, shadow_count)
-        }
-    })
-}
+// pub fn get_source_name_from_local(local: &Local, debug_info: &[VarDebugInfo]) -> Option<String> {
+//     if local.as_usize() == 0 {
+//         return None;
+//     }
+//     debug_info.get(&local.as_usize() - 1).map(|source_info| {
+//         let name = source_info.name.as_str();
+//         let mut shadow_count = 0;
+//         for i in 0..local.as_usize() - 1 {
+//             if debug_info[i].name.as_str() == name {
+//                 shadow_count += 1;
+//             }
+//         }
+//         if shadow_count == 0 {
+//             format!("{}", name)
+//         } else {
+//             format!("{}$shadow{}", name, shadow_count)
+//         }
+//     })
+// }
 
-pub fn get_source_name_from_place<'tcx>(
-    local: Local,
-    projection: &[PlaceElem<'tcx>],
-    debug_info: &[VarDebugInfo],
-) -> Option<String> {
-    get_source_name_from_local(&local, debug_info).map(|mut name| {
-        let mut iter = projection.iter().peekable();
-        while let Some(elem) = iter.next() {
-            match elem {
-                mir::ProjectionElem::Deref => {
-                    if iter.peek().is_some() {
-                        name = format!("(*{})", name);
-                    } else {
-                        name = format!("*{}", name);
-                    }
-                }
-                mir::ProjectionElem::Field(field, _) => {
-                    name = format!("{}.{}", name, field.as_usize());
-                }
-                mir::ProjectionElem::Index(_) => todo!(),
-                mir::ProjectionElem::ConstantIndex {
-                    offset,
-                    min_length,
-                    from_end,
-                } => todo!(),
-                mir::ProjectionElem::Subslice { from, to, from_end } => todo!(),
-                mir::ProjectionElem::Downcast(d, v) => {
-                    name = format!("downcast {:?} as {:?}", name, d);
-                }
-                mir::ProjectionElem::OpaqueCast(_) => todo!(),
-            }
-        }
-        name
-    })
-}
+// pub fn get_source_name_from_place<'tcx>(
+//     local: Local,
+//     projection: &[PlaceElem<'tcx>],
+//     debug_info: &[VarDebugInfo],
+// ) -> Option<String> {
+//     get_source_name_from_local(&local, debug_info).map(|mut name| {
+//         let mut iter = projection.iter().peekable();
+//         while let Some(elem) = iter.next() {
+//             match elem {
+//                 mir::ProjectionElem::Deref => {
+//                     if iter.peek().is_some() {
+//                         name = format!("(*{})", name);
+//                     } else {
+//                         name = format!("*{}", name);
+//                     }
+//                 }
+//                 mir::ProjectionElem::Field(field, _) => {
+//                     name = format!("{}.{}", name, field.as_usize());
+//                 }
+//                 mir::ProjectionElem::Index(_) => todo!(),
+//                 mir::ProjectionElem::ConstantIndex {
+//                     offset,
+//                     min_length,
+//                     from_end,
+//                 } => todo!(),
+//                 mir::ProjectionElem::Subslice { from, to, from_end } => todo!(),
+//                 mir::ProjectionElem::Downcast(d, v) => {
+//                     name = format!("downcast {:?} as {:?}", name, d);
+//                 }
+//                 mir::ProjectionElem::OpaqueCast(_) => todo!(),
+//             }
+//         }
+//         name
+//     })
+// }
 
 pub fn generate_unblock_dot_graph<'a, 'tcx: 'a>(
     repacker: &PlaceRepacker<'a, 'tcx>,

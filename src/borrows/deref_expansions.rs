@@ -46,8 +46,9 @@ impl<'tcx> DerefExpansions<'tcx> {
         place: MaybeOldPlace<'tcx>,
         body: &mir::Body<'tcx>,
         tcx: TyCtxt<'tcx>,
-        block: BasicBlock
+        block: BasicBlock,
     ) {
+        let orig_place = place.place();
         let location = place.location();
         let mut in_dag = false;
         for (place, elem) in place.place().iter_projections() {
@@ -59,11 +60,14 @@ impl<'tcx> DerefExpansions<'tcx> {
                 let origin_place = MaybeOldPlace::new(place, location);
                 if !self.contains_projection_from(origin_place) {
                     let expansion = match elem {
-                        mir::ProjectionElem::Downcast(_, _) => {
+                        mir::ProjectionElem::Downcast(_, _) | // For downcast we can't blindly expand since we don't know which instance, use this specific one
+                        mir::ProjectionElem::Deref // For Box we don't want to expand fields because it's actually an ADT w/ a ptr inside
+                        => {
                             vec![place.project_deeper(&[elem], tcx).into()]
                         }
                         _ => place.expand_field(None, PlaceRepacker::new(&body, tcx)),
                     };
+                    // eprintln!("Expand to {:?} for {:?}", expansion, orig_place);
                     self.insert(origin_place, expansion, block);
                 }
             }
@@ -72,25 +76,29 @@ impl<'tcx> DerefExpansions<'tcx> {
     }
 
     fn delete(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
-        let expansion = self
+        let mut changed = false;
+        for expansion in self
             .iter()
-            .find(|expansion| expansion.base == place)
-            .cloned();
-        if let Some(expansion) = expansion {
-            self.0.remove(&expansion)
-        } else {
-            false
+            .filter(|expansion| expansion.base == place)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            if self.0.remove(&expansion) {
+                eprintln!("Deleted expansion: {:?}", expansion);
+                changed = true
+            }
         }
+        changed
     }
 
     pub fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
-        let expansion = self
-            .iter()
-            .find(|expansion| expansion.base == place)
-            .cloned();
-
         let mut changed = false;
-        if let Some(expansion) = expansion {
+        for expansion in self
+            .iter()
+            .filter(|expansion| expansion.base == place)
+            .cloned()
+            .collect::<Vec<_>>()
+        {
             for e in expansion.expansion.iter() {
                 let p = MaybeOldPlace::new(*e, None);
                 if self.delete_descendants_of(p) {
@@ -100,10 +108,11 @@ impl<'tcx> DerefExpansions<'tcx> {
                     changed = true;
                 }
             }
-            changed
-        } else {
-            false
+            if self.0.remove(&expansion) {
+                changed = true;
+            }
         }
+        changed
     }
 
     fn insert(

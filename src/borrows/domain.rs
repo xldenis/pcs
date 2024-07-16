@@ -70,9 +70,9 @@ pub struct PlaceSnapshot<'tcx> {
 }
 
 impl<'tcx> PlaceSnapshot<'tcx> {
-    pub fn project_deref(&self, tcx: TyCtxt<'tcx>) -> PlaceSnapshot<'tcx> {
+    pub fn project_deref(&self, repacker: PlaceRepacker<'_, 'tcx>) -> PlaceSnapshot<'tcx> {
         PlaceSnapshot {
-            place: self.place.project_deref(tcx),
+            place: self.place.project_deref(repacker),
             at: self.at,
         }
     }
@@ -194,9 +194,7 @@ use crate::utils::PlaceRepacker;
 use serde_json::{json, Value};
 
 use super::{
-    deref_expansions::DerefExpansions,
-    engine::{BorrowAction, ReborrowAction},
-    reborrowing_dag::ReborrowingDag,
+    deref_expansions::DerefExpansions, engine::ReborrowAction, reborrowing_dag::ReborrowingDag,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
@@ -241,7 +239,7 @@ impl<'tcx> BorrowsState<'tcx> {
 
         for reborrow in self.reborrows().iter() {
             if !to.contains_reborrow(reborrow) {
-                ug.unblock_reborrow(*reborrow, self)
+                ug.kill_reborrow(*reborrow, self)
             }
         }
 
@@ -300,11 +298,7 @@ impl<'tcx> BorrowsState<'tcx> {
                     assigned_place,
                     ..
                 } => {
-                    if self
-                        .reborrows
-                        .kill_reborrow_blocking(blocked_place)
-                        .is_some()
-                    {
+                    if self.reborrows.kill_reborrow(blocked_place, assigned_place) {
                         changed = true;
                     }
                 }
@@ -336,12 +330,22 @@ impl<'tcx> BorrowsState<'tcx> {
         self.latest.get(place).cloned()
     }
 
-    pub fn find_reborrow_blocking(&self, place: MaybeOldPlace<'tcx>) -> Option<&Reborrow<'tcx>> {
-        self.reborrows.iter().find(|rb| rb.blocked_place == place)
+    pub fn reborrows_blocking(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<&Reborrow<'tcx>> {
+        self.reborrows
+            .iter()
+            .filter(|rb| rb.blocked_place == place)
+            .collect()
     }
 
-    pub fn kill_reborrow_blocking(&mut self, place: MaybeOldPlace<'tcx>) {
-        self.reborrows.kill_reborrow_blocking(place);
+    pub fn reborrows_assigned_to(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<&Reborrow<'tcx>> {
+        self.reborrows
+            .iter()
+            .filter(|rb| rb.assigned_place == place)
+            .collect()
+    }
+
+    pub fn kill_reborrows_blocking(&mut self, place: MaybeOldPlace<'tcx>) {
+        self.reborrows.kill_reborrows_blocking(place);
     }
 
     pub fn add_reborrow(
@@ -358,17 +362,6 @@ impl<'tcx> BorrowsState<'tcx> {
 
     pub fn contains_reborrow(&self, reborrow: &Reborrow<'tcx>) -> bool {
         self.reborrows.contains(reborrow)
-    }
-
-    pub fn contains_borrow(&self, borrow: &Borrow<'tcx>) -> bool {
-        self.borrows.contains(borrow)
-    }
-
-    pub fn apply_action(&mut self, action: BorrowAction<'_, 'tcx>) {
-        match action {
-            BorrowAction::AddBorrow(borrow) => self.borrows.insert(borrow.into_owned()),
-            BorrowAction::RemoveBorrow(borrow) => self.borrows.remove(borrow),
-        };
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
@@ -415,29 +408,6 @@ impl<'tcx> BorrowsState<'tcx> {
         result
     }
 
-    // pub fn place_loaned_to_place(
-    //     &self,
-    //     place: Place<'tcx>,
-    //     body: &mir::Body<'tcx>,
-    // ) -> Option<PlaceSnapshot<'tcx>> {
-    //     self.live_borrows(body)
-    //         .iter()
-    //         .find(|borrow| borrow.assigned_place == place)
-    //         .map(|borrow| borrow.borrowed_place)
-    // }
-
-    // pub fn reference_targeting_place(
-    //     &self,
-    //     place: Place<'tcx>,
-    //     borrow_set: &BorrowSet<'tcx>,
-    //     body: &mir::Body<'tcx>,
-    // ) -> Option<Place<'tcx>> {
-    //     self.live_borrows(body)
-    //         .iter()
-    //         .find(|borrow| borrow.borrowed_place == place)
-    //         .map(|borrow| borrow.assigned_place)
-    // }
-
     pub fn add_region_abstraction(&mut self, abstraction: RegionAbstraction<'tcx>) {
         if !self.region_abstractions.contains(&abstraction) {
             self.region_abstractions.push(abstraction);
@@ -446,7 +416,7 @@ impl<'tcx> BorrowsState<'tcx> {
 
     pub fn add_borrow(&mut self, tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>, borrow: Borrow<'tcx>) {
         let assigned_place = borrow.assigned_place;
-        let deref_of_assigned_place = assigned_place.project_deref(tcx);
+        let deref_of_assigned_place = assigned_place.project_deref(PlaceRepacker::new(body, tcx));
         self.borrows.insert(borrow);
     }
 

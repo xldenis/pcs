@@ -106,7 +106,7 @@ pub fn run_free_pcs<'mir, 'tcx>(
             std::fs::remove_dir_all(&dir_path).expect("Failed to delete directory contents");
         }
         create_dir_all(&dir_path).expect("Failed to create directory for DOT files");
-        generate_json_from_mir(&format!("{}/mir.json", dir_path), &mir.body)
+        generate_json_from_mir(&format!("{}/mir.json", dir_path), tcx, &mir.body)
             .expect("Failed to generate JSON from MIR");
 
         let input_facts = mir.input_facts.as_ref().unwrap().clone();

@@ -1,6 +1,11 @@
 export type CurrentPoint = {
+  type: "stmt";
   block: number;
   stmt: number;
+} | {
+  type: "terminator";
+  block1: number;
+  block2: number;
 };
 
 export type BasicBlockData = {
@@ -73,6 +78,10 @@ export type PlaceExpand = {
 export type ReborrowBridge = {
   expands: PlaceExpand[];
   added_reborrows: Reborrow[];
+  ug: {
+    dot_graph: string,
+    empty: boolean
+  }
 };
 
 export type PathData = {

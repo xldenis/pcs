@@ -59,8 +59,16 @@ export const getAssertions = async (functionName: string) => {
 export async function getPathData(
   functionName: string,
   path: number[],
-  stmt: number
+  point:
+    | {
+        stmt: number;
+      }
+    | {
+        terminator: number;
+      }
 ) {
-  const endpoint = `data/${functionName}/path_${path.map((block) => `bb${block}`).join("_")}_stmt_${stmt}.json`;
+  const last_component =
+    "stmt" in point ? `stmt_${point.stmt}` : `bb${point.terminator}_transition`;
+  const endpoint = `data/${functionName}/path_${path.map((block) => `bb${block}`).join("_")}_${last_component}.json`;
   return await fetchJsonFile(endpoint);
 }

@@ -171,11 +171,27 @@ impl<T: io::Write> GraphDrawer<T> {
             GraphEdge::UnblockReborrowEdge {
                 blocked_place,
                 blocking_place,
+                block
             } => {
                 self.draw_dot_edge(
-                    blocking_place,
                     blocked_place,
-                    EdgeOptions::new().with_color("red".to_string()),
+                    blocking_place,
+                    EdgeOptions::new()
+                        .with_color("red".to_string())
+                        .with_label(format!("{:?}", block)),
+                )?;
+            }
+            GraphEdge::UnblockProjectionEdge {
+                blocked_place,
+                blocking_place,
+                block
+            } => {
+                self.draw_dot_edge(
+                    blocked_place,
+                    blocking_place,
+                    EdgeOptions::new()
+                        .with_color("darkred".to_string())
+                        .with_label(format!("{:?}", block)),
                 )?;
             }
         }

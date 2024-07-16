@@ -18,11 +18,9 @@ pub struct ReborrowingDag<'tcx> {
 }
 
 impl<'tcx> ReborrowingDag<'tcx> {
-
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
-        self.reborrows.retain(|reborrow| {
-            path.contains(&reborrow.location.block)
-        });
+        self.reborrows
+            .retain(|reborrow| path.contains(&reborrow.location.block));
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Reborrow<'tcx>> {
@@ -64,7 +62,17 @@ impl<'tcx> ReborrowingDag<'tcx> {
     }
 
     pub fn get_place_blocking(&self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
-        self.reborrows.iter().find(|r| r.assigned_place == place).map(|r| r.blocked_place)
+        self.reborrows
+            .iter()
+            .find(|r| r.blocked_place == place)
+            .map(|r| r.assigned_place)
+    }
+
+    pub fn get_place_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
+        self.reborrows
+            .iter()
+            .find(|r| r.assigned_place == place)
+            .map(|r| r.blocked_place)
     }
 
     pub fn insert(&mut self, reborrow: Reborrow<'tcx>) -> bool {
@@ -94,24 +102,36 @@ impl<'tcx> ReborrowingDag<'tcx> {
             assigned_place: MaybeOldPlace::Current {
                 place: assigned_place,
             },
-            location
+            location,
         })
     }
-
-    pub fn kill_reborrow_blocking(
-        &mut self,
-        place: MaybeOldPlace<'tcx>,
-    ) -> Option<MaybeOldPlace<'tcx>> {
-        let to_remove = self
-            .reborrows
-            .iter()
-            .find(|reborrow| reborrow.blocked_place == place)
-            .cloned();
-        if let Some(to_remove) = to_remove {
-            self.reborrows.remove(&to_remove);
-            Some(to_remove.assigned_place)
-        } else {
-            None
+    pub fn kill_reborrows_blocking(&mut self, blocked_place: MaybeOldPlace<'tcx>) -> bool {
+        let mut changed = false;
+        for to_remove in self.reborrows.clone().iter() {
+            if to_remove.blocked_place == blocked_place {
+                if self.reborrows.remove(to_remove) {
+                    changed = true;
+                }
+            }
         }
+        changed
+    }
+
+    pub fn kill_reborrow(
+        &mut self,
+        blocked_place: MaybeOldPlace<'tcx>,
+        assigned_place: MaybeOldPlace<'tcx>,
+    ) -> bool {
+        let mut changed = false;
+        for to_remove in self.reborrows.clone().iter() {
+            if to_remove.blocked_place == blocked_place
+                && to_remove.assigned_place == assigned_place
+            {
+                if self.reborrows.remove(to_remove) {
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 }

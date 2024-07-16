@@ -55,6 +55,13 @@ impl<'tcx> Place<'tcx> {
         serde_json::Value::String(place_str)
     }
 
+    pub fn to_short_string(&self, repacker: PlaceRepacker<'_, 'tcx>) -> String {
+        match self.to_string(repacker) {
+            PlaceDisplay::Temporary(p) => format!("{:?}", p),
+            PlaceDisplay::User(p, s) => s,
+        }
+    }
+
     pub fn to_string(&self, repacker: PlaceRepacker<'_, 'tcx>) -> PlaceDisplay<'tcx> {
         // Get the local's debug name from the Body's VarDebugInfo
         let local_name = if self.local == RETURN_PLACE {

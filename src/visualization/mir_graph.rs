@@ -32,8 +32,6 @@ use rustc_interface::{
     },
 };
 
-use super::{get_source_name_from_local, get_source_name_from_place};
-
 #[derive(Serialize)]
 struct MirGraph {
     nodes: Vec<MirNode>,
@@ -82,26 +80,27 @@ fn format_bin_op(op: &BinOp) -> String {
     }
 }
 
-fn format_local(local: &Local, debug_info: &[VarDebugInfo]) -> String {
-    get_source_name_from_local(local, debug_info).unwrap_or_else(|| format!("{:?}", local))
+fn format_local<'tcx>(local: &Local, repacker: PlaceRepacker<'_, 'tcx>) -> String {
+    let place: Place<'tcx> = (*local).into();
+    format!("{:?}", place.to_string(repacker))
 }
 
-fn format_place<'tcx>(place: &mir::Place<'tcx>, debug_info: &[VarDebugInfo]) -> String {
-    get_source_name_from_place(place.local, &place.projection, debug_info)
-        .unwrap_or_else(|| format!("{:?}", place))
+fn format_place<'tcx>(place: &mir::Place<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) -> String {
+    let place: Place<'tcx> = (*place).into();
+    format!("{:?}", place.to_string(repacker))
 }
 
-fn format_operand<'tcx>(operand: &Operand<'tcx>, debug_info: &[VarDebugInfo]) -> String {
+fn format_operand<'tcx>(operand: &Operand<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) -> String {
     match operand {
-        Operand::Copy(p) => format_place(p, debug_info),
-        Operand::Move(p) => format!("move {}", format_place(p, debug_info)),
+        Operand::Copy(p) => format_place(p, repacker),
+        Operand::Move(p) => format!("move {}", format_place(p, repacker)),
         Operand::Constant(c) => format!("{}", c),
     }
 }
 
-fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> String {
+fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) -> String {
     match rvalue {
-        Rvalue::Use(operand) => format_operand(operand, debug_info),
+        Rvalue::Use(operand) => format_operand(operand, repacker),
         Rvalue::Repeat(_, _) => todo!(),
         Rvalue::Ref(region, kind, place) => {
             let kind = match kind {
@@ -109,7 +108,7 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
                 mir::BorrowKind::Shallow => "",
                 mir::BorrowKind::Mut { .. } => "mut",
             };
-            format!("&{} {}", kind, format_place(place, debug_info))
+            format!("&{} {}", kind, format_place(place, repacker))
         }
         Rvalue::ThreadLocalRef(_) => todo!(),
         Rvalue::AddressOf(_, _) => todo!(),
@@ -118,22 +117,22 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
         Rvalue::BinaryOp(op, box (lhs, rhs)) | Rvalue::CheckedBinaryOp(op, box (lhs, rhs)) => {
             format!(
                 "{} {} {}",
-                format_operand(lhs, debug_info),
+                format_operand(lhs, repacker),
                 format_bin_op(op),
-                format_operand(rhs, debug_info)
+                format_operand(rhs, repacker)
             )
         }
         Rvalue::NullaryOp(_, _) => todo!(),
         Rvalue::UnaryOp(op, val) => {
-            format!("{:?} {}", op, format_operand(val, debug_info))
+            format!("{:?} {}", op, format_operand(val, repacker))
         }
-        Rvalue::Discriminant(place) => format!("Discriminant({})", format_place(place, debug_info)),
+        Rvalue::Discriminant(place) => format!("Discriminant({})", format_place(place, repacker)),
         Rvalue::Aggregate(kind, ops) => {
             format!(
                 "Aggregate {:?} {}",
                 kind,
                 ops.iter()
-                    .map(|op| format_operand(op, debug_info))
+                    .map(|op| format_operand(op, repacker))
                     .collect::<Vec<_>>()
                     .join(", ")
             )
@@ -144,7 +143,7 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, debug_info: &[VarDebugInfo]) -> St
 }
 fn format_terminator<'tcx>(
     terminator: &TerminatorKind<'tcx>,
-    debug_info: &[VarDebugInfo],
+    repacker: PlaceRepacker<'_, 'tcx>,
 ) -> String {
     match terminator {
         TerminatorKind::Call {
@@ -158,10 +157,10 @@ fn format_terminator<'tcx>(
         } => {
             format!(
                 "{} = {}({})",
-                format_place(destination, debug_info),
-                format_operand(func, debug_info),
+                format_place(destination, repacker),
+                format_operand(func, repacker),
                 args.iter()
-                    .map(|arg| format_operand(arg, debug_info))
+                    .map(|arg| format_operand(arg, repacker))
                     .collect::<Vec<_>>()
                     .join(", ")
             )
@@ -170,17 +169,17 @@ fn format_terminator<'tcx>(
     }
 }
 
-fn format_stmt<'tcx>(stmt: &Statement<'tcx>, debug_info: &[VarDebugInfo]) -> String {
+fn format_stmt<'tcx>(stmt: &Statement<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) -> String {
     match &stmt.kind {
         mir::StatementKind::Assign(box (place, rvalue)) => {
             format!(
                 "{} = {}",
-                format_place(place, debug_info),
-                format_rvalue(rvalue, debug_info)
+                format_place(place, repacker),
+                format_rvalue(rvalue, repacker)
             )
         }
         mir::StatementKind::FakeRead(box (_, place)) => {
-            format!("FakeRead({})", format_place(place, debug_info))
+            format!("FakeRead({})", format_place(place, repacker))
         }
         mir::StatementKind::SetDiscriminant {
             place,
@@ -188,10 +187,10 @@ fn format_stmt<'tcx>(stmt: &Statement<'tcx>, debug_info: &[VarDebugInfo]) -> Str
         } => todo!(),
         mir::StatementKind::Deinit(_) => todo!(),
         mir::StatementKind::StorageLive(local) => {
-            format!("StorageLive({})", format_local(local, debug_info))
+            format!("StorageLive({})", format_local(local, repacker))
         }
         mir::StatementKind::StorageDead(local) => {
-            format!("StorageDead({})", format_local(local, debug_info))
+            format!("StorageDead({})", format_local(local, repacker))
         }
         mir::StatementKind::Retag(_, _) => todo!(),
         mir::StatementKind::PlaceMention(_) => todo!(),
@@ -205,17 +204,19 @@ fn format_stmt<'tcx>(stmt: &Statement<'tcx>, debug_info: &[VarDebugInfo]) -> Str
     }
 }
 
-fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
+fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGraph {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
+
+    let repacker = PlaceRepacker::new(body, tcx);
 
     for (bb, data) in body.basic_blocks.iter_enumerated() {
         let stmts = data
             .statements
             .iter()
-            .map(|stmt| format_stmt(stmt, &body.var_debug_info));
+            .map(|stmt| format_stmt(stmt, repacker));
 
-        let terminator = format_terminator(&data.terminator().kind, &body.var_debug_info);
+        let terminator = format_terminator(&data.terminator().kind, repacker);
 
         nodes.push(MirNode {
             id: format!("{:?}", bb),
@@ -356,8 +357,12 @@ fn mk_mir_graph(body: &Body<'_>) -> MirGraph {
 
     MirGraph { nodes, edges }
 }
-pub fn generate_json_from_mir(path: &str, body: &Body<'_>) -> io::Result<()> {
-    let mir_graph = mk_mir_graph(body);
+pub fn generate_json_from_mir<'mir, 'tcx>(
+    path: &str,
+    tcx: TyCtxt<'tcx>,
+    body: &'mir Body<'tcx>,
+) -> io::Result<()> {
+    let mir_graph = mk_mir_graph(tcx, body);
     let mut file = File::create(path)?;
     serde_json::to_writer(&mut file, &mir_graph)?;
     Ok(())

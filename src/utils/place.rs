@@ -24,7 +24,10 @@ use rustc_interface::{
 
 use crate::rustc_interface;
 
-use super::debug_info::{self, DebugInfo};
+use super::{
+    debug_info::{self, DebugInfo},
+    PlaceRepacker,
+};
 #[derive(Clone, Copy, Deref, DerefMut)]
 pub struct Place<'tcx>(
     #[deref]
@@ -56,10 +59,11 @@ impl<'tcx> Place<'tcx> {
         self.0.ty(body, tcx).ty.is_ref()
     }
 
-    pub fn project_deref(&self, tcx: TyCtxt<'tcx>) -> Self {
+    pub fn project_deref(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Self {
+        assert!(self.ty(repacker).ty.is_ref() || self.ty(repacker).ty.is_box());
         Place::new(
             self.0.local,
-            self.0.project_deeper(&[PlaceElem::Deref], tcx).projection,
+            self.0.project_deeper(&[PlaceElem::Deref], repacker.tcx()).projection,
         )
     }
 

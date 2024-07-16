@@ -4,9 +4,13 @@ import type { BasicBlockData, DagreNode } from "../types";
 export default function Edge({
   edge,
   nodes,
+  selected,
+  onSelect,
 }: {
+  selected: boolean;
   edge: any;
   nodes: DagreNode<BasicBlockData>[];
+  onSelect: () => void;
 }) {
   const sourceNode = nodes.find((n) => n.id === edge.source);
   const targetNode = nodes.find((n) => n.id === edge.target);
@@ -14,19 +18,16 @@ export default function Edge({
   if (!sourceNode || !targetNode) return null;
 
   const startX = sourceNode.x + sourceNode.width / 2;
-  const startY = sourceNode.y + (sourceNode.height / 2);
+  const startY = sourceNode.y + sourceNode.height / 2;
   const endX = targetNode.x + targetNode.width / 2;
-  const endY = targetNode.y - (targetNode.height / 2);
+  const endY = targetNode.y - targetNode.height / 2;
 
   return (
-    <svg
+    <g
+      onClick={() => onSelect()}
       style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width: "100%",
-        height: "100%",
-        pointerEvents: "none",
+        pointerEvents: "auto",
+        cursor: "pointer",
       }}
     >
       <line
@@ -34,7 +35,7 @@ export default function Edge({
         y1={startY}
         x2={endX}
         y2={endY}
-        stroke="black"
+        stroke={selected ? "green" : "black"}
         strokeWidth={2}
       />
       {edge.data.label && (
@@ -49,6 +50,6 @@ export default function Edge({
           {edge.data.label}
         </text>
       )}
-    </svg>
+    </g>
   );
 }
