@@ -36,13 +36,13 @@ pub struct PlaceCapabilitySummary<'a, 'tcx> {
     pub block: BasicBlock,
 
     pub fpcs: FreePlaceCapabilitySummary<'a, 'tcx>,
-    pub borrows: BorrowsDomain<'tcx>,
+    pub borrows: BorrowsDomain<'a, 'tcx>,
 }
 
 impl<'a, 'tcx> PlaceCapabilitySummary<'a, 'tcx> {
     pub fn new(cgx: Rc<PcsContext<'a, 'tcx>>, block: BasicBlock) -> Self {
         let fpcs = FreePlaceCapabilitySummary::new(cgx.rp);
-        let borrows = BorrowsDomain::new();
+        let borrows = BorrowsDomain::new(&cgx.mir.body);
         Self {
             cgx,
             block,
@@ -86,7 +86,6 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                             self.block, // TODO: Check
                         );
                     }
-
                 }
             }
         }

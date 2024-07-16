@@ -7,7 +7,7 @@ use crate::{
         data_structures::fx::{FxHashMap, FxHashSet},
         dataflow::{AnalysisDomain, JoinSemiLattice},
         middle::{
-            mir::{self, BasicBlock, Location, VarDebugInfo},
+            mir::{self, BasicBlock, Local, Location, VarDebugInfo},
             ty::TyCtxt,
         },
     },
@@ -20,6 +20,23 @@ use super::domain::{DerefExpansion, MaybeOldPlace};
 pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);
 
 impl<'tcx> DerefExpansions<'tcx> {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
+        let mut new: FxHashSet<DerefExpansion<'tcx>> = FxHashSet::default();
+        for expansion in self.0.clone() {
+            let value = if expansion.base.is_current() && expansion.base.place() == place {
+                DerefExpansion::new(
+                    MaybeOldPlace::new(place, Some(location)),
+                    expansion.expansion,
+                    expansion.location,
+                )
+            } else {
+                expansion
+            };
+            new.insert(value);
+        }
+        self.0 = new;
+    }
+
     pub fn new() -> Self {
         Self(FxHashSet::default())
     }
@@ -31,14 +48,15 @@ impl<'tcx> DerefExpansions<'tcx> {
             .map(|expansion| expansion.expansion.clone())
     }
 
-    pub fn get_parent(&self, place: MaybeOldPlace<'tcx>) -> Option<MaybeOldPlace<'tcx>> {
+    pub fn get_parents(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.0
             .iter()
-            .find(|expansion| {
+            .filter(|expansion| {
                 expansion.base.location() == place.location()
                     && expansion.expansion.contains(&place.place())
             })
             .map(|expansion| expansion.base)
+            .collect()
     }
 
     pub fn ensure_expansion_to(
@@ -46,10 +64,10 @@ impl<'tcx> DerefExpansions<'tcx> {
         place: MaybeOldPlace<'tcx>,
         body: &mir::Body<'tcx>,
         tcx: TyCtxt<'tcx>,
-        block: BasicBlock,
+        location: Location,
     ) {
         let orig_place = place.place();
-        let location = place.location();
+        let place_location = place.location();
         let mut in_dag = false;
         for (place, elem) in place.place().iter_projections() {
             let place: Place<'tcx> = place.into();
@@ -57,7 +75,7 @@ impl<'tcx> DerefExpansions<'tcx> {
                 in_dag = true;
             }
             if in_dag {
-                let origin_place = MaybeOldPlace::new(place, location);
+                let origin_place = MaybeOldPlace::new(place, place_location);
                 if !self.contains_projection_from(origin_place) {
                     let expansion = match elem {
                         mir::ProjectionElem::Downcast(_, _) | // For downcast we can't blindly expand since we don't know which instance, use this specific one
@@ -68,7 +86,7 @@ impl<'tcx> DerefExpansions<'tcx> {
                         _ => place.expand_field(None, PlaceRepacker::new(&body, tcx)),
                     };
                     // eprintln!("Expand to {:?} for {:?}", expansion, orig_place);
-                    self.insert(origin_place, expansion, block);
+                    self.insert(origin_place, expansion, location);
                 }
             }
         }
@@ -119,12 +137,13 @@ impl<'tcx> DerefExpansions<'tcx> {
         &mut self,
         place: MaybeOldPlace<'tcx>,
         expansion: Vec<Place<'tcx>>,
-        block: BasicBlock,
+        location: Location,
     ) {
         for p in expansion.iter() {
             assert!(p.projection.len() > place.place().projection.len());
         }
-        self.0.insert(DerefExpansion::new(place, expansion, block));
+        self.0
+            .insert(DerefExpansion::new(place, expansion, location));
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &DerefExpansion<'tcx>> {
@@ -137,6 +156,12 @@ impl<'tcx> DerefExpansions<'tcx> {
 
     pub fn contains(&self, expansion: &DerefExpansion<'tcx>) -> bool {
         self.0.contains(expansion)
+    }
+
+    pub fn has_expansion_at_location(&self, place: Place<'tcx>, location: Location) -> bool {
+        self.0
+            .iter()
+            .any(|expansion| expansion.base.place() == place && expansion.location == location)
     }
 }
 

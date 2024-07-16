@@ -22,7 +22,7 @@ use rustc_interface::{
     },
 };
 
-use crate::rustc_interface;
+use crate::{borrows::domain::MaybeOldPlace, rustc_interface};
 
 use super::{
     debug_info::{self, DebugInfo},
@@ -35,6 +35,12 @@ pub struct Place<'tcx>(
     PlaceRef<'tcx>,
     DebugInfo<'static>,
 );
+
+impl<'tcx> From<Place<'tcx>> for MaybeOldPlace<'tcx> {
+    fn from(place: Place<'tcx>) -> Self {
+        MaybeOldPlace::Current { place }
+    }
+}
 
 impl<'tcx> Place<'tcx> {
     pub fn new(local: Local, projection: &'tcx [PlaceElem<'tcx>]) -> Self {

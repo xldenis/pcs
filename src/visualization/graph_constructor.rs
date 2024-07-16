@@ -34,17 +34,14 @@ use rustc_interface::{
     },
 };
 
-use super::{
-  Graph, GraphEdge, GraphNode, NodeId,
-    NodeType, ReferenceEdgeType,
-};
+use super::{Graph, GraphEdge, GraphNode, NodeId, NodeType, ReferenceEdgeType};
 
-struct GraphConstructor<'a, 'tcx> {
+struct GraphConstructor<'mir, 'tcx> {
     inserted_nodes: Vec<(Place<'tcx>, Option<Location>)>,
     nodes: Vec<GraphNode>,
     edges: HashSet<GraphEdge>,
     rank: HashMap<NodeId, usize>,
-    repacker: PlaceRepacker<'a, 'tcx>,
+    repacker: PlaceRepacker<'mir, 'tcx>,
 }
 
 impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
@@ -148,6 +145,7 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                             blocked_place: source,
                             blocking_place: target,
                             block: edge.block,
+                            reason: edge.reason.clone(),
                         });
                 }
                 UnblockEdgeType::Projection(_) => {
@@ -157,6 +155,7 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                             blocked_place: source,
                             blocking_place: target,
                             block: edge.block,
+                            reason: edge.reason.clone(),
                         });
                 }
             }
@@ -167,7 +166,7 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
 
 pub struct PCSGraphConstructor<'a, 'tcx> {
     summary: &'a CapabilitySummary<'tcx>,
-    borrows_domain: &'a BorrowsState<'tcx>,
+    borrows_domain: &'a BorrowsState<'a, 'tcx>,
     borrow_set: &'a BorrowSet<'tcx>,
     constructor: GraphConstructor<'a, 'tcx>,
 }
@@ -176,7 +175,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
     pub fn new(
         summary: &'a CapabilitySummary<'tcx>,
         repacker: PlaceRepacker<'a, 'tcx>,
-        borrows_domain: &'a BorrowsState<'tcx>,
+        borrows_domain: &'a BorrowsState<'a, 'tcx>,
         borrow_set: &'a BorrowSet<'tcx>,
     ) -> Self {
         Self {
@@ -228,15 +227,8 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
     }
 
     fn insert_snapshot_place(&mut self, place: PlaceSnapshot<'tcx>) -> NodeId {
-        let (at, cap) = if !self
-            .borrows_domain
-            .is_current(&place, self.constructor.repacker.body())
-        {
-            (Some(place.at), None)
-        } else {
-            (None, self.capability_for_place(place.place))
-        };
-        self.insert_place_and_previous_projections(place.place, at, cap)
+        let cap = self.capability_for_place(place.place);
+        self.insert_place_and_previous_projections(place.place, Some(place.at), cap)
     }
 
     fn capability_for_place(&self, place: Place<'tcx>) -> Option<CapabilityKind> {
@@ -279,7 +271,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                     .insert(GraphEdge::DerefExpansionEdge {
                         source: base,
                         target: place,
-                        block: deref_expansion.block,
+                        location: deref_expansion.location,
                     });
             }
         }

@@ -3,9 +3,12 @@ use std::rc::Rc;
 use rustc_interface::{
     ast::Mutability,
     borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
-    data_structures::fx::{FxHashMap, FxHashSet},
+    data_structures::{
+        fx::{FxHashMap, FxHashSet},
+        graph::dominators::Dominators,
+    },
     dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, BasicBlock, Local, Location, VarDebugInfo},
+    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, VarDebugInfo},
     middle::ty::TyCtxt,
 };
 
@@ -14,7 +17,7 @@ use crate::{
     ReborrowBridge,
 };
 
-impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
+impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
         for borrow in &other.borrows {
@@ -34,6 +37,9 @@ impl<'tcx> JoinSemiLattice for BorrowsState<'tcx> {
             }
         }
         if self.deref_expansions.join(&other.deref_expansions) {
+            changed = true;
+        }
+        if self.latest.join(&other.latest) {
             changed = true;
         }
         changed
@@ -84,6 +90,14 @@ pub enum MaybeOldPlace<'tcx> {
     OldPlace(PlaceSnapshot<'tcx>),
 }
 
+impl<'tcx> From<mir::Place<'tcx>> for MaybeOldPlace<'tcx> {
+    fn from(place: mir::Place<'tcx>) -> Self {
+        Self::Current {
+            place: place.into(),
+        }
+    }
+}
+
 impl<'tcx> MaybeOldPlace<'tcx> {
     pub fn new(place: Place<'tcx>, at: Option<Location>) -> Self {
         if let Some(at) = at {
@@ -91,6 +105,32 @@ impl<'tcx> MaybeOldPlace<'tcx> {
         } else {
             Self::Current { place }
         }
+    }
+
+    pub fn ty(&self, repacker: PlaceRepacker<'_, 'tcx>) -> PlaceTy<'tcx> {
+        match self {
+            MaybeOldPlace::Current { place } => place.ty(repacker),
+            MaybeOldPlace::OldPlace(old_place) => old_place.place.ty(repacker),
+        }
+    }
+
+    pub fn project_deref(&self, repacker: PlaceRepacker<'_, 'tcx>) -> MaybeOldPlace<'tcx> {
+        match self {
+            MaybeOldPlace::Current { place } => MaybeOldPlace::Current {
+                place: place.project_deref(repacker),
+            },
+            MaybeOldPlace::OldPlace(old_place) => {
+                MaybeOldPlace::OldPlace(old_place.project_deref(repacker))
+            }
+        }
+    }
+
+    pub fn is_mut_ref(&self, body: &mir::Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+        self.place().is_mut_ref(body, tcx)
+    }
+
+    pub fn is_ref(&self, body: &mir::Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+        self.place().is_ref(body, tcx)
     }
 
     pub fn is_current(&self) -> bool {
@@ -116,6 +156,19 @@ impl<'tcx> MaybeOldPlace<'tcx> {
             "place": self.place().to_json(repacker),
             "at": self.location().map(|loc| format!("{:?}", loc)),
         })
+    }
+
+    pub fn to_short_string(&self, repacker: PlaceRepacker<'_, 'tcx>) -> String {
+        let p = self.place().to_short_string(repacker);
+        format!(
+            "{}{}",
+            p,
+            if let Some(location) = self.location() {
+                format!(" at {:?}", location)
+            } else {
+                "".to_string()
+            }
+        )
     }
 }
 
@@ -160,15 +213,15 @@ impl<'tcx> Borrow<'tcx> {
 pub struct DerefExpansion<'tcx> {
     pub base: MaybeOldPlace<'tcx>,
     pub expansion: Vec<Place<'tcx>>,
-    pub block: BasicBlock,
+    pub location: Location,
 }
 
 impl<'tcx> DerefExpansion<'tcx> {
-    pub fn new(base: MaybeOldPlace<'tcx>, expansion: Vec<Place<'tcx>>, block: BasicBlock) -> Self {
+    pub fn new(base: MaybeOldPlace<'tcx>, expansion: Vec<Place<'tcx>>, location: Location) -> Self {
         Self {
             base,
             expansion,
-            block,
+            location,
         }
     }
 
@@ -180,9 +233,70 @@ impl<'tcx> DerefExpansion<'tcx> {
     }
 }
 
+#[derive(Clone, Debug)]
+struct Latest<'mir, 'tcx>(FxHashMap<Place<'tcx>, Location>, &'mir mir::Body<'tcx>);
+
+impl<'mir, 'tcx> PartialEq for Latest<'mir, 'tcx> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<'mir, 'tcx> Eq for Latest<'mir, 'tcx> {}
+
+impl<'mir, 'tcx> Latest<'mir, 'tcx> {
+    pub fn new(body: &'mir mir::Body<'tcx>) -> Self {
+        Self(FxHashMap::default(), body)
+    }
+    pub fn get(&self, place: &Place<'tcx>) -> Option<&Location> {
+        self.0.get(place)
+    }
+    pub fn insert(&mut self, place: Place<'tcx>, location: Location) -> Option<Location> {
+        self.0.insert(place, location)
+    }
+}
+
+fn join_locations(loc1: Location, loc2: Location, dominators: &Dominators<BasicBlock>) -> Location {
+    if loc1.dominates(loc2, dominators) {
+        loc1
+    } else if loc2.dominates(loc1, dominators) {
+        loc2
+    } else {
+        for block in dominators.dominators(loc2.block) {
+            if dominators.dominates(block, loc1.block) {
+                return Location {
+                    block,
+                    statement_index: 0,
+                };
+            }
+        }
+        unreachable!()
+    }
+}
+
+impl<'mir, 'tcx> JoinSemiLattice for Latest<'mir, 'tcx> {
+    fn join(&mut self, other: &Self) -> bool {
+        let mut changed = false;
+        for (place, other_loc) in other.0.iter() {
+            if let Some(self_loc) = self.get(place) {
+                let dominators = self.1.basic_blocks.dominators();
+                let new_loc = join_locations(*self_loc, *other_loc, dominators);
+                if new_loc != *self_loc {
+                    self.insert(*place, new_loc);
+                    changed = true;
+                }
+            } else {
+                self.insert(*place, *other_loc);
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub struct BorrowsState<'tcx> {
-    latest: FxHashMap<Place<'tcx>, Location>,
+pub struct BorrowsState<'mir, 'tcx> {
+    latest: Latest<'mir, 'tcx>,
     pub reborrows: ReborrowingDag<'tcx>,
     borrows: FxHashSet<Borrow<'tcx>>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
@@ -217,7 +331,7 @@ impl<'tcx> Reborrow<'tcx> {
     }
 }
 
-impl<'tcx> BorrowsState<'tcx> {
+impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
         self.reborrows.filter_for_path(path);
     }
@@ -225,27 +339,48 @@ impl<'tcx> BorrowsState<'tcx> {
         let added_reborrows: FxHashSet<Reborrow<'tcx>> = to
             .reborrows()
             .iter()
-            .filter(|rb| !self.contains_reborrow(rb))
+            .filter(|rb| {
+                !self.has_reborrow_at_location(
+                    rb.blocked_place.place(),
+                    rb.assigned_place.place(),
+                    rb.location,
+                )
+            })
             .cloned()
             .collect();
         let expands: FxHashSet<DerefExpansion<'tcx>> = to
             .deref_expansions
             .iter()
-            .filter(|exp| !self.deref_expansions.contains(exp))
+            .filter(|exp| {
+                !self
+                    .deref_expansions
+                    .has_expansion_at_location(exp.base.place(), exp.location)
+            })
             .cloned()
             .collect();
 
         let mut ug = UnblockGraph::new();
 
         for reborrow in self.reborrows().iter() {
-            if !to.contains_reborrow(reborrow) {
-                ug.kill_reborrow(*reborrow, self)
+            if !to.has_reborrow_at_location(
+                reborrow.blocked_place.place(),
+                reborrow.assigned_place.place(),
+                reborrow.location,
+            ) {
+                ug.kill_reborrow(
+                    *reborrow,
+                    self,
+                    "it doesn't exist in state to bridge".to_string(),
+                );
             }
         }
 
         for exp in self.deref_expansions.iter() {
-            if !to.deref_expansions.contains(&exp) {
-                ug.unblock_place(exp.base, self, block);
+            if !to
+                .deref_expansions
+                .has_expansion_at_location(exp.base.place(), exp.location)
+            {
+                ug.unblock_place(exp.base, self, exp.location.block);
             }
         }
 
@@ -260,19 +395,42 @@ impl<'tcx> BorrowsState<'tcx> {
         tcx: TyCtxt<'tcx>,
         body: &mir::Body<'tcx>,
         place: MaybeOldPlace<'tcx>,
-        block: BasicBlock,
+        location: Location,
     ) {
         self.deref_expansions
-            .ensure_expansion_to(place, body, tcx, block);
+            .ensure_expansion_to(place, body, tcx, location);
     }
 
-    pub fn root_of(&self, place: MaybeOldPlace<'tcx>) -> MaybeOldPlace<'tcx> {
-        if let Some(place) = self.reborrows.get_place_blocking(place) {
-            self.root_of(place)
-        } else if let Some(place) = self.deref_expansions.get_parent(place) {
-            self.root_of(place)
-        } else {
-            place
+    pub fn roots_of(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        let mut result = FxHashSet::default();
+        for place in self.reborrows.get_places_blocking(place) {
+            result.extend(self.roots_of(place));
+        }
+        for place in self.deref_expansions.get_parents(place) {
+            result.extend(self.roots_of(place));
+        }
+        if result.is_empty() {
+            result.insert(place);
+        }
+        result
+    }
+
+    // TODO: This is not precise, consider each location separately
+    pub fn trim_roots(&mut self) {
+        let roots: FxHashSet<_> = self
+            .reborrows
+            .roots()
+            .into_iter()
+            .flat_map(|place| self.roots_of(place))
+            .flat_map(|place| match place {
+                MaybeOldPlace::OldPlace(place) => Some(place),
+                _ => None,
+            })
+            .collect();
+        for root in roots {
+            // TODO: deref expansions
+            self.reborrows
+                .kill_reborrows_assigned_to(MaybeOldPlace::OldPlace(root));
         }
     }
 
@@ -281,7 +439,7 @@ impl<'tcx> BorrowsState<'tcx> {
         self.reborrows
             .roots()
             .into_iter()
-            .map(|place| self.root_of(place))
+            .flat_map(|place| self.roots_of(place))
             .flat_map(|place| match place {
                 MaybeOldPlace::Current { place } => Some(place),
                 MaybeOldPlace::OldPlace(_) => None,
@@ -364,6 +522,15 @@ impl<'tcx> BorrowsState<'tcx> {
         self.reborrows.contains(reborrow)
     }
 
+    pub fn has_reborrow_at_location(
+        &self,
+        from: Place<'tcx>,
+        to: Place<'tcx>,
+        location: Location,
+    ) -> bool {
+        self.reborrows.has_reborrow_at_location(from, to, location)
+    }
+
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
         json!({
             "borrows": self.borrows.iter().map(|borrow| {
@@ -372,10 +539,10 @@ impl<'tcx> BorrowsState<'tcx> {
         })
     }
 
-    pub fn new() -> Self {
+    pub fn new(body: &'mir mir::Body<'tcx>) -> Self {
         Self {
             deref_expansions: DerefExpansions::new(),
-            latest: FxHashMap::default(),
+            latest: Latest::new(body),
             reborrows: ReborrowingDag::new(),
             borrows: FxHashSet::default(),
             region_abstractions: vec![],
@@ -418,6 +585,20 @@ impl<'tcx> BorrowsState<'tcx> {
         let assigned_place = borrow.assigned_place;
         let deref_of_assigned_place = assigned_place.project_deref(PlaceRepacker::new(body, tcx));
         self.borrows.insert(borrow);
+    }
+
+    pub fn make_deref_of_place_old(
+        &mut self,
+        place: Place<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) {
+        if let Some(location) = self.get_latest(&place) {
+            self.reborrows
+                .make_place_old(place.project_deref(repacker), location);
+            self.deref_expansions
+                .make_place_old(place.project_deref(repacker), location);
+            self.trim_roots();
+        }
     }
 
     pub fn add_rustc_borrow(

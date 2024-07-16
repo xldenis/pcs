@@ -159,6 +159,7 @@ pub struct UnblockEdge<'tcx> {
     pub blocker: MaybeOldPlace<'tcx>,
     pub block: BasicBlock,
     pub edge_type: UnblockEdgeType,
+    pub reason: String,
 }
 
 impl<'tcx> UnblockEdge<'tcx> {
@@ -287,30 +288,52 @@ impl<'tcx> UnblockGraph<'tcx> {
         blocker: MaybeOldPlace<'tcx>,
         edge_type: UnblockEdgeType,
         block: BasicBlock,
+        reason: String,
     ) {
-        self.0.insert(UnblockEdge {
-            blocked,
-            blocker,
-            edge_type,
-            block,
+        let existing = self.0.iter().find(|e| {
+            e.blocked == blocked
+                && e.blocker == blocker
+                && e.block == block
+                && e.edge_type == edge_type
         });
+        if let Some(existing) = existing {
+            if existing.reason.contains(&reason) {
+                return;
+            }
+            let mut existing = existing.clone();
+            self.0.remove(&existing);
+            existing.reason = format!("{}, and {}", existing.reason, reason);
+            self.0.insert(existing);
+        } else {
+            self.0.insert(UnblockEdge {
+                blocked,
+                blocker,
+                edge_type,
+                block,
+                reason,
+            });
+        }
     }
 
     pub fn kill_reborrows_assigned_to<'a>(
         &mut self,
         place: MaybeOldPlace<'tcx>,
-        borrows: &BorrowsState<'tcx>,
+        borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
     ) {
         for reborrow in borrows.reborrows_assigned_to(place) {
-            self.kill_reborrow(reborrow.clone(), borrows)
+            self.kill_reborrow(
+                reborrow.clone(),
+                borrows,
+                format!("it is assigned to {place:?}"),
+            )
         }
     }
 
     pub fn kill_place<'a>(
         &mut self,
         place: MaybeOldPlace<'tcx>,
-        borrows: &BorrowsState<'tcx>,
+        borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
     ) {
         self.unblock_place(place, borrows, block);
@@ -320,11 +343,11 @@ impl<'tcx> UnblockGraph<'tcx> {
     pub fn unblock_place<'a>(
         &mut self,
         place: MaybeOldPlace<'tcx>,
-        borrows: &BorrowsState<'tcx>,
+        borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
     ) {
         for reborrow in borrows.reborrows_blocking(place) {
-            self.kill_reborrow(reborrow.clone(), borrows)
+            self.kill_reborrow(reborrow.clone(), borrows, format!("it blocks {place:?}"))
         }
         for (idx, child_place) in borrows
             .deref_expansions
@@ -334,7 +357,13 @@ impl<'tcx> UnblockGraph<'tcx> {
             .enumerate()
         {
             let child_place = MaybeOldPlace::new(child_place, place.location());
-            self.add_dependency(place, child_place, UnblockEdgeType::Projection(idx), block);
+            self.add_dependency(
+                place,
+                child_place,
+                UnblockEdgeType::Projection(idx),
+                block,
+                format!("Child of {place:?}"),
+            );
             self.kill_place(child_place, borrows, block);
         }
     }
@@ -346,7 +375,12 @@ impl<'tcx> UnblockGraph<'tcx> {
         state.get(place).unwrap_or_default()
     }
 
-    pub fn kill_reborrow<'a>(&mut self, reborrow: Reborrow<'tcx>, borrows: &BorrowsState<'tcx>) {
+    pub fn kill_reborrow<'a>(
+        &mut self,
+        reborrow: Reborrow<'tcx>,
+        borrows: &BorrowsState<'a, 'tcx>,
+        reason: String,
+    ) {
         self.add_dependency(
             reborrow.blocked_place,
             reborrow.assigned_place,
@@ -354,6 +388,7 @@ impl<'tcx> UnblockGraph<'tcx> {
                 is_mut: reborrow.mutability == Mutability::Mut,
             },
             reborrow.location.block, // TODO: Confirm this is the right block to use
+            format!("Kill reborrow because {}", reason),
         );
         self.unblock_place(reborrow.assigned_place, borrows, reborrow.location.block);
         // TODO: confirm right block

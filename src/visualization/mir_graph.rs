@@ -82,12 +82,12 @@ fn format_bin_op(op: &BinOp) -> String {
 
 fn format_local<'tcx>(local: &Local, repacker: PlaceRepacker<'_, 'tcx>) -> String {
     let place: Place<'tcx> = (*local).into();
-    format!("{:?}", place.to_string(repacker))
+    place.to_short_string(repacker)
 }
 
 fn format_place<'tcx>(place: &mir::Place<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) -> String {
     let place: Place<'tcx> = (*place).into();
-    format!("{:?}", place.to_string(repacker))
+    place.to_short_string(repacker)
 }
 
 fn format_operand<'tcx>(operand: &Operand<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) -> String {

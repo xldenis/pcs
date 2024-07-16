@@ -100,11 +100,13 @@ enum GraphEdge {
         blocked_place: NodeId,
         blocking_place: NodeId,
         block: BasicBlock,
+        reason: String
     },
     UnblockProjectionEdge {
         blocked_place: NodeId,
         blocking_place: NodeId,
         block: BasicBlock,
+        reason: String
     },
     ReborrowEdge {
         borrowed_place: NodeId,
@@ -123,7 +125,7 @@ enum GraphEdge {
     DerefExpansionEdge {
         source: NodeId,
         target: NodeId,
-        block: BasicBlock,
+        location: Location,
     },
 }
 
@@ -210,7 +212,7 @@ pub fn generate_dot_graph<'a, 'tcx: 'a>(
     location: Location,
     repacker: PlaceRepacker<'a, 'tcx>,
     summary: &CapabilitySummary<'tcx>,
-    borrows_domain: &BorrowsState<'tcx>,
+    borrows_domain: &BorrowsState<'a, 'tcx>,
     borrow_set: &BorrowSet<'tcx>,
     input_facts: &PoloniusInput,
     file_path: &str,

@@ -11,11 +11,29 @@ import {
 } from "../types";
 import * as Viz from "@viz-js/viz";
 
+function MaybeOldPlaceDisplay({
+  maybeOldPlace,
+}: {
+  maybeOldPlace: MaybeOldPlace;
+}) {
+  return (
+    <div>
+      {maybeOldPlace.place} {maybeOldPlace.at ? `at ${maybeOldPlace.at}` : ""}
+    </div>
+  );
+}
+
 function ReborrowDisplay({ reborrow }: { reborrow: Reborrow }) {
   return (
     <div>
-      <p>Assigned Place: {reborrow?.assigned_place?.place}</p>
-      <p>Blocked Place: {reborrow?.blocked_place?.place}</p>
+      <p>
+        Assigned Place:{" "}
+        <MaybeOldPlaceDisplay maybeOldPlace={reborrow?.assigned_place} />
+      </p>
+      <p>
+        Blocked Place:{" "}
+        <MaybeOldPlaceDisplay maybeOldPlace={reborrow?.blocked_place} />
+      </p>
       <p>Mutable: {reborrow?.is_mut ? "Yes" : "No"}</p>
     </div>
   );

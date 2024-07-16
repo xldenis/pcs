@@ -39,7 +39,7 @@ export type DagreNode<T> = {
 
 export type MaybeOldPlace = {
   place: string;
-  before?: string;
+  at?: string;
 };
 
 export type Borrow = {

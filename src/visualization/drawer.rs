@@ -3,6 +3,8 @@ use std::{
     io::{self, Write},
 };
 
+use crate::free_pcs::CapabilityKind;
+
 use super::{Graph, GraphDrawer, GraphEdge, GraphNode, NodeId, NodeType};
 
 pub struct EdgeOptions {
@@ -76,14 +78,20 @@ impl<T: io::Write> GraphDrawer<T> {
                 label,
                 location,
             } => {
-                let (capability_text, color) = match capability {
-                    Some(k) => (format!("{:?}", k), "black"),
-                    None => ("N".to_string(), "gray"),
-                };
-                let location_text = match location {
-                    Some(l) => Self::escape_html(format!("@{:?}", l)),
+                let capability_text = match capability {
+                    Some(k) => format!("{:?}", k),
                     None => "".to_string(),
                 };
+                let location_text = match location {
+                    Some(l) => Self::escape_html(format!(" at {:?}", l)),
+                    None => "".to_string(),
+                };
+                let color =
+                    if location.is_some() || matches!(capability, Some(CapabilityKind::Write)) {
+                        "gray"
+                    } else {
+                        "black"
+                    };
                 writeln!(
                     self.out,
                     "    \"{}\" [label=<<FONT FACE=\"courier\">{}</FONT>&nbsp;{}{}>, fontcolor=\"{}\", color=\"{}\"];",
@@ -157,41 +165,43 @@ impl<T: io::Write> GraphDrawer<T> {
             GraphEdge::DerefExpansionEdge {
                 source,
                 target,
-                block,
+                location,
             } => {
                 self.draw_dot_edge(
                     source,
                     target,
                     EdgeOptions::new()
                         .with_color("green".to_string())
-                        .with_label(format!("{:?}", block))
+                        .with_label(format!("{:?}", location))
                         .directed(false),
                 )?;
             }
             GraphEdge::UnblockReborrowEdge {
                 blocked_place,
                 blocking_place,
-                block
+                block,
+                reason,
             } => {
                 self.draw_dot_edge(
                     blocked_place,
                     blocking_place,
                     EdgeOptions::new()
                         .with_color("red".to_string())
-                        .with_label(format!("{:?}", block)),
+                        .with_label(format!("{:?}({})", block, reason)),
                 )?;
             }
             GraphEdge::UnblockProjectionEdge {
                 blocked_place,
                 blocking_place,
-                block
+                block,
+                reason,
             } => {
                 self.draw_dot_edge(
                     blocked_place,
                     blocking_place,
                     EdgeOptions::new()
                         .with_color("darkred".to_string())
-                        .with_label(format!("{:?}", block)),
+                        .with_label(format!("{:?}({})", block, reason)),
                 )?;
             }
         }

@@ -45,7 +45,7 @@ use crate::visualization::generate_dot_graph;
 pub type FpcsOutput<'mir, 'tcx> = free_pcs::FreePcsAnalysis<
     'mir,
     'tcx,
-    BorrowsDomain<'tcx>,
+    BorrowsDomain<'mir, 'tcx>,
     PlaceCapabilitySummary<'mir, 'tcx>,
     PcsEngine<'mir, 'tcx>,
 >;
@@ -67,15 +67,15 @@ impl<'tcx> ReborrowBridge<'tcx> {
     }
 }
 
-impl<'mir, 'tcx> HasExtra<BorrowsDomain<'tcx>> for PlaceCapabilitySummary<'mir, 'tcx> {
+impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<'mir, 'tcx> {
     type ExtraBridge = ReborrowBridge<'tcx>;
-    fn get_extra(&self) -> BorrowsDomain<'tcx> {
+    fn get_extra(&self) -> BorrowsDomain<'mir, 'tcx> {
         self.borrows.clone()
     }
 
     fn bridge_between_stmts(
-        lhs: BorrowsDomain<'tcx>,
-        rhs: BorrowsDomain<'tcx>,
+        lhs: BorrowsDomain<'mir, 'tcx>,
+        rhs: BorrowsDomain<'mir, 'tcx>,
         block: BasicBlock,
     ) -> (Self::ExtraBridge, Self::ExtraBridge) {
         let start = lhs.after.bridge(&rhs.before_start, block);
@@ -83,7 +83,7 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'tcx>> for PlaceCapabilitySummary<'mir, 
         (start, middle)
     }
 
-    fn bridge_terminator(lhs: &BorrowsDomain<'tcx>, rhs: BorrowsDomain<'tcx>, block: BasicBlock) -> Self::ExtraBridge {
+    fn bridge_terminator(lhs: &BorrowsDomain<'mir, 'tcx>, rhs: BorrowsDomain<'mir, 'tcx>, block: BasicBlock) -> Self::ExtraBridge {
         lhs.after.bridge(&rhs.after, block)
     }
 }
