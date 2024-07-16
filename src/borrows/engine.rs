@@ -156,6 +156,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for ExpansionVisitor<'tcx, 'mir, 'state> 
                         if let Operand::Move(arg) = arg {
                             self.state.after.remove_loans_assigned_to(
                                 self.tcx,
+                                &self.borrow_set,
                                 (*arg).into(),
                                 location.block,
                             );
@@ -172,9 +173,13 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for ExpansionVisitor<'tcx, 'mir, 'state> 
 
         if self.preparing {
             for loan in self.loans_invalidated_at(location, self.before) {
-                self.state
-                    .after
-                    .remove_rustc_borrow(self.tcx, &loan, &self.body, location.block);
+                self.state.after.remove_rustc_borrow(
+                    self.tcx,
+                    &loan,
+                    &self.borrow_set,
+                    &self.body,
+                    location.block,
+                );
             }
         }
 
@@ -206,9 +211,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for ExpansionVisitor<'tcx, 'mir, 'state> 
                     let place: utils::Place<'tcx> = (*local).into();
                     let repacker = PlaceRepacker::new(self.body, self.tcx);
                     if place.ty(repacker).ty.is_ref() {
-                        self.state
-                            .after
-                            .make_deref_of_place_old(place, repacker);
+                        self.state.after.make_deref_of_place_old(place, repacker);
                     }
                 }
                 _ => {}
@@ -399,7 +402,7 @@ impl<'mir, 'tcx> JoinSemiLattice for BorrowsDomain<'mir, 'tcx> {
 }
 
 impl<'tcx, 'a> AnalysisDomain<'tcx> for BorrowsEngine<'a, 'tcx> {
-    type Domain = BorrowsDomain<'a,'tcx>;
+    type Domain = BorrowsDomain<'a, 'tcx>;
     type Direction = Forward;
     const NAME: &'static str = "borrows";
 

@@ -174,36 +174,24 @@ impl<'tcx> MaybeOldPlace<'tcx> {
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Borrow<'tcx> {
-    pub index: BorrowIndex,
     pub borrowed_place: Place<'tcx>,
     pub assigned_place: Place<'tcx>,
     pub is_mut: bool,
-    pub location: Location,
 }
 
 impl<'tcx> Borrow<'tcx> {
-    pub fn new(
-        index: BorrowIndex,
-        borrowed_place: Place<'tcx>,
-        assigned_place: Place<'tcx>,
-        is_mut: bool,
-        location: Location,
-    ) -> Self {
+    pub fn new(borrowed_place: Place<'tcx>, assigned_place: Place<'tcx>, is_mut: bool) -> Self {
         Self {
-            index,
             borrowed_place,
             assigned_place,
             is_mut,
-            location,
         }
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         json!({
-            "index": format!("{:?}", self.index),
             "borrowed_place": self.borrowed_place.to_json(repacker),
             "assigned_place": self.assigned_place.to_json(repacker),
-            "location": format!("{:?}", self.location),
             "is_mut": self.is_mut,
         })
     }
@@ -479,9 +467,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     }
 
     pub fn set_latest(&mut self, place: Place<'tcx>, location: Location) {
-        if let Some(old_location) = self.latest.insert(place, location) {
-            eprintln!("{:?}: {:?} -> {:?}", place, old_location, location);
-        }
+        self.latest.insert(place, location);
     }
 
     pub fn get_latest(&self, place: &Place<'tcx>) -> Option<Location> {
@@ -584,7 +570,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn add_borrow(&mut self, tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>, borrow: Borrow<'tcx>) {
         let assigned_place = borrow.assigned_place;
         let deref_of_assigned_place = assigned_place.project_deref(PlaceRepacker::new(body, tcx));
-        self.borrows.insert(borrow);
+        // self.borrows.insert(borrow);
     }
 
     pub fn make_deref_of_place_old(
@@ -613,11 +599,9 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             tcx,
             body,
             Borrow::new(
-                borrow,
                 borrow_set[borrow].borrowed_place.into(),
                 borrow_set[borrow].assigned_place.into(),
                 matches!(borrow_set[borrow].kind, mir::BorrowKind::Mut { .. }),
-                location,
             ),
         );
     }
@@ -648,22 +632,39 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         &mut self,
         tcx: TyCtxt<'tcx>,
         rustc_borrow: &BorrowIndex,
+        borrow_set: &BorrowSet<'tcx>,
         body: &mir::Body<'tcx>,
         block: BasicBlock,
     ) -> bool {
-        let borrow = self.borrows.iter().find(|b| b.index == *rustc_borrow);
-        if let Some(borrow) = borrow {
-            self.remove_borrow(tcx, &borrow.clone(), block)
-        } else {
-            false
-        }
+        let borrow = &borrow_set[*rustc_borrow];
+        let borrow = Borrow::new(
+            borrow.borrowed_place.into(),
+            borrow.assigned_place.into(),
+            matches!(borrow.kind, mir::BorrowKind::Mut { .. }),
+        );
+        self.remove_borrow(tcx, &borrow, block)
     }
     pub fn remove_loans_assigned_to(
         &mut self,
         tcx: TyCtxt<'tcx>,
+        borrow_set: &BorrowSet<'tcx>,
         place: Place<'tcx>,
         block: BasicBlock,
     ) -> FxHashSet<Borrow<'tcx>> {
+        for (idx, borrow) in borrow_set.location_map.iter() {
+            let assigned_place: Place<'tcx> = borrow.assigned_place.into();
+            if assigned_place == place {
+                self.remove_borrow(
+                    tcx,
+                    &Borrow::new(
+                        borrow.borrowed_place.into(),
+                        borrow.assigned_place.into(),
+                        matches!(borrow.kind, mir::BorrowKind::Mut { .. }),
+                    ),
+                    block,
+                );
+            }
+        }
         let (to_remove, to_keep): (FxHashSet<_>, FxHashSet<_>) = self
             .borrows
             .clone()
