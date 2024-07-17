@@ -20,11 +20,6 @@ use crate::{
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
-        for borrow in &other.borrows {
-            if self.borrows.insert(borrow.clone()) {
-                changed = true;
-            }
-        }
         for region_abstraction in &other.region_abstractions {
             if !self.region_abstractions.contains(region_abstraction) {
                 self.region_abstractions.push(region_abstraction.clone());
@@ -244,6 +239,10 @@ impl<'mir, 'tcx> Latest<'mir, 'tcx> {
     }
 }
 
+/// Choses the closes location that appears after or at both locations. If
+/// either location definitely comes after the other, that one is chosen.
+/// Otherwise, we return the first block that dominates both locations. Such a
+/// block definitely exists (presumably it is the block where this join occurs)
 fn join_locations(loc1: Location, loc2: Location, dominators: &Dominators<BasicBlock>) -> Location {
     if loc1.dominates(loc2, dominators) {
         loc1
@@ -263,6 +262,11 @@ fn join_locations(loc1: Location, loc2: Location, dominators: &Dominators<BasicB
 }
 
 impl<'mir, 'tcx> JoinSemiLattice for Latest<'mir, 'tcx> {
+    /// Joins the latest versions of locations, by choosing the closest location
+    /// that appears after (or at) both locations. If either location definitely
+    /// comes after the other, that one is chosen. Otherwise, we return the
+    /// first block that dominates both locations. Such a block definitely
+    /// exists (presumably it is the block where this join occurs)
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
         for (place, other_loc) in other.0.iter() {
@@ -286,7 +290,6 @@ impl<'mir, 'tcx> JoinSemiLattice for Latest<'mir, 'tcx> {
 pub struct BorrowsState<'mir, 'tcx> {
     latest: Latest<'mir, 'tcx>,
     pub reborrows: ReborrowingDag<'tcx>,
-    borrows: FxHashSet<Borrow<'tcx>>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
     pub deref_expansions: DerefExpansions<'tcx>,
     pub logs: Vec<String>,
@@ -458,10 +461,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         changed
     }
 
-    pub fn borrows(&self) -> &FxHashSet<Borrow<'tcx>> {
-        &self.borrows
-    }
-
     pub fn reborrows(&self) -> &ReborrowingDag<'tcx> {
         &self.reborrows
     }
@@ -518,11 +517,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
-        json!({
-            "borrows": self.borrows.iter().map(|borrow| {
-                borrow.to_json(repacker)
-            }).collect::<Vec<_>>(),
-        })
+        json!({ })
     }
 
     pub fn new(body: &'mir mir::Body<'tcx>) -> Self {
@@ -530,7 +525,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             deref_expansions: DerefExpansions::new(),
             latest: Latest::new(body),
             reborrows: ReborrowingDag::new(),
-            borrows: FxHashSet::default(),
             region_abstractions: vec![],
             logs: vec![],
         }
@@ -567,12 +561,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         }
     }
 
-    pub fn add_borrow(&mut self, tcx: TyCtxt<'tcx>, body: &mir::Body<'tcx>, borrow: Borrow<'tcx>) {
-        let assigned_place = borrow.assigned_place;
-        let deref_of_assigned_place = assigned_place.project_deref(PlaceRepacker::new(body, tcx));
-        // self.borrows.insert(borrow);
-    }
-
     pub fn make_deref_of_place_old(
         &mut self,
         place: Place<'tcx>,
@@ -587,31 +575,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         }
     }
 
-    pub fn add_rustc_borrow(
-        &mut self,
-        tcx: TyCtxt<'tcx>,
-        body: &mir::Body<'tcx>,
-        borrow: BorrowIndex,
-        borrow_set: &BorrowSet<'tcx>,
-        location: Location,
-    ) {
-        self.add_borrow(
-            tcx,
-            body,
-            Borrow::new(
-                borrow_set[borrow].borrowed_place.into(),
-                borrow_set[borrow].assigned_place.into(),
-                matches!(borrow_set[borrow].kind, mir::BorrowKind::Mut { .. }),
-            ),
-        );
-    }
-
-    pub fn remove_borrow(
-        &mut self,
-        tcx: TyCtxt<'tcx>,
-        borrow: &Borrow<'tcx>,
-        block: BasicBlock,
-    ) -> bool {
+    pub fn remove_borrow(&mut self, tcx: TyCtxt<'tcx>, borrow: &Borrow<'tcx>, block: BasicBlock) {
         let mut g = UnblockGraph::new();
 
         // TODO: old places
@@ -624,8 +588,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         );
 
         self.apply_unblock_graph(g);
-
-        self.borrows.remove(&borrow.clone())
     }
 
     pub fn remove_rustc_borrow(
@@ -635,7 +597,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         borrow_set: &BorrowSet<'tcx>,
         body: &mir::Body<'tcx>,
         block: BasicBlock,
-    ) -> bool {
+    ) {
         let borrow = &borrow_set[*rustc_borrow];
         let borrow = Borrow::new(
             borrow.borrowed_place.into(),
@@ -650,7 +612,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         borrow_set: &BorrowSet<'tcx>,
         place: Place<'tcx>,
         block: BasicBlock,
-    ) -> FxHashSet<Borrow<'tcx>> {
+    ) {
         for (idx, borrow) in borrow_set.location_map.iter() {
             let assigned_place: Place<'tcx> = borrow.assigned_place.into();
             if assigned_place == place {
@@ -665,18 +627,5 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                 );
             }
         }
-        let (to_remove, to_keep): (FxHashSet<_>, FxHashSet<_>) = self
-            .borrows
-            .clone()
-            .into_iter()
-            .partition(|borrow| borrow.assigned_place == place);
-
-        self.borrows = to_keep;
-
-        for borrow in to_remove.iter() {
-            self.remove_borrow(tcx, borrow, block);
-        }
-
-        to_remove
     }
 }

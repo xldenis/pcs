@@ -183,21 +183,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for ExpansionVisitor<'tcx, 'mir, 'state> 
             }
         }
 
-        // It doesn't matter if this happens before or during the statement, we
-        // arbitrarily choose before
-        // TODO: perhaps dont even keep track of borrows
-        if self.before {
-            if let Some(loan) = self.loan_issued_at_location(location, self.preparing) {
-                self.state.after.add_rustc_borrow(
-                    self.tcx,
-                    self.body,
-                    loan,
-                    &self.borrow_set,
-                    location,
-                );
-            }
-        }
-
         // Stuff in this block will be included as "bridge" ops that are visible
         // to Prusti
         if self.preparing && !self.before {
