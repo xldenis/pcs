@@ -90,10 +90,12 @@ impl<'tcx> DerefExpansions<'tcx> {
                 }
             }
         }
-        self.delete_descendants_of(place);
+        if in_dag {
+            self.delete_descendants_of(place);
+        }
     }
 
-    fn delete(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
+    pub fn delete(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
         let mut changed = false;
         for expansion in self
             .iter()
@@ -102,7 +104,6 @@ impl<'tcx> DerefExpansions<'tcx> {
             .collect::<Vec<_>>()
         {
             if self.0.remove(&expansion) {
-                eprintln!("Deleted expansion: {:?}", expansion);
                 changed = true
             }
         }

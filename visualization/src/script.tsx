@@ -33,6 +33,7 @@ import {
   getPaths,
 } from "./api";
 import { filterNodesAndEdges } from "./mir_graph";
+import { Selection, PCSGraphSelector } from "./components/PCSGraphSelector";
 
 const layoutSizedNodes = (
   nodes: DagreInputNode<BasicBlockData>[],
@@ -117,6 +118,7 @@ async function main() {
   }
 
   const App: React.FC<{}> = () => {
+    const [selected, setSelected] = useState<Selection>("after");
     const [pathData, setPathData] = useState<PathData | null>(null);
     const [currentPoint, setCurrentPoint] = useState<CurrentPoint>({
       type: "stmt",
@@ -175,7 +177,7 @@ async function main() {
         dotGraph.innerHTML = "";
         return;
       }
-      const dotFilePath = `data/${selectedFunction}/block_${currentPoint.block}_stmt_${currentPoint.stmt}.dot`;
+      const dotFilePath = `data/${selectedFunction}/block_${currentPoint.block}_stmt_${currentPoint.stmt}_${selected}.dot`;
       const dotData = await fetchDotFile(dotFilePath);
       Viz.instance().then(function (viz) {
         dotGraph.innerHTML = "";
@@ -194,7 +196,7 @@ async function main() {
 
     useEffect(() => {
       loadPCSDotGraph();
-    }, [currentPoint, selectedFunction]);
+    }, [currentPoint, selectedFunction, selected]);
 
     useEffect(() => {
       if (selectedFunction) {
@@ -479,6 +481,7 @@ async function main() {
             <PCSActions pathData={pathData} />
           </>
         )}
+        <PCSGraphSelector selected={selected} onSelect={setSelected} />
       </div>
     );
   };

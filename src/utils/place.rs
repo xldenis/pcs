@@ -47,10 +47,15 @@ impl<'tcx> Place<'tcx> {
         Self(PlaceRef { local, projection }, DebugInfo::new_static())
     }
 
-    pub fn belongs_to_fpcs(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    // pub fn belongs_to_fpcs(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    //     !self.iter_projections().any(|(place, elem)| {
+    //         let place: Place<'tcx> = place.into();
+    //         place.is_ref(body, tcx)
+    //     })
+    // }
+    pub fn is_owned(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
         !self.iter_projections().any(|(place, elem)| {
-            let place: Place<'tcx> = place.into();
-            place.is_ref(body, tcx)
+            elem == ProjectionElem::Deref && !place.ty(body, tcx).ty.is_box()
         })
     }
 

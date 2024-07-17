@@ -31,8 +31,8 @@ use rustc_interface::{
 
 use crate::{
     borrows::{
-        deref_expansions::DerefExpansions,
         borrows_state::BorrowsState,
+        deref_expansions::DerefExpansions,
         domain::{MaybeOldPlace, Reborrow},
         engine::{BorrowsEngine, ReborrowAction},
     },
@@ -196,15 +196,51 @@ impl<'tcx> UnblockGraph<'tcx> {
             .0
             .iter()
             .cloned()
-            .filter(|edge| !path.contains(&edge.block))
+            .filter(|edge| {
+                !path.contains(&edge.block)
+                    || edge
+                        .blocked
+                        .location()
+                        .map_or(false, |loc| !path.contains(&loc.block))
+                    || edge
+                        .blocker
+                        .location()
+                        .map_or(false, |loc| !path.contains(&loc.block))
+            })
             .collect::<Vec<_>>();
         for edge in edges_to_kill {
             self.remove_edge_and_trim(&edge);
         }
+        let mut blocking_places = self.blocking_places().clone();
+        for place in blocking_places {
+            let blocking_ref_edges = self
+                .edges_blocked_by(place)
+                .into_iter()
+                .filter(|e| e.edge_type == UnblockEdgeType::Reborrow { is_mut: true })
+                .cloned()
+                .collect::<Vec<_>>();
+            if blocking_ref_edges.len() < 2 {
+                continue;
+            }
+            let mut candidate = blocking_ref_edges[0].clone();
+            for edge in &blocking_ref_edges[1..] {
+                if path.iter().position(|b| b == &edge.block)
+                    > path.iter().position(|b| b == &candidate.block)
+                {
+                    candidate = edge.clone();
+                }
+            }
+            for edge in blocking_ref_edges {
+                eprintln!("Checking edge: {:?}", edge);
+                if edge != candidate {
+                    eprintln!("Killing edge: {:?}", edge);
+                    self.remove_edge_and_trim(&edge);
+                }
+            }
+        }
     }
 
     fn remove_edge_and_trim(&mut self, edge: &UnblockEdge<'tcx>) {
-        eprintln!("Kill {:?}", edge);
         self.0.remove(edge);
         if self.edges_blocking(edge.blocked).is_empty() {
             let edges_to_kill = self
@@ -224,6 +260,13 @@ impl<'tcx> UnblockGraph<'tcx> {
 
     fn edges_blocking(&self, place: MaybeOldPlace<'tcx>) -> Vec<&UnblockEdge<'tcx>> {
         self.0.iter().filter(|e| e.blocked == place).collect()
+    }
+
+    fn blocked_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        self.0.iter().map(|e| e.blocked).collect()
+    }
+    fn blocking_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        self.0.iter().map(|e| e.blocker).collect()
     }
 
     pub fn actions(self) -> Vec<UnblockAction<'tcx>> {
@@ -393,34 +436,6 @@ impl<'tcx> UnblockGraph<'tcx> {
         );
         self.unblock_place(reborrow.assigned_place, borrows, reborrow.location.block);
         // TODO: confirm right block
-    }
-}
-
-impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
-    fn apply_reborrow_actions_to_fpcs<'state>(
-        &self,
-        state: &'state mut CapabilitySummary<'tcx>,
-        actions: Vec<ReborrowAction<'tcx>>,
-    ) {
-        for action in actions {
-            match action {
-                ReborrowAction::AddReborrow(_) => {}
-                ReborrowAction::RemoveReborrow(bw) => match bw.assigned_place {
-                    MaybeOldPlace::Current { place, .. } => {
-                        if let CapabilityLocal::Allocated(cap) = &mut state[place.local] {
-                            let related = cap.find_all_related(place, None);
-                            // todo!("Found {related:?} for {place:?}");
-                            if related.relation == PlaceOrdering::Suffix {
-                                cap.collapse(related.get_from(), place, self.cgx.rp);
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                ReborrowAction::ExpandPlace(..) => {}
-                ReborrowAction::CollapsePlace(..) => {}
-            }
-        }
     }
 }
 

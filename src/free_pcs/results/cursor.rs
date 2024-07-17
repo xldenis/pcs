@@ -126,7 +126,12 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Doma
             D::bridge_between_stmts(extra_after, self.cursor.get().get_extra(), location.block);
         FreePcsLocation {
             location,
-            state: c.after.clone(),
+            states: CapabilitySummaries {
+                before_start: c.before_start.clone(),
+                before_after: c.before_after.clone(),
+                start: c.start.clone(),
+                after: c.after.clone(),
+            },
             repacks_start,
             repacks_middle,
             extra_start,
@@ -158,7 +163,12 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Doma
                         block: succ,
                         statement_index: 0,
                     },
-                    state: to.after.clone(),
+                    states: CapabilitySummaries {
+                        before_start: to.before_start.clone(),
+                        before_after: to.before_after.clone(),
+                        start: to.start.clone(),
+                        after: to.after.clone(),
+                    },
                     repacks_start: state.after.bridge(&to.after, rp),
                     repacks_middle: Vec::new(),
                     extra: entry_set.get_extra(),
@@ -196,14 +206,22 @@ pub struct FreePcsBasicBlock<'tcx, T, A> {
 }
 
 #[derive(Debug)]
+pub struct CapabilitySummaries<'tcx> {
+    pub before_start: CapabilitySummary<'tcx>,
+    pub before_after: CapabilitySummary<'tcx>,
+    pub start: CapabilitySummary<'tcx>,
+    pub after: CapabilitySummary<'tcx>,
+}
+
+
+#[derive(Debug)]
 pub struct FreePcsLocation<'tcx, T, A> {
     pub location: Location,
     /// Repacks before the statement
     pub repacks_start: Vec<RepackOp<'tcx>>,
     /// Repacks in the middle of the statement
     pub repacks_middle: Vec<RepackOp<'tcx>>,
-    /// State after the statement
-    pub state: CapabilitySummary<'tcx>,
+    pub states: CapabilitySummaries<'tcx>,
     pub extra_start: A,
     pub extra_middle: Option<A>,
     pub extra: T,

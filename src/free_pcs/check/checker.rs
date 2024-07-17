@@ -72,7 +72,7 @@ pub(crate) fn check<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Anal
         TripleWalker::apply(&mut fpcs, rp, Stage::Main).visit_terminator(data.terminator(), loc);
         // Consistency
         fpcs.consistency_check(rp);
-        assert_eq!(fpcs, fpcs_after.state);
+        assert_eq!(fpcs, fpcs_after.states.after);
 
         let fpcs_end = cursor.terminator();
 
@@ -87,7 +87,7 @@ pub(crate) fn check<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Anal
                     rp,
                 );
             }
-            assert_eq!(from, succ.state);
+            assert_eq!(from, succ.states.after);
         }
     }
 }

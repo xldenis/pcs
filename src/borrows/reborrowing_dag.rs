@@ -18,6 +18,9 @@ pub struct ReborrowingDag<'tcx> {
 }
 
 impl<'tcx> ReborrowingDag<'tcx> {
+    pub fn assigned_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        self.reborrows.iter().map(|r| r.assigned_place).collect()
+    }
     pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
         let mut new = FxHashSet::default();
         for mut reborrow in self.reborrows.clone() {
@@ -31,9 +34,13 @@ impl<'tcx> ReborrowingDag<'tcx> {
         }
         self.reborrows = new;
     }
-    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+
+    pub fn reborrows_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
         self.reborrows
-            .retain(|reborrow| path.contains(&reborrow.location.block));
+            .iter()
+            .filter(|r| r.assigned_place == place)
+            .cloned()
+            .collect()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Reborrow<'tcx>> {
@@ -87,7 +94,10 @@ impl<'tcx> ReborrowingDag<'tcx> {
         candidates
     }
 
-    pub fn get_places_blocking(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<MaybeOldPlace<'tcx>> {
+    pub fn get_places_blocking(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.reborrows
             .iter()
             .filter(|r| r.blocked_place == place)
@@ -95,7 +105,10 @@ impl<'tcx> ReborrowingDag<'tcx> {
             .collect()
     }
 
-    pub fn get_places_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<MaybeOldPlace<'tcx>> {
+    pub fn get_places_blocked_by(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.reborrows
             .iter()
             .filter(|r| r.assigned_place == place)
@@ -157,7 +170,7 @@ impl<'tcx> ReborrowingDag<'tcx> {
         changed
     }
 
-    pub fn kill_reborrow(
+    pub fn kill_reborrows(
         &mut self,
         blocked_place: MaybeOldPlace<'tcx>,
         assigned_place: MaybeOldPlace<'tcx>,
@@ -173,5 +186,20 @@ impl<'tcx> ReborrowingDag<'tcx> {
             }
         }
         changed
+    }
+
+    pub fn move_reborrows(
+        &mut self,
+        orig_assigned_place: MaybeOldPlace<'tcx>,
+        new_assigned_place: MaybeOldPlace<'tcx>,
+    ) {
+        let mut new = FxHashSet::default();
+        for mut reborrow in self.reborrows.clone() {
+            if reborrow.assigned_place == orig_assigned_place {
+                reborrow.assigned_place = new_assigned_place;
+            }
+            new.insert(reborrow);
+        }
+        self.reborrows = new;
     }
 }

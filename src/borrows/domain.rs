@@ -179,26 +179,41 @@ impl<'tcx> DerefExpansion<'tcx> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Latest<'mir, 'tcx>(FxHashMap<Place<'tcx>, Location>, &'mir mir::Body<'tcx>);
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Latest<'tcx>(FxHashMap<Place<'tcx>, Location>);
 
-impl<'mir, 'tcx> PartialEq for Latest<'mir, 'tcx> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<'mir, 'tcx> Eq for Latest<'mir, 'tcx> {}
-
-impl<'mir, 'tcx> Latest<'mir, 'tcx> {
-    pub fn new(body: &'mir mir::Body<'tcx>) -> Self {
-        Self(FxHashMap::default(), body)
+impl<'tcx> Latest<'tcx> {
+    pub fn new() -> Self {
+        Self(FxHashMap::default())
     }
     pub fn get(&self, place: &Place<'tcx>) -> Option<&Location> {
         self.0.get(place)
     }
     pub fn insert(&mut self, place: Place<'tcx>, location: Location) -> Option<Location> {
         self.0.insert(place, location)
+    }
+
+    /// Joins the latest versions of locations, by choosing the closest location
+    /// that appears after (or at) both locations. If either location definitely
+    /// comes after the other, that one is chosen. Otherwise, we return the
+    /// first block that dominates both locations. Such a block definitely
+    /// exists (presumably it is the block where this join occurs)
+    pub fn join(&mut self, other: &Self, body: &mir::Body<'tcx>) -> bool {
+        let mut changed = false;
+        for (place, other_loc) in other.0.iter() {
+            if let Some(self_loc) = self.get(place) {
+                let dominators = body.basic_blocks.dominators();
+                let new_loc = join_locations(*self_loc, *other_loc, dominators);
+                if new_loc != *self_loc {
+                    self.insert(*place, new_loc);
+                    changed = true;
+                }
+            } else {
+                self.insert(*place, *other_loc);
+                changed = true;
+            }
+        }
+        changed
     }
 }
 
@@ -221,31 +236,6 @@ fn join_locations(loc1: Location, loc2: Location, dominators: &Dominators<BasicB
             }
         }
         unreachable!()
-    }
-}
-
-impl<'mir, 'tcx> JoinSemiLattice for Latest<'mir, 'tcx> {
-    /// Joins the latest versions of locations, by choosing the closest location
-    /// that appears after (or at) both locations. If either location definitely
-    /// comes after the other, that one is chosen. Otherwise, we return the
-    /// first block that dominates both locations. Such a block definitely
-    /// exists (presumably it is the block where this join occurs)
-    fn join(&mut self, other: &Self) -> bool {
-        let mut changed = false;
-        for (place, other_loc) in other.0.iter() {
-            if let Some(self_loc) = self.get(place) {
-                let dominators = self.1.basic_blocks.dominators();
-                let new_loc = join_locations(*self_loc, *other_loc, dominators);
-                if new_loc != *self_loc {
-                    self.insert(*place, new_loc);
-                    changed = true;
-                }
-            } else {
-                self.insert(*place, *other_loc);
-                changed = true;
-            }
-        }
-        changed
     }
 }
 

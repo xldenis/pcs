@@ -44,26 +44,35 @@ impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
         if self.deref_expansions.join(&other.deref_expansions) {
             changed = true;
         }
-        if self.latest.join(&other.latest) {
+        if self.latest.join(&other.latest, self.body) {
             changed = true;
         }
         changed
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct BorrowsState<'mir, 'tcx> {
-    latest: Latest<'mir, 'tcx>,
+    body: &'mir mir::Body<'tcx>,
+    latest: Latest<'tcx>,
     pub reborrows: ReborrowingDag<'tcx>,
     pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
     pub deref_expansions: DerefExpansions<'tcx>,
     pub logs: Vec<String>,
 }
 
-impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
-    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
-        self.reborrows.filter_for_path(path);
+impl<'mir, 'tcx> PartialEq for BorrowsState<'mir, 'tcx> {
+    fn eq(&self, other: &Self) -> bool {
+        self.reborrows == other.reborrows
+            && self.deref_expansions == other.deref_expansions
+            && self.latest == other.latest
     }
+}
+
+impl<'mir, 'tcx> Eq for BorrowsState<'mir, 'tcx> {
+}
+
+impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn bridge(&self, to: &Self, block: BasicBlock) -> ReborrowBridge<'tcx> {
         let added_reborrows: FxHashSet<Reborrow<'tcx>> = to
             .reborrows()
@@ -144,8 +153,14 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         result
     }
 
-    // TODO: This is not precise, consider each location separately
     pub fn trim_roots(&mut self) {
+        while self.trim_roots_pass() {
+
+        }
+    }
+
+    // TODO: This is not precise, consider each location separately
+    pub fn trim_roots_pass(&mut self) -> bool {
         let roots: FxHashSet<_> = self
             .reborrows
             .roots()
@@ -156,11 +171,16 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                 _ => None,
             })
             .collect();
+        let mut changed = false;
         for root in roots {
             // TODO: deref expansions
-            self.reborrows
-                .kill_reborrows_assigned_to(MaybeOldPlace::OldPlace(root));
+            if self.reborrows
+                .kill_reborrows_assigned_to(MaybeOldPlace::OldPlace(root))
+            {
+                changed = true;
+            }
         }
+        changed
     }
 
     /// Returns places in the PCS that are reborrowed
@@ -185,7 +205,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     assigned_place,
                     ..
                 } => {
-                    if self.reborrows.kill_reborrow(blocked_place, assigned_place) {
+                    if self.reborrows.kill_reborrows(blocked_place, assigned_place) {
                         changed = true;
                     }
                 }
@@ -229,6 +249,21 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.reborrows.kill_reborrows_blocking(place);
     }
 
+    pub fn move_reborrows(
+        &mut self,
+        orig_assigned_place: Place<'tcx>,
+        new_assigned_place: Place<'tcx>,
+    ) {
+        self.reborrows.move_reborrows(
+            MaybeOldPlace::Current {
+                place: orig_assigned_place,
+            },
+            MaybeOldPlace::Current {
+                place: new_assigned_place,
+            },
+        );
+    }
+
     pub fn add_reborrow(
         &mut self,
         blocked_place: Place<'tcx>,
@@ -260,8 +295,9 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
 
     pub fn new(body: &'mir mir::Body<'tcx>) -> Self {
         Self {
+            body,
             deref_expansions: DerefExpansions::new(),
-            latest: Latest::new(body),
+            latest: Latest::new(),
             reborrows: ReborrowingDag::new(),
             region_abstractions: vec![],
             logs: vec![],

@@ -59,6 +59,13 @@ pub struct ReborrowBridge<'tcx> {
 }
 
 impl<'tcx> ReborrowBridge<'tcx> {
+    pub fn new() -> ReborrowBridge<'tcx> {
+        ReborrowBridge {
+            expands: FxHashSet::default(),
+            added_reborrows: FxHashSet::default(),
+            ug: UnblockGraph::new(),
+        }
+    }
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         json!({
             "expands": self.expands.iter().map(|e| e.to_json(repacker)).collect::<Vec<_>>(),
@@ -89,7 +96,7 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
         rhs: BorrowsDomain<'mir, 'tcx>,
         block: BasicBlock,
     ) -> Self::ExtraBridge {
-        lhs.after.bridge(&rhs.after, block)
+        ReborrowBridge::new()
     }
 }
 
@@ -124,22 +131,6 @@ pub fn run_free_pcs<'mir, 'tcx>(
         for (block, data) in mir.body.basic_blocks.iter_enumerated() {
             let pcs_block = fpcs_analysis.get_all_for_bb(block);
             for (statement_index, statement) in pcs_block.statements.iter().enumerate() {
-                let file_path = format!(
-                    "{}/block_{}_stmt_{}.dot",
-                    &dir_path,
-                    block.index(),
-                    statement_index
-                );
-                generate_dot_graph(
-                    statement.location,
-                    rp,
-                    &statement.state,
-                    &statement.extra.after,
-                    &mir.borrow_set,
-                    &input_facts,
-                    &file_path,
-                )
-                .expect("Failed to generate DOT graph");
                 let borrows_file_path = format!(
                     "{}/block_{}_stmt_{}_borrows.json",
                     &dir_path,
@@ -150,6 +141,38 @@ pub fn run_free_pcs<'mir, 'tcx>(
                     serde_json::to_string_pretty(&statement.extra.to_json(rp)).unwrap();
                 std::fs::write(&borrows_file_path, borrows_json)
                     .expect("Failed to write borrows to JSON file");
+                for (name, fpcs, dag) in vec![
+                    (
+                        "before_start",
+                        &statement.states.before_start,
+                        &statement.extra.before_start,
+                    ),
+                    (
+                        "before_after",
+                        &statement.states.before_after,
+                        &statement.extra.before_after,
+                    ),
+                    ("start", &statement.states.start, &statement.extra.start),
+                    ("after", &statement.states.after, &statement.extra.after),
+                ] {
+                    let file_path = format!(
+                        "{}/block_{}_stmt_{}_{}.dot",
+                        &dir_path,
+                        block.index(),
+                        statement_index,
+                        name
+                    );
+                    generate_dot_graph(
+                        statement.location,
+                        rp,
+                        &fpcs,
+                        &dag,
+                        &mir.borrow_set,
+                        &input_facts,
+                        &file_path,
+                    )
+                    .expect("Failed to generate DOT graph");
+                }
             }
         }
     }
