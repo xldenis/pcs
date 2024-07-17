@@ -32,7 +32,8 @@ use rustc_interface::{
 use crate::{
     borrows::{
         deref_expansions::DerefExpansions,
-        domain::{BorrowsState, MaybeOldPlace, Reborrow},
+        borrows_state::BorrowsState,
+        domain::{MaybeOldPlace, Reborrow},
         engine::{BorrowsEngine, ReborrowAction},
     },
     free_pcs::{

@@ -20,7 +20,8 @@ pub mod visualization;
 use std::{collections::HashMap, fs::create_dir_all, rc::Rc};
 
 use borrows::{
-    domain::{BorrowsState, DerefExpansion, Reborrow},
+    borrows_state::BorrowsState,
+    domain::{DerefExpansion, Reborrow},
     engine::{BorrowsDomain, ReborrowAction},
 };
 use combined_pcs::{
@@ -32,7 +33,7 @@ use rustc_interface::{
     dataflow::Analysis,
     index::IndexVec,
     middle::{
-        mir::{Body, Promoted, START_BLOCK, BasicBlock},
+        mir::{BasicBlock, Body, Promoted, START_BLOCK},
         ty::TyCtxt,
     },
 };
@@ -83,7 +84,11 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
         (start, middle)
     }
 
-    fn bridge_terminator(lhs: &BorrowsDomain<'mir, 'tcx>, rhs: BorrowsDomain<'mir, 'tcx>, block: BasicBlock) -> Self::ExtraBridge {
+    fn bridge_terminator(
+        lhs: &BorrowsDomain<'mir, 'tcx>,
+        rhs: BorrowsDomain<'mir, 'tcx>,
+        block: BasicBlock,
+    ) -> Self::ExtraBridge {
         lhs.after.bridge(&rhs.after, block)
     }
 }

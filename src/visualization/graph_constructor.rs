@@ -1,9 +1,10 @@
 use crate::{
-    borrows::domain::{Borrow, BorrowsState, MaybeOldPlace, PlaceSnapshot, RegionAbstraction},
+    borrows::borrows_state::BorrowsState,
+    borrows::domain::{Borrow, MaybeOldPlace, RegionAbstraction},
     combined_pcs::{UnblockEdgeType, UnblockGraph},
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
-    utils::{Place, PlaceRepacker},
+    utils::{Place, PlaceRepacker, PlaceSnapshot},
 };
 use serde_derive::Serialize;
 use std::{

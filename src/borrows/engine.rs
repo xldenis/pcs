@@ -24,14 +24,15 @@ use rustc_interface::{
 use serde_json::{json, Value};
 
 use crate::{
-    borrows::domain::{PlaceSnapshot, RegionAbstraction},
+    borrows::domain::RegionAbstraction,
     combined_pcs::UnblockGraph,
     rustc_interface,
-    utils::{self, PlaceRepacker},
+    utils::{self, PlaceRepacker, PlaceSnapshot},
     ReborrowBridge,
 };
 
-use super::domain::{Borrow, BorrowsState, DerefExpansion, MaybeOldPlace, Reborrow};
+use super::domain::{Borrow, DerefExpansion, MaybeOldPlace, Reborrow};
+use super::borrows_state::BorrowsState;
 
 pub struct BorrowsEngine<'mir, 'tcx> {
     tcx: TyCtxt<'tcx>,

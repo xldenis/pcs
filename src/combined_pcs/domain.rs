@@ -28,7 +28,7 @@ use crate::{
 };
 
 use super::{PcsContext, PcsEngine, UnblockGraph};
-use crate::borrows::domain::BorrowsState;
+use crate::borrows::borrows_state::BorrowsState;
 
 #[derive(Clone)]
 pub struct PlaceCapabilitySummary<'a, 'tcx> {

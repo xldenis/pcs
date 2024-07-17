@@ -8,6 +8,7 @@ pub mod place;
 pub(crate) mod repacker;
 pub mod display;
 mod mutable;
+pub mod place_snapshot;
 mod root_place;
 // pub mod ty;
 pub mod r#const;
@@ -15,4 +16,5 @@ pub mod debug_info;
 
 pub use mutable::*;
 pub use place::*;
+pub use place_snapshot::*;
 pub use repacker::*;

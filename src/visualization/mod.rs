@@ -9,11 +9,12 @@ pub mod graph_constructor;
 pub mod mir_graph;
 
 use crate::{
-    borrows::domain::{Borrow, BorrowsState, MaybeOldPlace, PlaceSnapshot, RegionAbstraction},
+    borrows::domain::{Borrow, MaybeOldPlace, RegionAbstraction},
+    borrows::borrows_state::BorrowsState,
     combined_pcs::UnblockGraph,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
-    utils::{Place, PlaceRepacker},
+    utils::{Place, PlaceRepacker, place_snapshot::PlaceSnapshot},
 };
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
