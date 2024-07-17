@@ -22,13 +22,10 @@ pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);
 impl<'tcx> DerefExpansions<'tcx> {
     pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
         let mut new: FxHashSet<DerefExpansion<'tcx>> = FxHashSet::default();
-        for expansion in self.0.clone() {
+        for mut expansion in self.0.clone() {
             let value = if expansion.base.is_current() && expansion.base.place() == place {
-                DerefExpansion::new(
-                    MaybeOldPlace::new(place, Some(location)),
-                    expansion.expansion,
-                    expansion.location,
-                )
+                expansion.make_base_old(location);
+                expansion
             } else {
                 expansion
             };
@@ -41,20 +38,21 @@ impl<'tcx> DerefExpansions<'tcx> {
         Self(FxHashSet::default())
     }
 
-    pub fn get(&self, place: MaybeOldPlace<'tcx>) -> Option<Vec<Place<'tcx>>> {
+    pub fn remove(&mut self, expansion: &DerefExpansion<'tcx>) -> bool {
+        self.0.remove(expansion)
+    }
+
+    pub fn get(&self, place: MaybeOldPlace<'tcx>) -> Option<Vec<MaybeOldPlace<'tcx>>> {
         self.0
             .iter()
             .find(|expansion| expansion.base == place)
-            .map(|expansion| expansion.expansion.clone())
+            .map(|expansion| expansion.expansion())
     }
 
     pub fn get_parents(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.0
             .iter()
-            .filter(|expansion| {
-                expansion.base.location() == place.location()
-                    && expansion.expansion.contains(&place.place())
-            })
+            .filter(|expansion| expansion.expansion().contains(&place))
             .map(|expansion| expansion.base)
             .collect()
     }
@@ -76,7 +74,7 @@ impl<'tcx> DerefExpansions<'tcx> {
             }
             if in_dag {
                 let origin_place = MaybeOldPlace::new(place, place_location);
-                if !self.contains_projection_from(origin_place) {
+                if !self.contains_expansion_from(origin_place) {
                     let expansion = match elem {
                         mir::ProjectionElem::Downcast(_, _) | // For downcast we can't blindly expand since we don't know which instance, use this specific one
                         mir::ProjectionElem::Deref // For Box we don't want to expand fields because it's actually an ADT w/ a ptr inside
@@ -104,6 +102,7 @@ impl<'tcx> DerefExpansions<'tcx> {
             .collect::<Vec<_>>()
         {
             if self.0.remove(&expansion) {
+                eprintln!("Deleted expansion: {:?}", expansion);
                 changed = true
             }
         }
@@ -111,6 +110,7 @@ impl<'tcx> DerefExpansions<'tcx> {
     }
 
     pub fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
+        eprintln!("Deleting descendants of {:?}", place);
         let mut changed = false;
         for expansion in self
             .iter()
@@ -118,8 +118,7 @@ impl<'tcx> DerefExpansions<'tcx> {
             .cloned()
             .collect::<Vec<_>>()
         {
-            for e in expansion.expansion.iter() {
-                let p = MaybeOldPlace::new(*e, None);
+            for p in expansion.expansion() {
                 if self.delete_descendants_of(p) {
                     changed = true;
                 }
@@ -130,6 +129,11 @@ impl<'tcx> DerefExpansions<'tcx> {
             if self.0.remove(&expansion) {
                 changed = true;
             }
+        }
+        if changed {
+            eprintln!("Deleted descendants of {:?}", place);
+        } else {
+            eprintln!("No descendants deleted of {:?}", place);
         }
         changed
     }
@@ -151,7 +155,7 @@ impl<'tcx> DerefExpansions<'tcx> {
         self.0.iter()
     }
 
-    pub fn contains_projection_from(&self, place: MaybeOldPlace<'tcx>) -> bool {
+    pub fn contains_expansion_from(&self, place: MaybeOldPlace<'tcx>) -> bool {
         self.0.iter().any(|expansion| expansion.base == place)
     }
 

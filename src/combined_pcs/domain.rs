@@ -76,6 +76,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                         crate::borrows::domain::MaybeOldPlace::Current { place: root },
                         &self.borrows.after,
                         self.block, // TODO: Check
+                        "its unallocated <JOIN>".to_string(),
                     );
                 }
                 CapabilityLocal::Allocated(projs) => {
@@ -84,6 +85,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                             crate::borrows::domain::MaybeOldPlace::Current { place: root },
                             &self.borrows.after,
                             self.block, // TODO: Check
+                            "projections dont contain this key <JOIN>".to_string(),
                         );
                     }
                 }

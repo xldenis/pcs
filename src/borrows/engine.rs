@@ -122,12 +122,12 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
 impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
     fn visit_operand(&mut self, operand: &Operand<'tcx>, location: Location) {
         self.super_operand(operand, location);
-        if self.before {
-            // TODO: also self.preparing?
+        if self.before && self.preparing {
             match operand {
                 Operand::Copy(place) | Operand::Move(place) => {
                     let place: utils::Place<'tcx> = (*place).into();
                     if place.is_owned(self.body, self.tcx) && place.is_ref(self.body, self.tcx) {
+                        eprintln!("{location:?} Expanding place: {:?}", place);
                         self.ensure_expansion_to(place.project_deref(self.repacker()), location);
                     } else {
                         self.ensure_expansion_to(place, location);
@@ -185,7 +185,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     let repacker = PlaceRepacker::new(self.body, self.tcx);
                     if place.ty(repacker).ty.is_ref() {
                         self.state.after.make_deref_of_place_old(place, repacker);
-                        // self.state.after.deref_expansions.delete(place.into());
+                        self.state.after.deref_expansions.delete(place.into());
                     }
                 }
                 _ => {}
@@ -250,6 +250,8 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     from,
                                     PlaceRepacker::new(self.body, self.tcx),
                                 );
+
+                                self.state.after.deref_expansions.delete(from.into());
                             }
                         }
                         Rvalue::Use(Operand::Copy(from)) => {

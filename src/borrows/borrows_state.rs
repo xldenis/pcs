@@ -69,8 +69,7 @@ impl<'mir, 'tcx> PartialEq for BorrowsState<'mir, 'tcx> {
     }
 }
 
-impl<'mir, 'tcx> Eq for BorrowsState<'mir, 'tcx> {
-}
+impl<'mir, 'tcx> Eq for BorrowsState<'mir, 'tcx> {}
 
 impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn bridge(&self, to: &Self, block: BasicBlock) -> ReborrowBridge<'tcx> {
@@ -108,7 +107,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                 ug.kill_reborrow(
                     *reborrow,
                     self,
-                    "it doesn't exist in state to bridge".to_string(),
+                    "reborrow doesn't exist in state to bridge".to_string(),
                 );
             }
         }
@@ -118,7 +117,16 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                 .deref_expansions
                 .has_expansion_at_location(exp.base.place(), exp.location)
             {
-                ug.unblock_place(exp.base, self, exp.location.block);
+                ug.unblock_place(
+                    exp.base,
+                    self,
+                    exp.location.block,
+                    format!(
+                        "deref expansion doesn't exist for {:?} at {:?}",
+                        exp.base.place(),
+                        exp.location
+                    ),
+                );
             }
         }
 
@@ -153,31 +161,47 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         result
     }
 
-    pub fn trim_roots(&mut self) {
-        while self.trim_roots_pass() {
+    pub fn remove_dangling_old_places(&mut self) {
+        while self.remove_dangling_old_places_pass() {}
+    }
 
-        }
+    pub fn is_leaf(&self, place: MaybeOldPlace<'tcx>) -> bool {
+        self.reborrows.get_places_blocking(place).is_empty()
+            && !self.deref_expansions.contains_expansion_from(place)
+    }
+
+    pub fn leaves(&self) -> (FxHashSet<&Reborrow<'tcx>>, FxHashSet<&DerefExpansion<'tcx>>) {
+        let mut reborrows: FxHashSet<_> = self.reborrows.iter().collect();
+        let mut deref_expansions: FxHashSet<_> = self.deref_expansions.iter().collect();
+        reborrows.retain(|rb| self.is_leaf(rb.assigned_place));
+        deref_expansions.retain(|de| de.expansion().iter().all(|e| self.is_leaf(*e)));
+        return (reborrows, deref_expansions);
     }
 
     // TODO: This is not precise, consider each location separately
-    pub fn trim_roots_pass(&mut self) -> bool {
-        let roots: FxHashSet<_> = self
-            .reborrows
-            .roots()
-            .into_iter()
-            .flat_map(|place| self.roots_of(place))
-            .flat_map(|place| match place {
-                MaybeOldPlace::OldPlace(place) => Some(place),
-                _ => None,
-            })
-            .collect();
+    pub fn remove_dangling_old_places_pass(&mut self) -> bool {
         let mut changed = false;
-        for root in roots {
-            // TODO: deref expansions
-            if self.reborrows
-                .kill_reborrows_assigned_to(MaybeOldPlace::OldPlace(root))
-            {
-                changed = true;
+        let (reborrows, deref_expansions) = self.leaves();
+        let mut reborrows = reborrows
+            .into_iter()
+            .cloned()
+            .collect::<FxHashSet<Reborrow<'tcx>>>();
+        let mut deref_expansions = deref_expansions
+            .into_iter()
+            .cloned()
+            .collect::<FxHashSet<DerefExpansion<'tcx>>>();
+        for rb in reborrows {
+            if !rb.assigned_place.is_current() {
+                if self.reborrows.remove(&rb) {
+                    changed = true;
+                }
+            }
+        }
+        for de in deref_expansions {
+            if !de.base.is_current() {
+                if self.deref_expansions.remove(&de) {
+                    changed = true;
+                }
             }
         }
         changed
@@ -343,9 +367,8 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         if let Some(location) = self.get_latest(&place) {
             self.reborrows
                 .make_place_old(place.project_deref(repacker), location);
-            self.deref_expansions
-                .make_place_old(place.project_deref(repacker), location);
-            self.trim_roots();
+            self.deref_expansions.make_place_old(place, location);
+            self.remove_dangling_old_places();
         }
     }
 
@@ -359,6 +382,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             },
             &self,
             block,
+            "remove borrow".to_string(),
         );
 
         self.apply_unblock_graph(g);

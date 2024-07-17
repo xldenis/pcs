@@ -158,7 +158,7 @@ impl<'tcx> Borrow<'tcx> {
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct DerefExpansion<'tcx> {
     pub base: MaybeOldPlace<'tcx>,
-    pub expansion: Vec<Place<'tcx>>,
+    expansion: Vec<Place<'tcx>>,
     pub location: Location,
 }
 
@@ -171,11 +171,26 @@ impl<'tcx> DerefExpansion<'tcx> {
         }
     }
 
+    pub fn make_base_old(&mut self, place_location: Location) {
+        assert!(self.base.is_current());
+        self.base = MaybeOldPlace::OldPlace(PlaceSnapshot {
+            place: self.base.place(),
+            at: place_location,
+        });
+    }
+
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         json!({
             "base": self.base.to_json(repacker),
             "expansion": self.expansion.iter().map(|p| p.to_json(repacker)).collect::<Vec<_>>(),
         })
+    }
+
+    pub fn expansion(&self) -> Vec<MaybeOldPlace<'tcx>> {
+        self.expansion
+            .iter()
+            .map(|p| MaybeOldPlace::new(*p, self.base.location()))
+            .collect()
     }
 }
 
@@ -243,7 +258,8 @@ use crate::utils::PlaceRepacker;
 use serde_json::{json, Value};
 
 use super::{
-    borrows_state::BorrowsState, deref_expansions::DerefExpansions, engine::ReborrowAction, reborrowing_dag::ReborrowingDag
+    borrows_state::BorrowsState, deref_expansions::DerefExpansions, engine::ReborrowAction,
+    reborrowing_dag::ReborrowingDag,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]

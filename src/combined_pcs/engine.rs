@@ -380,7 +380,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
     ) {
-        self.unblock_place(place, borrows, block);
+        self.unblock_place(place, borrows, block, "Kill place".to_string());
         self.kill_reborrows_assigned_to(place, borrows, block);
     }
 
@@ -389,9 +389,14 @@ impl<'tcx> UnblockGraph<'tcx> {
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
+        reason: String,
     ) {
         for reborrow in borrows.reborrows_blocking(place) {
-            self.kill_reborrow(reborrow.clone(), borrows, format!("it blocks {place:?}"))
+            self.kill_reborrow(
+                reborrow.clone(),
+                borrows,
+                format!("{}, and it blocks {place:?}", reason),
+            )
         }
         for (idx, child_place) in borrows
             .deref_expansions
@@ -400,24 +405,23 @@ impl<'tcx> UnblockGraph<'tcx> {
             .into_iter()
             .enumerate()
         {
-            let child_place = MaybeOldPlace::new(child_place, place.location());
             self.add_dependency(
                 place,
                 child_place,
                 UnblockEdgeType::Projection(idx),
                 block,
-                format!("Child of {place:?}"),
+                format!("{}, and it is a child of {place:?}", reason),
             );
             self.kill_place(child_place, borrows, block);
         }
     }
 
-    fn places_blocking_collapse(
-        place: MaybeOldPlace<'tcx>,
-        state: &DerefExpansions<'tcx>,
-    ) -> Vec<Place<'tcx>> {
-        state.get(place).unwrap_or_default()
-    }
+    // fn places_blocking_collapse(
+    //     place: MaybeOldPlace<'tcx>,
+    //     state: &DerefExpansions<'tcx>,
+    // ) -> Vec<Place<'tcx>> {
+    //     state.get(place).unwrap_or_default()
+    // }
 
     pub fn kill_reborrow<'a>(
         &mut self,
@@ -434,7 +438,15 @@ impl<'tcx> UnblockGraph<'tcx> {
             reborrow.location.block, // TODO: Confirm this is the right block to use
             format!("Kill reborrow because {}", reason),
         );
-        self.unblock_place(reborrow.assigned_place, borrows, reborrow.location.block);
+        self.unblock_place(
+            reborrow.assigned_place,
+            borrows,
+            reborrow.location.block,
+            format!(
+                "{}, and the assigned place of the reborrow is {:?}",
+                reason, reborrow.assigned_place
+            ),
+        );
         // TODO: confirm right block
     }
 }

@@ -254,18 +254,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
         }
         for deref_expansion in self.borrows_domain.deref_expansions.iter() {
             let base = self.insert_maybe_old_place(deref_expansion.base);
-            for expansion in deref_expansion.expansion.iter() {
-                let place = match deref_expansion.base {
-                    MaybeOldPlace::Current { place } => {
-                        MaybeOldPlace::Current { place: *expansion }
-                    }
-                    MaybeOldPlace::OldPlace(snapshot_place) => {
-                        MaybeOldPlace::OldPlace(PlaceSnapshot {
-                            place: *expansion,
-                            at: snapshot_place.at,
-                        })
-                    }
-                };
+            for place in deref_expansion.expansion() {
                 let place = self.insert_maybe_old_place(place);
                 self.constructor
                     .edges

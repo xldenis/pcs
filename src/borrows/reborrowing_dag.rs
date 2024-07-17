@@ -18,6 +18,9 @@ pub struct ReborrowingDag<'tcx> {
 }
 
 impl<'tcx> ReborrowingDag<'tcx> {
+    pub fn remove(&mut self, reborrow: &Reborrow<'tcx>) -> bool {
+        self.reborrows.remove(reborrow)
+    }
     pub fn assigned_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.reborrows.iter().map(|r| r.assigned_place).collect()
     }
