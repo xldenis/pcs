@@ -160,9 +160,15 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
         self.super_statement(statement, location);
+        eprintln!(
+            "Visiting statement {:?} at {:?} {:?} {:?}",
+            statement, location, self.before, self.preparing
+        );
 
         if self.preparing {
+            eprintln!(".");
             for loan in self.loans_invalidated_at(location, self.before) {
+                eprintln!("!");
                 self.state.after.remove_rustc_borrow(
                     self.tcx,
                     &loan,
@@ -170,8 +176,10 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     &self.body,
                     location.block,
                 );
+                eprintln!("~");
             }
         }
+        eprintln!("1");
 
         // Stuff in this block will be included as the middle "bridge" ops that
         // are visible to Prusti
@@ -289,6 +297,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 _ => {}
             }
         }
+        eprintln!("Done statement {:?} at {:?}", statement, location);
     }
 
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {

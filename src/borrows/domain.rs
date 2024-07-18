@@ -201,8 +201,8 @@ impl<'tcx> Latest<'tcx> {
     pub fn new() -> Self {
         Self(FxHashMap::default())
     }
-    pub fn get(&self, place: &Place<'tcx>) -> Option<&Location> {
-        self.0.get(place)
+    pub fn get(&self, place: &Place<'tcx>) -> Location {
+        self.0.get(place).copied().unwrap_or(Location::START)
     }
     pub fn insert(&mut self, place: Place<'tcx>, location: Location) -> Option<Location> {
         self.0.insert(place, location)
@@ -216,7 +216,7 @@ impl<'tcx> Latest<'tcx> {
     pub fn join(&mut self, other: &Self, body: &mir::Body<'tcx>) -> bool {
         let mut changed = false;
         for (place, other_loc) in other.0.iter() {
-            if let Some(self_loc) = self.get(place) {
+            if let Some(self_loc) = self.0.get(place) {
                 let dominators = body.basic_blocks.dominators();
                 let new_loc = join_locations(*self_loc, *other_loc, dominators);
                 if new_loc != *self_loc {

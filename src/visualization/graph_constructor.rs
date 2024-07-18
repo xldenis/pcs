@@ -146,7 +146,7 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                             blocked_place: source,
                             blocking_place: target,
                             block: edge.block,
-                            reason: edge.reason.clone(),
+                            reason: format!("{:?}", edge.reason),
                         });
                 }
                 UnblockEdgeType::Projection(_) => {
@@ -156,7 +156,7 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                             blocked_place: source,
                             blocking_place: target,
                             block: edge.block,
-                            reason: edge.reason.clone(),
+                            reason: format!("{:?}", edge.reason),
                         });
                 }
             }

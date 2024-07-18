@@ -14,6 +14,7 @@ use rustc_interface::{
 use serde_json::{json, Value};
 
 use crate::{
+    borrows::unblock_reason::{UnblockReason, UnblockReasons},
     combined_pcs::UnblockGraph,
     free_pcs::CapabilityProjections,
     rustc_interface,
@@ -29,6 +30,7 @@ use super::{
 
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
     fn join(&mut self, other: &Self) -> bool {
+        eprintln!("JOIN");
         let mut changed = false;
         for region_abstraction in &other.region_abstractions {
             if !self.region_abstractions.contains(region_abstraction) {
@@ -107,7 +109,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                 ug.kill_reborrow(
                     *reborrow,
                     self,
-                    "reborrow doesn't exist in state to bridge".to_string(),
+                    UnblockReasons::new(UnblockReason::NotInStateToBridge(reborrow.clone())),
                 );
             }
         }
@@ -121,11 +123,10 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     exp.base,
                     self,
                     exp.location.block,
-                    format!(
-                        "deref expansion doesn't exist for {:?} at {:?}",
+                    UnblockReasons::new(UnblockReason::DerefExpansionDoesntExist(
                         exp.base.place(),
-                        exp.location
-                    ),
+                        exp.location,
+                    )),
                 );
             }
         }
@@ -162,7 +163,9 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     }
 
     pub fn remove_dangling_old_places(&mut self) {
-        while self.remove_dangling_old_places_pass() {}
+        while self.remove_dangling_old_places_pass() {
+            eprintln!("Iteration");
+        }
     }
 
     pub fn is_leaf(&self, place: MaybeOldPlace<'tcx>) -> bool {
@@ -251,8 +254,8 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.latest.insert(place, location);
     }
 
-    pub fn get_latest(&self, place: &Place<'tcx>) -> Option<Location> {
-        self.latest.get(place).cloned()
+    pub fn get_latest(&self, place: &Place<'tcx>) -> Location {
+        self.latest.get(place)
     }
 
     pub fn reborrows_blocking(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<&Reborrow<'tcx>> {
@@ -333,15 +336,14 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     }
 
     pub fn is_current(&self, place: &PlaceSnapshot<'tcx>, body: &mir::Body<'tcx>) -> bool {
-        let result = self.latest.get(&place.place).map_or(true, |loc| {
-            if loc.block == place.at.block {
-                loc.statement_index <= place.at.statement_index
-            } else {
-                body.basic_blocks
-                    .dominators()
-                    .dominates(loc.block, place.at.block)
-            }
-        });
+        let last_loc = self.latest.get(&place.place);
+        let result = if last_loc.block == place.at.block {
+            last_loc.statement_index <= place.at.statement_index
+        } else {
+            body.basic_blocks
+                .dominators()
+                .dominates(last_loc.block, place.at.block)
+        };
         if !result {
             eprintln!(
                 "is_current({:?}) = {:?} <{:?}>",
@@ -364,12 +366,11 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         place: Place<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
-        if let Some(location) = self.get_latest(&place) {
-            self.reborrows
-                .make_place_old(place.project_deref(repacker), location);
-            self.deref_expansions.make_place_old(place, location);
-            self.remove_dangling_old_places();
-        }
+        let location = self.get_latest(&place);
+        self.reborrows
+            .make_place_old(place.project_deref(repacker), location);
+        self.deref_expansions.make_place_old(place, location);
+        self.remove_dangling_old_places();
     }
 
     pub fn remove_borrow(&mut self, tcx: TyCtxt<'tcx>, borrow: &Borrow<'tcx>, block: BasicBlock) {
@@ -382,7 +383,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             },
             &self,
             block,
-            "remove borrow".to_string(),
+            UnblockReasons::new(UnblockReason::RemoveBorrow(borrow.clone())),
         );
 
         self.apply_unblock_graph(g);

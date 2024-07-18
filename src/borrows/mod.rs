@@ -3,3 +3,4 @@ pub mod engine;
 pub mod reborrowing_dag;
 pub mod deref_expansions;
 pub mod borrows_state;
+pub mod unblock_reason;

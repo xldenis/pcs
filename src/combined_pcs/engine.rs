@@ -35,6 +35,7 @@ use crate::{
         deref_expansions::DerefExpansions,
         domain::{MaybeOldPlace, Reborrow},
         engine::{BorrowsEngine, ReborrowAction},
+        unblock_reason::{UnblockReason, UnblockReasons},
     },
     free_pcs::{
         engine::FpcsEngine, CapabilityKind, CapabilityLocal, CapabilitySummary,
@@ -160,7 +161,7 @@ pub struct UnblockEdge<'tcx> {
     pub blocker: MaybeOldPlace<'tcx>,
     pub block: BasicBlock,
     pub edge_type: UnblockEdgeType,
-    pub reason: String,
+    pub reason: UnblockReasons<'tcx>,
 }
 
 impl<'tcx> UnblockEdge<'tcx> {
@@ -273,6 +274,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         let mut edges = self.0;
         let mut actions = vec![];
         while edges.len() > 0 {
+            eprintln!("Iteration2");
             let mut to_keep = edges.clone();
             let is_leaf = |node| edges.iter().all(|e| e.blocked != node);
             for edge in edges.iter() {
@@ -332,7 +334,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         blocker: MaybeOldPlace<'tcx>,
         edge_type: UnblockEdgeType,
         block: BasicBlock,
-        reason: String,
+        reason: UnblockReasons<'tcx>,
     ) {
         let existing = self.0.iter().find(|e| {
             e.blocked == blocked
@@ -341,12 +343,9 @@ impl<'tcx> UnblockGraph<'tcx> {
                 && e.edge_type == edge_type
         });
         if let Some(existing) = existing {
-            if existing.reason.contains(&reason) {
-                return;
-            }
             let mut existing = existing.clone();
             self.0.remove(&existing);
-            existing.reason = format!("{}, and {}", existing.reason, reason);
+            existing.reason = existing.reason.merge(reason);
             self.0.insert(existing);
         } else {
             self.0.insert(UnblockEdge {
@@ -369,7 +368,10 @@ impl<'tcx> UnblockGraph<'tcx> {
             self.kill_reborrow(
                 reborrow.clone(),
                 borrows,
-                format!("it is assigned to {place:?}"),
+                UnblockReasons::new(UnblockReason::ReborrowAssignedTo(
+                    reborrow.clone(),
+                    place.clone(),
+                )),
             )
         }
     }
@@ -380,7 +382,12 @@ impl<'tcx> UnblockGraph<'tcx> {
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
     ) {
-        self.unblock_place(place, borrows, block, "Kill place".to_string());
+        self.unblock_place(
+            place,
+            borrows,
+            block,
+            UnblockReasons::new(UnblockReason::KillPlace(place)),
+        );
         self.kill_reborrows_assigned_to(place, borrows, block);
     }
 
@@ -389,13 +396,18 @@ impl<'tcx> UnblockGraph<'tcx> {
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
-        reason: String,
+        reason: UnblockReasons<'tcx>,
     ) {
+        eprintln!("Unblock place {place:?}");
         for reborrow in borrows.reborrows_blocking(place) {
+            eprintln!("Kill borrow");
             self.kill_reborrow(
                 reborrow.clone(),
                 borrows,
-                format!("{}, and it blocks {place:?}", reason),
+                reason.clone().add(UnblockReason::ReborrowBlocksPlace(
+                    reborrow.clone(),
+                    place.clone(),
+                )),
             )
         }
         for (idx, child_place) in borrows
@@ -410,7 +422,9 @@ impl<'tcx> UnblockGraph<'tcx> {
                 child_place,
                 UnblockEdgeType::Projection(idx),
                 block,
-                format!("{}, and it is a child of {place:?}", reason),
+                reason
+                    .clone()
+                    .add(UnblockReason::ChildOfPlace(child_place, place)),
             );
             self.kill_place(child_place, borrows, block);
         }
@@ -427,7 +441,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         &mut self,
         reborrow: Reborrow<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
-        reason: String,
+        reason: UnblockReasons<'tcx>,
     ) {
         self.add_dependency(
             reborrow.blocked_place,
@@ -436,16 +450,16 @@ impl<'tcx> UnblockGraph<'tcx> {
                 is_mut: reborrow.mutability == Mutability::Mut,
             },
             reborrow.location.block, // TODO: Confirm this is the right block to use
-            format!("Kill reborrow because {}", reason),
+            UnblockReasons::new(UnblockReason::KillReborrow(reborrow.clone())),
         );
         self.unblock_place(
             reborrow.assigned_place,
             borrows,
             reborrow.location.block,
-            format!(
-                "{}, and the assigned place of the reborrow is {:?}",
-                reason, reborrow.assigned_place
-            ),
+            reason.add(UnblockReason::KillReborrowAssignedPlace(
+                reborrow.clone(),
+                reborrow.assigned_place.clone(),
+            )),
         );
         // TODO: confirm right block
     }
