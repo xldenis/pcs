@@ -42,17 +42,25 @@ impl<'tcx> DerefExpansions<'tcx> {
         self.0.remove(expansion)
     }
 
-    pub fn get(&self, place: MaybeOldPlace<'tcx>) -> Option<Vec<MaybeOldPlace<'tcx>>> {
+    pub fn get(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) -> Option<Vec<MaybeOldPlace<'tcx>>> {
         self.0
             .iter()
             .find(|expansion| expansion.base == place)
-            .map(|expansion| expansion.expansion())
+            .map(|expansion| expansion.expansion(tcx))
     }
 
-    pub fn get_parents(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<MaybeOldPlace<'tcx>> {
+    pub fn get_parents(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.0
             .iter()
-            .filter(|expansion| expansion.expansion().contains(&place))
+            .filter(|expansion| expansion.expansion(tcx).contains(&place))
             .map(|expansion| expansion.base)
             .collect()
     }
@@ -83,13 +91,29 @@ impl<'tcx> DerefExpansions<'tcx> {
                         }
                         _ => place.expand_field(None, PlaceRepacker::new(&body, tcx)),
                     };
-                    // eprintln!("Expand to {:?} for {:?}", expansion, orig_place);
                     self.insert(origin_place, expansion, location);
                 }
             }
         }
         if in_dag {
-            self.delete_descendants_of(place);
+            self.delete_descendants_of(place, tcx);
+        }
+    }
+
+    pub fn move_expansion(
+        &mut self,
+        old_place: MaybeOldPlace<'tcx>,
+        new_place: MaybeOldPlace<'tcx>,
+    ) {
+        let old_expansion = self.iter().find(|expansion| expansion.base == old_place);
+        if let Some(expansion) = old_expansion {
+            todo!("Move expansion from {:?} to {:?}", old_place, new_place);
+            let mut expansion = expansion.clone();
+            self.0.remove(&expansion);
+            expansion.base = new_place;
+            self.0.insert(expansion);
+        } else {
+            eprintln!("No expansion found for {:?}", old_place);
         }
     }
 
@@ -102,15 +126,13 @@ impl<'tcx> DerefExpansions<'tcx> {
             .collect::<Vec<_>>()
         {
             if self.0.remove(&expansion) {
-                eprintln!("Deleted expansion: {:?}", expansion);
                 changed = true
             }
         }
         changed
     }
 
-    pub fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
-        eprintln!("Deleting descendants of {:?}", place);
+    pub fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
         let mut changed = false;
         for expansion in self
             .iter()
@@ -118,8 +140,8 @@ impl<'tcx> DerefExpansions<'tcx> {
             .cloned()
             .collect::<Vec<_>>()
         {
-            for p in expansion.expansion() {
-                if self.delete_descendants_of(p) {
+            for p in expansion.expansion(tcx) {
+                if self.delete_descendants_of(p, tcx) {
                     changed = true;
                 }
                 if self.delete(p) {
@@ -129,11 +151,6 @@ impl<'tcx> DerefExpansions<'tcx> {
             if self.0.remove(&expansion) {
                 changed = true;
             }
-        }
-        if changed {
-            eprintln!("Deleted descendants of {:?}", place);
-        } else {
-            eprintln!("No descendants deleted of {:?}", place);
         }
         changed
     }

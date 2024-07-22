@@ -4,17 +4,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+pub mod dot_graph;
 pub mod drawer;
 pub mod graph_constructor;
 pub mod mir_graph;
 
 use crate::{
-    borrows::domain::{Borrow, MaybeOldPlace, RegionAbstraction},
     borrows::borrows_state::BorrowsState,
+    borrows::domain::{Borrow, MaybeOldPlace, RegionAbstraction},
     combined_pcs::UnblockGraph,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
-    utils::{Place, PlaceRepacker, place_snapshot::PlaceSnapshot},
+    utils::{place_snapshot::PlaceSnapshot, Place, PlaceRepacker},
 };
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
@@ -24,6 +25,7 @@ use std::{
     rc::Rc,
 };
 
+use dot::escape_html;
 use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
@@ -44,7 +46,10 @@ use rustc_interface::{
     },
 };
 
-use self::graph_constructor::{PCSGraphConstructor, UnblockGraphConstructor};
+use self::{
+    dot_graph::{DotEdge, DotLabel, DotNode, EdgeOptions},
+    graph_constructor::{PCSGraphConstructor, UnblockGraphConstructor},
+};
 
 pub fn place_id<'tcx>(place: &Place<'tcx>) -> String {
     format!("{:?}", place)
@@ -67,6 +72,45 @@ impl std::fmt::Display for NodeId {
 struct GraphNode {
     id: NodeId,
     node_type: NodeType,
+}
+
+impl GraphNode {
+    fn to_dot_node(&self) -> DotNode {
+        match &self.node_type {
+            NodeType::PlaceNode {
+                capability,
+                label,
+                location,
+            } => {
+                let capability_text = match capability {
+                    Some(k) => format!("{:?}", k),
+                    None => "".to_string(),
+                };
+                let location_text = match location {
+                    Some(l) => escape_html(&format!(" at {:?}", l)),
+                    None => "".to_string(),
+                };
+                let color =
+                    if location.is_some() || matches!(capability, Some(CapabilityKind::Write)) {
+                        "gray"
+                    } else {
+                        "black"
+                    };
+                let label = format!(
+                    "<FONT FACE=\"courier\">{}</FONT>&nbsp;{}{}",
+                    escape_html(&label),
+                    escape_html(&capability_text),
+                    escape_html(&location_text)
+                );
+                DotNode {
+                    id: self.id.to_string(),
+                    label: DotLabel::Html(label),
+                    color: color.to_string(),
+                    font_color: color.to_string(),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -101,13 +145,13 @@ enum GraphEdge {
         blocked_place: NodeId,
         blocking_place: NodeId,
         block: BasicBlock,
-        reason: String
+        reason: String,
     },
     UnblockProjectionEdge {
         blocked_place: NodeId,
         blocking_place: NodeId,
         block: BasicBlock,
-        reason: String
+        reason: String,
     },
     ReborrowEdge {
         borrowed_place: NodeId,
@@ -130,6 +174,75 @@ enum GraphEdge {
     },
 }
 
+impl GraphEdge {
+    fn to_dot_edge(&self) -> DotEdge {
+        match self {
+            GraphEdge::ReferenceEdge {
+                borrowed_place,
+                assigned_place,
+                edge_type,
+            } => DotEdge {
+                from: borrowed_place.to_string(),
+                to: assigned_place.to_string(),
+                options: EdgeOptions::directed()
+                    .with_label(format!("{}", edge_type))
+                    .with_style("dashed".to_string()),
+            },
+            GraphEdge::ProjectionEdge { source, target } => DotEdge {
+                from: source.to_string(),
+                to: target.to_string(),
+                options: EdgeOptions::undirected(),
+            },
+            GraphEdge::ReborrowEdge {
+                borrowed_place,
+                assigned_place,
+                location,
+            } => DotEdge {
+                from: assigned_place.to_string(),
+                to: borrowed_place.to_string(),
+                options: EdgeOptions::directed()
+                    .with_color("orange".to_string())
+                    .with_label(format!("{:?}", location)),
+            },
+            GraphEdge::DerefExpansionEdge {
+                source,
+                target,
+                location,
+            } => DotEdge {
+                from: source.to_string(),
+                to: target.to_string(),
+                options: EdgeOptions::undirected()
+                    .with_color("green".to_string())
+                    .with_label(format!("{:?}", location)),
+            },
+            GraphEdge::UnblockReborrowEdge {
+                blocked_place,
+                blocking_place,
+                block,
+                reason,
+            } => DotEdge {
+                from: blocked_place.to_string(),
+                to: blocking_place.to_string(),
+                options: EdgeOptions::directed()
+                    .with_color("red".to_string())
+                    .with_label(format!("{:?}({})", block, reason)),
+            },
+            GraphEdge::UnblockProjectionEdge {
+                blocked_place,
+                blocking_place,
+                block,
+                reason,
+            } => DotEdge {
+                from: blocked_place.to_string(),
+                to: blocking_place.to_string(),
+                options: EdgeOptions::directed()
+                    .with_color("darkred".to_string())
+                    .with_label(format!("{:?}({})", block, reason)),
+            },
+        }
+    }
+}
+
 pub struct Graph {
     nodes: Vec<GraphNode>,
     edges: HashSet<GraphEdge>,
@@ -140,62 +253,6 @@ impl Graph {
         Self { nodes, edges }
     }
 }
-
-// pub fn get_source_name_from_local(local: &Local, debug_info: &[VarDebugInfo]) -> Option<String> {
-//     if local.as_usize() == 0 {
-//         return None;
-//     }
-//     debug_info.get(&local.as_usize() - 1).map(|source_info| {
-//         let name = source_info.name.as_str();
-//         let mut shadow_count = 0;
-//         for i in 0..local.as_usize() - 1 {
-//             if debug_info[i].name.as_str() == name {
-//                 shadow_count += 1;
-//             }
-//         }
-//         if shadow_count == 0 {
-//             format!("{}", name)
-//         } else {
-//             format!("{}$shadow{}", name, shadow_count)
-//         }
-//     })
-// }
-
-// pub fn get_source_name_from_place<'tcx>(
-//     local: Local,
-//     projection: &[PlaceElem<'tcx>],
-//     debug_info: &[VarDebugInfo],
-// ) -> Option<String> {
-//     get_source_name_from_local(&local, debug_info).map(|mut name| {
-//         let mut iter = projection.iter().peekable();
-//         while let Some(elem) = iter.next() {
-//             match elem {
-//                 mir::ProjectionElem::Deref => {
-//                     if iter.peek().is_some() {
-//                         name = format!("(*{})", name);
-//                     } else {
-//                         name = format!("*{}", name);
-//                     }
-//                 }
-//                 mir::ProjectionElem::Field(field, _) => {
-//                     name = format!("{}.{}", name, field.as_usize());
-//                 }
-//                 mir::ProjectionElem::Index(_) => todo!(),
-//                 mir::ProjectionElem::ConstantIndex {
-//                     offset,
-//                     min_length,
-//                     from_end,
-//                 } => todo!(),
-//                 mir::ProjectionElem::Subslice { from, to, from_end } => todo!(),
-//                 mir::ProjectionElem::Downcast(d, v) => {
-//                     name = format!("downcast {:?} as {:?}", name, d);
-//                 }
-//                 mir::ProjectionElem::OpaqueCast(_) => todo!(),
-//             }
-//         }
-//         name
-//     })
-// }
 
 pub fn generate_unblock_dot_graph<'a, 'tcx: 'a>(
     repacker: &PlaceRepacker<'a, 'tcx>,
@@ -222,33 +279,4 @@ pub fn generate_dot_graph<'a, 'tcx: 'a>(
     let graph = constructor.construct_graph();
     let mut drawer = GraphDrawer::new(File::create(file_path).unwrap());
     drawer.draw(graph)
-
-    // for (idx, region_abstraction) in borrows_domain.region_abstractions.iter().enumerate() {
-    //     let ra_node_label = format!("ra{}", idx);
-    //     writeln!(
-    //         drawer.file,
-    //         "    \"{}\" [label=\"{}\", shape=egg];",
-    //         ra_node_label, ra_node_label
-    //     )?;
-    //     for loan_in in &region_abstraction.loans_in {
-    //         drawer.add_place_if_necessary((*loan_in).into())?;
-    //         dot_edge(
-    //             &mut drawer.file,
-    //             &place_id(&(*loan_in).into()),
-    //             &ra_node_label,
-    //             "loan_in",
-    //             false,
-    //         )?;
-    //     }
-    //     for loan_out in &region_abstraction.loans_out {
-    //         drawer.add_place_if_necessary((*loan_out).into())?;
-    //         dot_edge(
-    //             &mut drawer.file,
-    //             &ra_node_label,
-    //             &place_id(&(*loan_out).into()),
-    //             "loan_out",
-    //             false,
-    //         )?;
-    //     }
-    // }
 }

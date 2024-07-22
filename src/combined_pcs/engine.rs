@@ -232,9 +232,7 @@ impl<'tcx> UnblockGraph<'tcx> {
                 }
             }
             for edge in blocking_ref_edges {
-                eprintln!("Checking edge: {:?}", edge);
                 if edge != candidate {
-                    eprintln!("Killing edge: {:?}", edge);
                     self.remove_edge_and_trim(&edge);
                 }
             }
@@ -274,7 +272,6 @@ impl<'tcx> UnblockGraph<'tcx> {
         let mut edges = self.0;
         let mut actions = vec![];
         while edges.len() > 0 {
-            eprintln!("Iteration2");
             let mut to_keep = edges.clone();
             let is_leaf = |node| edges.iter().all(|e| e.blocked != node);
             for edge in edges.iter() {
@@ -363,6 +360,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
+        tcx: TyCtxt<'tcx>,
     ) {
         for reborrow in borrows.reborrows_assigned_to(place) {
             self.kill_reborrow(
@@ -372,6 +370,7 @@ impl<'tcx> UnblockGraph<'tcx> {
                     reborrow.clone(),
                     place.clone(),
                 )),
+                tcx,
             )
         }
     }
@@ -381,14 +380,16 @@ impl<'tcx> UnblockGraph<'tcx> {
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
+        tcx: TyCtxt<'tcx>,
     ) {
         self.unblock_place(
             place,
             borrows,
             block,
             UnblockReasons::new(UnblockReason::KillPlace(place)),
+            tcx
         );
-        self.kill_reborrows_assigned_to(place, borrows, block);
+        self.kill_reborrows_assigned_to(place, borrows, block, tcx);
     }
 
     pub fn unblock_place<'a>(
@@ -397,10 +398,9 @@ impl<'tcx> UnblockGraph<'tcx> {
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
         reason: UnblockReasons<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) {
-        eprintln!("Unblock place {place:?}");
         for reborrow in borrows.reborrows_blocking(place) {
-            eprintln!("Kill borrow");
             self.kill_reborrow(
                 reborrow.clone(),
                 borrows,
@@ -408,11 +408,12 @@ impl<'tcx> UnblockGraph<'tcx> {
                     reborrow.clone(),
                     place.clone(),
                 )),
+                tcx,
             )
         }
         for (idx, child_place) in borrows
             .deref_expansions
-            .get(place)
+            .get(place, tcx)
             .unwrap_or_default()
             .into_iter()
             .enumerate()
@@ -426,7 +427,7 @@ impl<'tcx> UnblockGraph<'tcx> {
                     .clone()
                     .add(UnblockReason::ChildOfPlace(child_place, place)),
             );
-            self.kill_place(child_place, borrows, block);
+            self.kill_place(child_place, borrows, block, tcx);
         }
     }
 
@@ -442,6 +443,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         reborrow: Reborrow<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         reason: UnblockReasons<'tcx>,
+        tcx: TyCtxt<'tcx>,
     ) {
         self.add_dependency(
             reborrow.blocked_place,
@@ -460,6 +462,7 @@ impl<'tcx> UnblockGraph<'tcx> {
                 reborrow.clone(),
                 reborrow.assigned_place.clone(),
             )),
+            tcx,
         );
         // TODO: confirm right block
     }

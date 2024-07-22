@@ -69,7 +69,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
         let fpcs = self.fpcs.join(&other.fpcs);
         let borrows = self.borrows.join(&other.borrows);
         let mut g = UnblockGraph::new();
-        for root in self.borrows.after.reborrow_roots() {
+        for root in self.borrows.after.reborrow_roots(self.cgx.rp.tcx()) {
             match &self.fpcs.after[root.local] {
                 CapabilityLocal::Unallocated => {
                     g.unblock_place(
@@ -77,6 +77,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                         &self.borrows.after,
                         self.block, // TODO: Check
                         UnblockReasons::new(UnblockReason::Unallocated(root)),
+                        self.cgx.rp.tcx(),
                     );
                 }
                 CapabilityLocal::Allocated(projs) => {
@@ -86,12 +87,13 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                             &self.borrows.after,
                             self.block, // TODO: Check
                             UnblockReasons::new(UnblockReason::NotInProjection(root)),
+                            self.cgx.rp.tcx(),
                         );
                     }
                 }
             }
         }
-        let ub = self.borrows.after.apply_unblock_graph(g);
+        let ub = self.borrows.after.apply_unblock_graph(g, self.cgx.rp.tcx());
         fpcs || borrows || ub
     }
 }

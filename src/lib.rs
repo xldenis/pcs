@@ -77,6 +77,7 @@ impl<'tcx> ReborrowBridge<'tcx> {
 
 impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<'mir, 'tcx> {
     type ExtraBridge = ReborrowBridge<'tcx>;
+    type BridgeCtx = TyCtxt<'tcx>;
     fn get_extra(&self) -> BorrowsDomain<'mir, 'tcx> {
         self.borrows.clone()
     }
@@ -85,9 +86,10 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
         lhs: BorrowsDomain<'mir, 'tcx>,
         rhs: BorrowsDomain<'mir, 'tcx>,
         block: BasicBlock,
+        tcx: TyCtxt<'tcx>,
     ) -> (Self::ExtraBridge, Self::ExtraBridge) {
-        let start = lhs.after.bridge(&rhs.before_start, block);
-        let middle = rhs.before_after.bridge(&rhs.start, block);
+        let start = lhs.after.bridge(&rhs.before_start, block, tcx);
+        let middle = rhs.before_after.bridge(&rhs.start, block, tcx);
         (start, middle)
     }
 
@@ -95,6 +97,7 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
         lhs: &BorrowsDomain<'mir, 'tcx>,
         rhs: BorrowsDomain<'mir, 'tcx>,
         block: BasicBlock,
+        tcx: TyCtxt<'tcx>,
     ) -> Self::ExtraBridge {
         ReborrowBridge::new()
     }

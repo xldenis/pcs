@@ -8,7 +8,7 @@ use rustc_interface::{
         graph::dominators::Dominators,
     },
     dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, VarDebugInfo},
+    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, PlaceElem, VarDebugInfo},
     middle::ty::TyCtxt,
 };
 
@@ -66,21 +66,17 @@ impl<'tcx> MaybeOldPlace<'tcx> {
     }
 
     pub fn ty(&self, repacker: PlaceRepacker<'_, 'tcx>) -> PlaceTy<'tcx> {
-        match self {
-            MaybeOldPlace::Current { place } => place.ty(repacker),
-            MaybeOldPlace::OldPlace(old_place) => old_place.place.ty(repacker),
-        }
+        self.place().ty(repacker)
     }
 
     pub fn project_deref(&self, repacker: PlaceRepacker<'_, 'tcx>) -> MaybeOldPlace<'tcx> {
-        match self {
-            MaybeOldPlace::Current { place } => MaybeOldPlace::Current {
-                place: place.project_deref(repacker),
-            },
-            MaybeOldPlace::OldPlace(old_place) => {
-                MaybeOldPlace::OldPlace(old_place.project_deref(repacker))
-            }
-        }
+        MaybeOldPlace::new(self.place().project_deref(repacker).into(), self.location())
+    }
+    pub fn project_deeper(&self, tcx: TyCtxt<'tcx>, elem: PlaceElem<'tcx>) -> MaybeOldPlace<'tcx> {
+        MaybeOldPlace::new(
+            self.place().project_deeper(&[elem], tcx).into(),
+            self.location(),
+        )
     }
 
     pub fn is_mut_ref(&self, body: &mir::Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
@@ -158,15 +154,21 @@ impl<'tcx> Borrow<'tcx> {
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct DerefExpansion<'tcx> {
     pub base: MaybeOldPlace<'tcx>,
-    expansion: Vec<Place<'tcx>>,
+    expansion: Vec<PlaceElem<'tcx>>,
     pub location: Location,
 }
 
 impl<'tcx> DerefExpansion<'tcx> {
     pub fn new(base: MaybeOldPlace<'tcx>, expansion: Vec<Place<'tcx>>, location: Location) -> Self {
+        assert!(expansion.iter().all(|p| base.place().is_prefix(*p)
+            && p.projection.len() == base.place().projection.len() + 1));
         Self {
             base,
-            expansion,
+            expansion: expansion
+                .into_iter()
+                .map(|p| p.projection.last().unwrap())
+                .copied()
+                .collect(),
             location,
         }
     }
@@ -182,14 +184,14 @@ impl<'tcx> DerefExpansion<'tcx> {
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         json!({
             "base": self.base.to_json(repacker),
-            "expansion": self.expansion.iter().map(|p| p.to_json(repacker)).collect::<Vec<_>>(),
+            "expansion": self.expansion(repacker.tcx()).iter().map(|p| p.to_json(repacker)).collect::<Vec<_>>(),
         })
     }
 
-    pub fn expansion(&self) -> Vec<MaybeOldPlace<'tcx>> {
+    pub fn expansion(&self, tcx: TyCtxt<'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
         self.expansion
             .iter()
-            .map(|p| MaybeOldPlace::new(*p, self.base.location()))
+            .map(|p| self.base.project_deeper(tcx, *p))
             .collect()
     }
 }

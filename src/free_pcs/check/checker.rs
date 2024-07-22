@@ -5,18 +5,30 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use rustc_interface::{
-    dataflow::Analysis,
     data_structures::fx::FxHashMap,
+    dataflow::Analysis,
     middle::mir::{visit::Visitor, Location, ProjectionElem},
+    middle::ty::TyCtxt,
 };
 
 use crate::{
     free_pcs::{
-        consistency::CapabilityConsistency, CapabilityKind, CapabilityLocal, CapabilitySummary, FreePcsAnalysis, HasExtra, HasFpcs, RepackOp, Stage, TripleWalker
-    }, rustc_interface, utils::PlaceRepacker
+        consistency::CapabilityConsistency, CapabilityKind, CapabilityLocal, CapabilitySummary,
+        FreePcsAnalysis, HasExtra, HasFpcs, RepackOp, Stage, TripleWalker,
+    },
+    rustc_interface,
+    utils::PlaceRepacker,
 };
 
-pub(crate) fn check<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Domain = D>>(mut cursor: FreePcsAnalysis<'mir, 'tcx, T, D, E>) {
+pub(crate) fn check<
+    'mir,
+    'tcx,
+    T,
+    D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx>>,
+    E: Analysis<'tcx, Domain = D>,
+>(
+    mut cursor: FreePcsAnalysis<'mir, 'tcx, T, D, E>,
+) {
     let rp = cursor.repacker();
     let body = rp.body();
     for (block, data) in body.basic_blocks.iter_enumerated() {

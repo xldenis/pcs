@@ -241,6 +241,10 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
         }
     }
 
+    pub fn tcx(&self) -> TyCtxt<'tcx> {
+        self.constructor.repacker.tcx()
+    }
+
     pub fn construct_graph(mut self) -> Graph {
         for (local, capability) in self.summary.iter().enumerate() {
             match capability {
@@ -254,7 +258,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
         }
         for deref_expansion in self.borrows_domain.deref_expansions.iter() {
             let base = self.insert_maybe_old_place(deref_expansion.base);
-            for place in deref_expansion.expansion() {
+            for place in deref_expansion.expansion(self.tcx()) {
                 let place = self.insert_maybe_old_place(place);
                 self.constructor
                     .edges

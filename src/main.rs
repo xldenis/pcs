@@ -1,8 +1,15 @@
 #![feature(rustc_private)]
 
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 use std::{cell::RefCell, rc::Rc};
 
+use itertools::Itertools;
+use pcs::visualization::dot_graph::{
+    DotEdge, DotGraph, DotLabel, DotNode, DotSubgraph, EdgeOptions,
+};
 use pcs::{combined_pcs::BodyWithBorrowckFacts, run_free_pcs, rustc_interface};
+use regex::Regex;
 use rustc_interface::{
     borrowck::consumers,
     data_structures::fx::FxHashMap,
@@ -12,7 +19,7 @@ use rustc_interface::{
     index::IndexVec,
     interface::{interface::Compiler, Config, Queries},
     middle::{
-        mir,
+        mir::{BasicBlock, Location},
         query::{queries::mir_borrowck::ProvidedValue as MirBorrowck, ExternProviders, Providers},
         ty::TyCtxt,
     },
@@ -105,9 +112,255 @@ impl driver::Callbacks for PcsCallbacks {
     }
 }
 
+#[derive(Debug, Eq, PartialEq, Clone)]
+enum RichLocation {
+    Mid(Location),
+    Start(Location),
+}
+
+impl Ord for RichLocation {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.location().cmp(&other.location()) {
+            Ordering::Equal => match (self, other) {
+                (RichLocation::Mid(_), RichLocation::Start(_)) => Ordering::Greater,
+                (RichLocation::Start(_), RichLocation::Mid(_)) => Ordering::Less,
+                _ => Ordering::Equal,
+            },
+            ord => ord,
+        }
+    }
+}
+
+impl PartialOrd for RichLocation {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl RichLocation {
+    fn location(&self) -> Location {
+        match self {
+            RichLocation::Mid(loc) => *loc,
+            RichLocation::Start(loc) => *loc,
+        }
+    }
+    fn block(&self) -> BasicBlock {
+        match self {
+            RichLocation::Mid(loc) => loc.block,
+            RichLocation::Start(loc) => loc.block,
+        }
+    }
+}
+
+type Borrow = String;
+type Region = String;
+
+#[derive(Debug)]
+enum PoloniusFact {
+    OriginContainsLoanAt(RichLocation, Region, Borrow),
+}
+
+fn parse_location(input: String) -> Location {
+    let re = Regex::new(r#"bb([^\[]+)\[([^\]]+)\]"#).unwrap();
+
+    if let Some(captures) = re.captures(&input) {
+        let block = *(&captures[1].parse::<usize>().unwrap());
+        let statement_index = *(&captures[2].parse::<usize>().unwrap());
+        Location {
+            block: BasicBlock::from_usize(block),
+            statement_index,
+        }
+    } else {
+        unreachable!()
+    }
+}
+
+fn parse_rich_location(string: String) -> RichLocation {
+    let re = Regex::new(r#"(Mid|Start)\(([^)]+)\)"#).unwrap();
+    let captures = re.captures(&string).unwrap();
+    let location = parse_location(captures[2].to_string());
+    match &captures[1] {
+        "Mid" => RichLocation::Mid(location),
+        "Start" => RichLocation::Start(location),
+        _ => unreachable!(),
+    }
+}
+
+fn unquote(input: &str) -> &str {
+    &input[1..input.len() - 1]
+}
+
+fn parse_polonius_line(line: &str) -> Option<PoloniusFact> {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+
+    match parts[0] {
+        "origin_contains_loan_at" => {
+            let location = parse_rich_location(unquote(parts[1]).to_string());
+            let region = unquote(parts[2]).to_string();
+            let borrow = unquote(parts[3]).to_string();
+            Some(PoloniusFact::OriginContainsLoanAt(location, region, borrow))
+        }
+        _ => None,
+    }
+}
+
+#[derive(Debug)]
+struct SubsetBaseFact {
+    subset: Region,
+    superset: Region,
+    location: RichLocation,
+}
+
+fn parse_subset_base_fact(line: &str) -> SubsetBaseFact {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    let subset = unquote(parts[0]).to_string();
+    let superset = unquote(parts[1]).to_string();
+    let location = parse_rich_location(unquote(parts[2]).to_string());
+    SubsetBaseFact {
+        subset,
+        superset,
+        location,
+    }
+}
+
+fn subset_base_visualization(file_contents: String) {
+    let facts: Vec<SubsetBaseFact> = file_contents.lines().map(parse_subset_base_fact).collect();
+    // let mut facts_by_block: BTreeMap<BasicBlock, Vec<SubsetBaseFact>> = BTreeMap::new();
+    // for fact in facts {
+    //     facts_by_block
+    //         .entry(fact.location.block().clone())
+    //         .or_insert_with(Vec::new)
+    //         .push(fact);
+    // }
+    // for (block, facts) in facts_by_block.iter() {
+    let filename = format!("bc_visualization/all.dot");
+    let mut nodes: Vec<Region> = vec![];
+    let mut lookup = |region: &Region| {
+        nodes.iter().position(|n| n == region).unwrap_or_else(|| {
+            nodes.push(region.clone());
+            nodes.len() - 1
+        })
+    };
+    let mut edges: BTreeSet<DotEdge> = BTreeSet::new();
+    for fact in facts
+        .into_iter()
+        .sorted_by(|a, b| a.location.cmp(&b.location))
+        .filter(|fact| fact.location.block().as_usize() <= 5)
+    {
+        println!("{:?}", fact);
+        let sub_node = lookup(&fact.subset);
+        let sup_node = lookup(&fact.superset);
+        edges.insert(DotEdge {
+            from: format!("n{}", sub_node),
+            to: format!("n{}", sup_node),
+            options: EdgeOptions::directed(),
+        });
+    }
+    let dot_graph = DotGraph {
+        name: "G".to_string(),
+        nodes: nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| DotNode {
+                id: format!("n{}", i),
+                label: DotLabel::Text(n.to_string()),
+                font_color: "black".to_string(),
+                color: "blue".to_string(),
+            })
+            .collect(),
+        edges: edges.into_iter().collect(),
+        subgraphs: vec![],
+    };
+
+    dot_graph.write_to_file(&filename).unwrap();
+    //    }
+}
+
+fn polonius_visualization(file_contents: String) {
+    let mut facts_by_location: BTreeMap<RichLocation, Vec<PoloniusFact>> = BTreeMap::new();
+
+    for line in file_contents.lines() {
+        if let Some(fact) = parse_polonius_line(line) {
+            match &fact {
+                PoloniusFact::OriginContainsLoanAt(location, _, _) => {
+                    facts_by_location
+                        .entry(location.clone())
+                        .or_insert_with(Vec::new)
+                        .push(fact);
+                } // Add other variants as needed
+            }
+        }
+    }
+
+    for (location, facts) in facts_by_location.iter() {
+        let filename = format!(
+            "bc_visualization/{}.dot",
+            match location {
+                RichLocation::Mid(loc) => format!("mid_{:?}_{}", loc.block, loc.statement_index),
+                RichLocation::Start(loc) =>
+                    format!("start_{:?}_{}", loc.block, loc.statement_index),
+            }
+        );
+        let mut dot_graph = DotGraph {
+            name: "G".to_string(),
+            nodes: vec![],
+            edges: vec![],
+            subgraphs: vec![],
+        };
+
+        // Group facts by their region
+        let mut facts_by_region: BTreeMap<String, Vec<&PoloniusFact>> = BTreeMap::new();
+
+        for fact in facts {
+            if let PoloniusFact::OriginContainsLoanAt(_, region, _) = fact {
+                facts_by_region
+                    .entry(region.clone())
+                    .or_default()
+                    .push(fact);
+            }
+        }
+
+        for (i, (region, region_facts)) in facts_by_region.iter().enumerate() {
+            let cluster = DotSubgraph {
+                name: format!("cluster_{}", i),
+                label: region.clone(),
+                nodes: region_facts
+                    .into_iter()
+                    .map(|fact| match fact {
+                        PoloniusFact::OriginContainsLoanAt(_, _, borrow) => DotNode {
+                            id: format!("node_{region}_{borrow}"),
+                            label: DotLabel::Text(borrow.clone()),
+                            font_color: "black".to_string(),
+                            color: "blue".to_string(),
+                        },
+                    })
+                    .collect(),
+            };
+            dot_graph.subgraphs.push(cluster);
+        }
+        // Create a file for the dot graph
+        let mut file = std::fs::File::create(&filename).expect("Failed to create file");
+
+        // Write the dot graph to the file
+        use std::io::Write;
+        write!(file, "{}", dot_graph).expect("Failed to write to file");
+
+        println!("Wrote dot graph to {}", filename);
+    }
+}
+
 fn main() {
-    let mut rustc_args = vec!["-Zpolonius=yes".to_string()];
-    rustc_args.extend(std::env::args().skip(1));
-    let mut callbacks = PcsCallbacks;
-    driver::RunCompiler::new(&rustc_args, &mut callbacks).run();
+    // let mut rustc_args = vec!["-Zpolonius=yes".to_string()];
+    // rustc_args.extend(std::env::args().skip(1));
+    // let mut callbacks = PcsCallbacks;
+    // driver::RunCompiler::new(&rustc_args, &mut callbacks).run();
+
+    // let filename = std::env::args()
+    //     .nth(1)
+    //     .expect("Please provide a filename as the first argument");
+    // let file_contents = std::fs::read_to_string(filename).expect("Failed to read file");
+    // polonius_visualization(file_contents);
+    subset_base_visualization(std::fs::read_to_string(
+        "/Users/zgrannan/choose/nll-facts/get_to_end/subset_base.facts"
+    ).unwrap());
 }

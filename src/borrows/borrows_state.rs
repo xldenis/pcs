@@ -30,7 +30,6 @@ use super::{
 
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        eprintln!("JOIN");
         let mut changed = false;
         for region_abstraction in &other.region_abstractions {
             if !self.region_abstractions.contains(region_abstraction) {
@@ -74,7 +73,7 @@ impl<'mir, 'tcx> PartialEq for BorrowsState<'mir, 'tcx> {
 impl<'mir, 'tcx> Eq for BorrowsState<'mir, 'tcx> {}
 
 impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
-    pub fn bridge(&self, to: &Self, block: BasicBlock) -> ReborrowBridge<'tcx> {
+    pub fn bridge(&self, to: &Self, block: BasicBlock, tcx: TyCtxt<'tcx>) -> ReborrowBridge<'tcx> {
         let added_reborrows: FxHashSet<Reborrow<'tcx>> = to
             .reborrows()
             .iter()
@@ -110,6 +109,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     *reborrow,
                     self,
                     UnblockReasons::new(UnblockReason::NotInStateToBridge(reborrow.clone())),
+                    tcx,
                 );
             }
         }
@@ -127,6 +127,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                         exp.base.place(),
                         exp.location,
                     )),
+                    tcx,
                 );
             }
         }
@@ -148,13 +149,17 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             .ensure_expansion_to(place, body, tcx, location);
     }
 
-    pub fn roots_of(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<MaybeOldPlace<'tcx>> {
+    pub fn roots_of(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+        tcx: TyCtxt<'tcx>,
+    ) -> FxHashSet<MaybeOldPlace<'tcx>> {
         let mut result = FxHashSet::default();
         for place in self.reborrows.get_places_blocking(place) {
-            result.extend(self.roots_of(place));
+            result.extend(self.roots_of(place, tcx));
         }
-        for place in self.deref_expansions.get_parents(place) {
-            result.extend(self.roots_of(place));
+        for place in self.deref_expansions.get_parents(place, tcx) {
+            result.extend(self.roots_of(place, tcx));
         }
         if result.is_empty() {
             result.insert(place);
@@ -162,10 +167,8 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         result
     }
 
-    pub fn remove_dangling_old_places(&mut self) {
-        while self.remove_dangling_old_places_pass() {
-            eprintln!("Iteration");
-        }
+    pub fn remove_dangling_old_places(&mut self, tcx: TyCtxt<'tcx>) {
+        while self.remove_dangling_old_places_pass(tcx) {}
     }
 
     pub fn is_leaf(&self, place: MaybeOldPlace<'tcx>) -> bool {
@@ -173,18 +176,21 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             && !self.deref_expansions.contains_expansion_from(place)
     }
 
-    pub fn leaves(&self) -> (FxHashSet<&Reborrow<'tcx>>, FxHashSet<&DerefExpansion<'tcx>>) {
+    pub fn leaves(
+        &self,
+        tcx: TyCtxt<'tcx>,
+    ) -> (FxHashSet<&Reborrow<'tcx>>, FxHashSet<&DerefExpansion<'tcx>>) {
         let mut reborrows: FxHashSet<_> = self.reborrows.iter().collect();
         let mut deref_expansions: FxHashSet<_> = self.deref_expansions.iter().collect();
         reborrows.retain(|rb| self.is_leaf(rb.assigned_place));
-        deref_expansions.retain(|de| de.expansion().iter().all(|e| self.is_leaf(*e)));
+        deref_expansions.retain(|de| de.expansion(tcx).iter().all(|e| self.is_leaf(*e)));
         return (reborrows, deref_expansions);
     }
 
     // TODO: This is not precise, consider each location separately
-    pub fn remove_dangling_old_places_pass(&mut self) -> bool {
+    pub fn remove_dangling_old_places_pass(&mut self, tcx: TyCtxt<'tcx>) -> bool {
         let mut changed = false;
-        let (reborrows, deref_expansions) = self.leaves();
+        let (reborrows, deref_expansions) = self.leaves(tcx);
         let mut reborrows = reborrows
             .into_iter()
             .cloned()
@@ -211,11 +217,11 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     }
 
     /// Returns places in the PCS that are reborrowed
-    pub fn reborrow_roots(&self) -> FxHashSet<Place<'tcx>> {
+    pub fn reborrow_roots(&self, tcx: TyCtxt<'tcx>) -> FxHashSet<Place<'tcx>> {
         self.reborrows
             .roots()
             .into_iter()
-            .flat_map(|place| self.roots_of(place))
+            .flat_map(|place| self.roots_of(place, tcx))
             .flat_map(|place| match place {
                 MaybeOldPlace::Current { place } => Some(place),
                 MaybeOldPlace::OldPlace(_) => None,
@@ -223,7 +229,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             .collect()
     }
 
-    pub fn apply_unblock_graph(&mut self, graph: UnblockGraph<'tcx>) -> bool {
+    pub fn apply_unblock_graph(&mut self, graph: UnblockGraph<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
         let mut changed = false;
         for action in graph.actions() {
             match action {
@@ -237,7 +243,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     }
                 }
                 crate::combined_pcs::UnblockAction::Collapse(place, _) => {
-                    if self.deref_expansions.delete_descendants_of(place) {
+                    if self.deref_expansions.delete_descendants_of(place, tcx) {
                         changed = true;
                     }
                 }
@@ -370,7 +376,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.reborrows
             .make_place_old(place.project_deref(repacker), location);
         self.deref_expansions.make_place_old(place, location);
-        self.remove_dangling_old_places();
+        self.remove_dangling_old_places(repacker.tcx());
     }
 
     pub fn remove_borrow(&mut self, tcx: TyCtxt<'tcx>, borrow: &Borrow<'tcx>, block: BasicBlock) {
@@ -384,9 +390,10 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             &self,
             block,
             UnblockReasons::new(UnblockReason::RemoveBorrow(borrow.clone())),
+            tcx,
         );
 
-        self.apply_unblock_graph(g);
+        self.apply_unblock_graph(g, tcx);
     }
 
     pub fn remove_rustc_borrow(

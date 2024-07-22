@@ -9,7 +9,7 @@ use rustc_interface::{
     dataflow::{Analysis, Forward},
     middle::{
         mir::{BasicBlock, Body, Local, Location},
-        ty::RegionVid,
+        ty::{RegionVid, TyCtxt},
     },
 };
 
@@ -52,13 +52,20 @@ type Cursor<'mir, 'tcx, E> = ResultsCursor<'mir, 'tcx, E>;
 
 pub trait HasExtra<T> {
     type ExtraBridge;
+    type BridgeCtx;
     fn get_extra(&self) -> T;
     fn bridge_between_stmts(
         lhs: T,
         rhs: T,
         block: BasicBlock,
+        tcx: Self::BridgeCtx,
     ) -> (Self::ExtraBridge, Self::ExtraBridge);
-    fn bridge_terminator(lhs: &T, rhs: T, block: BasicBlock) -> Self::ExtraBridge;
+    fn bridge_terminator(
+        lhs: &T,
+        rhs: T,
+        block: BasicBlock,
+        args: Self::BridgeCtx,
+    ) -> Self::ExtraBridge;
 }
 
 pub struct FreePcsAnalysis<
@@ -74,7 +81,7 @@ pub struct FreePcsAnalysis<
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Domain = D>>
+impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx>>, E: Analysis<'tcx, Domain = D>>
     FreePcsAnalysis<'mir, 'tcx, T, D, E>
 {
     pub(crate) fn new(cursor: Cursor<'mir, 'tcx, E>) -> Self {
@@ -122,8 +129,12 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Doma
         self.cursor.seek_after_primary_effect(location);
         let c = self.cursor.get().get_curr_fpcs();
         let (repacks_start, repacks_middle) = c.repack_ops(&after);
-        let (extra_start, extra_middle) =
-            D::bridge_between_stmts(extra_after, self.cursor.get().get_extra(), location.block);
+        let (extra_start, extra_middle) = D::bridge_between_stmts(
+            extra_after,
+            self.cursor.get().get_extra(),
+            location.block,
+            self.repacker().tcx(),
+        );
         FreePcsLocation {
             location,
             states: CapabilitySummaries {
@@ -172,7 +183,7 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T>, E: Analysis<'tcx, Doma
                     repacks_start: state.after.bridge(&to.after, rp),
                     repacks_middle: Vec::new(),
                     extra: entry_set.get_extra(),
-                    extra_start: D::bridge_terminator(&extra, extra_to, succ),
+                    extra_start: D::bridge_terminator(&extra, extra_to, succ, rp.tcx()),
                     extra_middle: None,
                 }
             })
@@ -212,7 +223,6 @@ pub struct CapabilitySummaries<'tcx> {
     pub start: CapabilitySummary<'tcx>,
     pub after: CapabilitySummary<'tcx>,
 }
-
 
 #[derive(Debug)]
 pub struct FreePcsLocation<'tcx, T, A> {
