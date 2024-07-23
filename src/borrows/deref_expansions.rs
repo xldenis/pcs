@@ -204,10 +204,10 @@ impl<'tcx> DerefExpansions<'tcx> {
         self.0.contains(expansion)
     }
 
-    pub fn has_expansion_at_location(&self, place: Place<'tcx>, location: Location) -> bool {
+    pub fn has_expansion_at_location(&self, location: Location) -> bool {
         self.0
             .iter()
-            .any(|expansion| expansion.base.place() == place && expansion.location == location)
+            .any(|expansion| expansion.location == location)
     }
 }
 

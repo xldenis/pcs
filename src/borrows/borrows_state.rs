@@ -90,7 +90,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             .filter(|exp| {
                 !self
                     .deref_expansions
-                    .has_expansion_at_location(exp.base.place(), exp.location)
+                    .has_expansion_at_location(exp.location)
             })
             .cloned()
             .collect();
@@ -109,10 +109,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         }
 
         for exp in self.deref_expansions.iter() {
-            if !to
-                .deref_expansions
-                .has_expansion_at_location(exp.base.place(), exp.location)
-            {
+            if !to.deref_expansions.has_expansion_at_location(exp.location) {
                 ug.unblock_place(
                     exp.base,
                     self,
