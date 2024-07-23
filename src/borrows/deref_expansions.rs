@@ -23,7 +23,7 @@ impl<'tcx> DerefExpansions<'tcx> {
     pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
         let mut new: FxHashSet<DerefExpansion<'tcx>> = FxHashSet::default();
         for mut expansion in self.0.clone() {
-            let value = if expansion.base.is_current() && expansion.base.place() == place {
+            let value = if expansion.base.is_current() && place.is_prefix(expansion.base.place()) {
                 expansion.make_base_old(location);
                 expansion
             } else {
@@ -164,7 +164,6 @@ impl<'tcx> DerefExpansions<'tcx> {
             .cloned()
             .collect::<Vec<_>>()
         {
-            eprintln!("Expansion: {:?}", expansion);
             for p in expansion.expansion(tcx) {
                 if self.delete_descendants_of(p, tcx, location) {
                     changed = true;

@@ -28,7 +28,8 @@ use crate::{
 use super::{
     deref_expansions::DerefExpansions,
     domain::{Borrow, DerefExpansion, Latest, MaybeOldPlace, Reborrow, RegionAbstraction},
-    reborrowing_dag::ReborrowingDag, unblock_graph::UnblockGraph,
+    reborrowing_dag::ReborrowingDag,
+    unblock_graph::UnblockGraph,
 };
 
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
@@ -167,15 +168,10 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                                     );
                                 } else {
                                     let mut ug = UnblockGraph::new();
-                                    eprintln!(
-                                        "Looking for expansion from {:?} {location:?}",
-                                        place
-                                    );
                                     for deref_expansion in self
                                         .deref_expansions
                                         .descendants_of(MaybeOldPlace::Current { place: *place })
                                     {
-                                        todo!("Hit it");
                                         ug.kill_place(
                                             deref_expansion.base,
                                             self,
@@ -436,14 +432,9 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         }
     }
 
-    pub fn make_deref_of_place_old(
-        &mut self,
-        place: Place<'tcx>,
-        repacker: PlaceRepacker<'_, 'tcx>,
-    ) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) {
         let location = self.get_latest(&place);
-        self.reborrows
-            .make_place_old(place.project_deref(repacker), location);
+        self.reborrows.make_place_old(place, location);
         self.deref_expansions.make_place_old(place, location);
         self.remove_dangling_old_places(repacker.tcx());
     }

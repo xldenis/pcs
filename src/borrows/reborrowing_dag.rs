@@ -27,11 +27,17 @@ impl<'tcx> ReborrowingDag<'tcx> {
     pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
         let mut new = FxHashSet::default();
         for mut reborrow in self.reborrows.clone() {
-            if reborrow.blocked_place.is_current() && reborrow.blocked_place.place() == place {
-                reborrow.blocked_place = MaybeOldPlace::new(place, Some(location));
+            if reborrow.blocked_place.is_current()
+                && place.is_prefix(reborrow.blocked_place.place())
+            {
+                reborrow.blocked_place =
+                    MaybeOldPlace::new(reborrow.blocked_place.place(), Some(location));
             }
-            if reborrow.assigned_place.is_current() && reborrow.assigned_place.place() == place {
-                reborrow.assigned_place = MaybeOldPlace::new(place, Some(location));
+            if reborrow.assigned_place.is_current()
+                && place.is_prefix(reborrow.assigned_place.place())
+            {
+                reborrow.assigned_place =
+                    MaybeOldPlace::new(reborrow.assigned_place.place(), Some(location));
             }
             new.insert(reborrow);
         }

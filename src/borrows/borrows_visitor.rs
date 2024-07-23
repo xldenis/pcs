@@ -120,7 +120,10 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 Operand::Copy(place) | Operand::Move(place) => {
                     let place: utils::Place<'tcx> = (*place).into();
                     if place.is_owned(self.body, self.tcx) && place.is_ref(self.body, self.tcx) {
-                        self.ensure_expansion_to_exactly(place.project_deref(self.repacker()), location);
+                        self.ensure_expansion_to_exactly(
+                            place.project_deref(self.repacker()),
+                            location,
+                        );
                     } else {
                         self.ensure_expansion_to_exactly(place, location);
                     }
@@ -178,8 +181,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     let place: utils::Place<'tcx> = (*local).into();
                     let repacker = PlaceRepacker::new(self.body, self.tcx);
                     if place.ty(repacker).ty.is_ref() {
-                        self.state.after.make_deref_of_place_old(place, repacker);
-                        self.state.after.deref_expansions.delete(place.into());
+                        self.state.after.make_place_old(place, repacker);
                     }
                 }
                 _ => {}
@@ -192,7 +194,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 StatementKind::Assign(box (target, rvalue)) => {
                     if target.ty(self.body, self.tcx).ty.is_ref() {
                         let target = (*target).into();
-                        self.state.after.make_deref_of_place_old(
+                        self.state.after.make_place_old(
                             target,
                             PlaceRepacker::new(self.body, self.tcx),
                         );
@@ -200,10 +202,15 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 }
                 StatementKind::FakeRead(box (_, place)) => {
                     let place: utils::Place<'tcx> = (*place).into();
-                    if place.is_owned(self.body, self.tcx) && place.is_ref(self.body, self.tcx) {
-                        self.ensure_expansion_to_exactly(place.project_deref(self.repacker()), location);
-                    } else {
-                        self.ensure_expansion_to_exactly(place, location);
+                    if !place.is_owned(self.body, self.tcx) {
+                        if place.is_ref(self.body, self.tcx) {
+                            self.ensure_expansion_to_exactly(
+                                place.project_deref(self.repacker()),
+                                location,
+                            );
+                        } else {
+                            self.ensure_expansion_to_exactly(place, location);
+                        }
                     }
                 }
                 _ => {}
@@ -224,12 +231,11 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     from.project_deref(self.repacker()),
                                     target.project_deref(self.repacker()),
                                 );
-
-                                self.state.after.make_deref_of_place_old(
-                                    from,
-                                    PlaceRepacker::new(self.body, self.tcx),
-                                );
                             }
+                            self.state.after.make_place_old(
+                                from,
+                                PlaceRepacker::new(self.body, self.tcx),
+                            );
                             self.state.after.deref_expansions.delete(from.into());
                         }
                         Rvalue::Use(Operand::Copy(from)) => {
@@ -289,8 +295,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
             | &Len(place)
             | &Discriminant(place)
             | &CopyForDeref(place) => {
-                if self.before && self.preparing {
-                    self.ensure_expansion_to_exactly(place.into(), location);
+                let place: utils::Place<'tcx> = place.into();
+                if self.before && self.preparing && !place.is_owned(self.body, self.tcx) {
+                    self.ensure_expansion_to_exactly(place, location);
                 }
             }
         }
