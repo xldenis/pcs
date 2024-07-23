@@ -81,8 +81,13 @@ pub struct FreePcsAnalysis<
     _marker: std::marker::PhantomData<T>,
 }
 
-impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx>>, E: Analysis<'tcx, Domain = D>>
-    FreePcsAnalysis<'mir, 'tcx, T, D, E>
+impl<
+        'mir,
+        'tcx,
+        T,
+        D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx>>,
+        E: Analysis<'tcx, Domain = D>,
+    > FreePcsAnalysis<'mir, 'tcx, T, D, E>
 {
     pub(crate) fn new(cursor: Cursor<'mir, 'tcx, E>) -> Self {
         Self {
@@ -118,37 +123,50 @@ impl<'mir, 'tcx, T, D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx
     pub fn initial_state(&self) -> &CapabilitySummary<'tcx> {
         &self.cursor.get().get_curr_fpcs().after
     }
+
+    /// Returns the free pcs for the location `exp_loc` and iterates the cursor
+    /// to the *end* of that location.
     pub fn next(&mut self, exp_loc: Location) -> FreePcsLocation<'tcx, T, D::ExtraBridge> {
         let location = self.curr_stmt.unwrap();
         assert_eq!(location, exp_loc);
         assert!(location < self.end_stmt.unwrap());
-        self.curr_stmt = Some(location.successor_within_block());
 
-        let after = self.cursor.get().get_curr_fpcs().after.clone();
-        let extra_after = self.cursor.get().get_extra();
+        let state = self.cursor.get();
+
+        let after = state.get_curr_fpcs().after.clone();
+        let extra_after = state.get_extra();
+
         self.cursor.seek_after_primary_effect(location);
-        let c = self.cursor.get().get_curr_fpcs();
-        let (repacks_start, repacks_middle) = c.repack_ops(&after);
+
+        let state = self.cursor.get();
+        let curr_fpcs = state.get_curr_fpcs();
+        let (repacks_start, repacks_middle) = curr_fpcs.repack_ops(&after);
+
         let (extra_start, extra_middle) = D::bridge_between_stmts(
             extra_after,
-            self.cursor.get().get_extra(),
+            state.get_extra(),
             location.block,
             self.repacker().tcx(),
         );
-        FreePcsLocation {
+
+        let result = FreePcsLocation {
             location,
             states: CapabilitySummaries {
-                before_start: c.before_start.clone(),
-                before_after: c.before_after.clone(),
-                start: c.start.clone(),
-                after: c.after.clone(),
+                before_start: curr_fpcs.before_start.clone(),
+                before_after: curr_fpcs.before_after.clone(),
+                start: curr_fpcs.start.clone(),
+                after: curr_fpcs.after.clone(),
             },
             repacks_start,
             repacks_middle,
             extra_start,
             extra_middle: Some(extra_middle),
-            extra: self.cursor.get().get_extra(),
-        }
+            extra: state.get_extra(),
+        };
+
+        self.curr_stmt = Some(location.successor_within_block());
+
+        result
     }
     pub fn terminator(&mut self) -> FreePcsTerminator<'tcx, T, D::ExtraBridge> {
         let location = self.curr_stmt.unwrap();

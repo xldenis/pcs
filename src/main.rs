@@ -245,7 +245,7 @@ fn subset_base_visualization(file_contents: String) {
     for fact in facts
         .into_iter()
         .sorted_by(|a, b| a.location.cmp(&b.location))
-        .filter(|fact| fact.location.block().as_usize() <= 5)
+        // .filter(|fact| fact.location.block().as_usize() <= 5)
     {
         println!("{:?}", fact);
         let sub_node = lookup(&fact.subset);
