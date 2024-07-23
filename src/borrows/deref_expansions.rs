@@ -65,7 +65,7 @@ impl<'tcx> DerefExpansions<'tcx> {
             .collect()
     }
 
-    pub fn ensure_expansion_to(
+    pub fn ensure_deref_expansion_to_at_least(
         &mut self,
         place: MaybeOldPlace<'tcx>,
         body: &mir::Body<'tcx>,
@@ -95,9 +95,17 @@ impl<'tcx> DerefExpansions<'tcx> {
                 }
             }
         }
-        if in_dag {
-            self.delete_descendants_of(place, tcx);
-        }
+    }
+
+    pub fn ensure_expansion_to_exactly(
+        &mut self,
+        place: MaybeOldPlace<'tcx>,
+        body: &mir::Body<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        location: Location,
+    ) {
+        self.ensure_deref_expansion_to_at_least(place, body, tcx, location);
+        self.delete_descendants_of(place, tcx, Some(location));
     }
 
     pub fn move_expansion(
@@ -132,7 +140,23 @@ impl<'tcx> DerefExpansions<'tcx> {
         changed
     }
 
-    pub fn delete_descendants_of(&mut self, place: MaybeOldPlace<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    pub fn descendants_of(&self, place: MaybeOldPlace<'tcx>) -> Vec<DerefExpansion<'tcx>> {
+        self.0
+            .iter()
+            .filter(|expansion| {
+                place.place().is_prefix(expansion.base.place())
+                    && place.location() == expansion.base.location()
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn delete_descendants_of(
+        &mut self,
+        place: MaybeOldPlace<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        location: Option<Location>,
+    ) -> bool {
         let mut changed = false;
         for expansion in self
             .iter()
@@ -140,8 +164,9 @@ impl<'tcx> DerefExpansions<'tcx> {
             .cloned()
             .collect::<Vec<_>>()
         {
+            eprintln!("Expansion: {:?}", expansion);
             for p in expansion.expansion(tcx) {
-                if self.delete_descendants_of(p, tcx) {
+                if self.delete_descendants_of(p, tcx, location) {
                     changed = true;
                 }
                 if self.delete(p) {

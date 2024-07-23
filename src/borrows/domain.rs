@@ -13,7 +13,6 @@ use rustc_interface::{
 };
 
 use crate::{
-    combined_pcs::UnblockGraph,
     free_pcs::CapabilityProjections,
     rustc_interface,
     utils::{Place, PlaceSnapshot},

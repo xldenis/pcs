@@ -19,7 +19,7 @@ use rustc_interface::{
 };
 
 use crate::{
-    borrows::{engine::{BorrowsDomain, ReborrowAction}, unblock_reason::{UnblockReason, UnblockReasons}},
+    borrows::{engine::{BorrowsDomain, ReborrowAction}, unblock_graph::UnblockGraph, unblock_reason::{UnblockReason, UnblockReasons}},
     free_pcs::{
         CapabilityLocal, CapabilityProjections, FreePlaceCapabilitySummary, HasFpcs, RepackOp,
     },
@@ -27,7 +27,7 @@ use crate::{
     utils::{Place, PlaceRepacker},
 };
 
-use super::{PcsContext, PcsEngine, UnblockGraph};
+use super::{PcsContext, PcsEngine};
 use crate::borrows::borrows_state::BorrowsState;
 
 #[derive(Clone)]

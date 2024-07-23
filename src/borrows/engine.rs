@@ -25,7 +25,6 @@ use serde_json::{json, Value};
 
 use crate::{
     borrows::domain::RegionAbstraction,
-    combined_pcs::UnblockGraph,
     rustc_interface,
     utils::{self, PlaceRepacker, PlaceSnapshot},
     ReborrowBridge,
@@ -86,15 +85,6 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         let mut visitor = RegionVisitor(HashSet::new());
         visitor.visit_ty(ty);
         visitor.0
-    }
-
-    fn placed_loaned_to_place(&self, place: Place<'tcx>) -> Vec<Place<'tcx>> {
-        self.borrow_set
-            .location_map
-            .iter()
-            .filter(|(_, borrow)| borrow.assigned_place == place)
-            .map(|(_, borrow)| borrow.borrowed_place)
-            .collect()
     }
 
     fn outlives_or_eq(&self, sup: RegionVid, sub: RegionVid) -> bool {

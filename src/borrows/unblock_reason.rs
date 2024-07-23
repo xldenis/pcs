@@ -16,6 +16,8 @@ pub enum UnblockReason<'tcx> {
     ChildOfPlace(MaybeOldPlace<'tcx>, MaybeOldPlace<'tcx>),
     NotInStateToBridge(Reborrow<'tcx>),
     DerefExpansionDoesntExist(Place<'tcx>, Location),
+    EnsureExpansionTo(MaybeOldPlace<'tcx>),
+    FpcsCollapse(MaybeOldPlace<'tcx>),
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]

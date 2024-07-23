@@ -25,7 +25,6 @@ use serde_json::{json, Value};
 
 use crate::{
     borrows::domain::RegionAbstraction,
-    combined_pcs::UnblockGraph,
     rustc_interface,
     utils::{self, PlaceRepacker, PlaceSnapshot},
     ReborrowBridge,
@@ -85,8 +84,8 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
             borrow_set: engine.borrow_set.clone(),
         }
     }
-    fn ensure_expansion_to(&mut self, place: utils::Place<'tcx>, location: Location) {
-        self.state.after.ensure_expansion_to(
+    fn ensure_expansion_to_exactly(&mut self, place: utils::Place<'tcx>, location: Location) {
+        self.state.after.ensure_expansion_to_exactly(
             self.tcx,
             self.body,
             MaybeOldPlace::Current { place },
@@ -121,9 +120,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 Operand::Copy(place) | Operand::Move(place) => {
                     let place: utils::Place<'tcx> = (*place).into();
                     if place.is_owned(self.body, self.tcx) && place.is_ref(self.body, self.tcx) {
-                        self.ensure_expansion_to(place.project_deref(self.repacker()), location);
+                        self.ensure_expansion_to_exactly(place.project_deref(self.repacker()), location);
                     } else {
-                        self.ensure_expansion_to(place, location);
+                        self.ensure_expansion_to_exactly(place, location);
                     }
                 }
                 _ => {}
@@ -170,7 +169,10 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
         if self.preparing && !self.before {
             match &statement.kind {
                 StatementKind::Assign(box (target, _)) => {
-                    self.ensure_expansion_to((*target).into(), location);
+                    let target: utils::Place<'tcx> = (*target).into();
+                    if !target.is_owned(self.body, self.tcx) {
+                        self.ensure_expansion_to_exactly(target, location);
+                    }
                 }
                 StatementKind::StorageDead(local) => {
                     let place: utils::Place<'tcx> = (*local).into();
@@ -187,12 +189,21 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
         // Will be included as start bridge ops
         if self.preparing && self.before {
             match &statement.kind {
+                StatementKind::Assign(box (target, rvalue)) => {
+                    if target.ty(self.body, self.tcx).ty.is_ref() {
+                        let target = (*target).into();
+                        self.state.after.make_deref_of_place_old(
+                            target,
+                            PlaceRepacker::new(self.body, self.tcx),
+                        );
+                    }
+                }
                 StatementKind::FakeRead(box (_, place)) => {
                     let place: utils::Place<'tcx> = (*place).into();
                     if place.is_owned(self.body, self.tcx) && place.is_ref(self.body, self.tcx) {
-                        self.ensure_expansion_to(place.project_deref(self.repacker()), location);
+                        self.ensure_expansion_to_exactly(place.project_deref(self.repacker()), location);
                     } else {
-                        self.ensure_expansion_to(place, location);
+                        self.ensure_expansion_to_exactly(place, location);
                     }
                 }
                 _ => {}
@@ -202,21 +213,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
         if !self.preparing && !self.before {
             match &statement.kind {
                 StatementKind::Assign(box (target, rvalue)) => {
-                    if target.ty(self.body, self.tcx).ty.is_ref() {
-                        let target = (*target).into();
-                        self.state.after.make_deref_of_place_old(
-                            target,
-                            PlaceRepacker::new(self.body, self.tcx),
-                        );
-                        self.state.after.ensure_expansion_to(
-                            self.tcx,
-                            self.body,
-                            MaybeOldPlace::Current {
-                                place: target.project_deref(self.repacker()),
-                            },
-                            location,
-                        );
-                    }
                     self.state.after.set_latest((*target).into(), location);
                     match rvalue {
                         Rvalue::Use(Operand::Move(from)) => {
@@ -234,10 +230,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     PlaceRepacker::new(self.body, self.tcx),
                                 );
                             }
-                            self.state
-                                .after
-                                .deref_expansions
-                                .delete(from.into());
+                            self.state.after.deref_expansions.delete(from.into());
                         }
                         Rvalue::Use(Operand::Copy(from)) => {
                             if from.ty(self.body, self.tcx).ty.is_ref() {
@@ -296,8 +289,8 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
             | &Len(place)
             | &Discriminant(place)
             | &CopyForDeref(place) => {
-                if self.before {
-                    self.ensure_expansion_to(place.into(), location);
+                if self.before && self.preparing {
+                    self.ensure_expansion_to_exactly(place.into(), location);
                 }
             }
         }

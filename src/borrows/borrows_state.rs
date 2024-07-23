@@ -15,8 +15,11 @@ use serde_json::{json, Value};
 
 use crate::{
     borrows::unblock_reason::{UnblockReason, UnblockReasons},
-    combined_pcs::UnblockGraph,
-    free_pcs::CapabilityProjections,
+    combined_pcs::PlaceCapabilitySummary,
+    free_pcs::{
+        CapabilityKind, CapabilityLocal, CapabilityProjections, CapabilitySummary,
+        FreePlaceCapabilitySummary,
+    },
     rustc_interface,
     utils::{Place, PlaceRepacker, PlaceSnapshot},
     ReborrowBridge,
@@ -25,7 +28,7 @@ use crate::{
 use super::{
     deref_expansions::DerefExpansions,
     domain::{Borrow, DerefExpansion, Latest, MaybeOldPlace, Reborrow, RegionAbstraction},
-    reborrowing_dag::ReborrowingDag,
+    reborrowing_dag::ReborrowingDag, unblock_graph::UnblockGraph,
 };
 
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
@@ -138,15 +141,78 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             ug,
         }
     }
-    pub fn ensure_expansion_to(
+
+    pub fn ensure_deref_expansions_to_fpcs(
+        &mut self,
+        tcx: TyCtxt<'tcx>,
+        body: &mir::Body<'tcx>,
+        summary: &CapabilitySummary<'tcx>,
+        location: Location,
+    ) {
+        for c in (*summary).iter() {
+            match c {
+                CapabilityLocal::Allocated(projections) => {
+                    for (place, kind) in (*projections).iter() {
+                        match kind {
+                            CapabilityKind::Exclusive => {
+                                if place.is_ref(body, tcx) {
+                                    self.deref_expansions.ensure_deref_expansion_to_at_least(
+                                        MaybeOldPlace::Current {
+                                            place: place
+                                                .project_deref(PlaceRepacker::new(body, tcx)),
+                                        },
+                                        body,
+                                        tcx,
+                                        location,
+                                    );
+                                } else {
+                                    let mut ug = UnblockGraph::new();
+                                    eprintln!(
+                                        "Looking for expansion from {:?} {location:?}",
+                                        place
+                                    );
+                                    for deref_expansion in self
+                                        .deref_expansions
+                                        .descendants_of(MaybeOldPlace::Current { place: *place })
+                                    {
+                                        todo!("Hit it");
+                                        ug.kill_place(
+                                            deref_expansion.base,
+                                            self,
+                                            location.block,
+                                            tcx,
+                                        );
+                                    }
+                                    self.apply_unblock_graph(ug, tcx);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub fn ensure_expansion_to_exactly(
         &mut self,
         tcx: TyCtxt<'tcx>,
         body: &mir::Body<'tcx>,
         place: MaybeOldPlace<'tcx>,
         location: Location,
     ) {
+        let mut ug = UnblockGraph::new();
+        ug.unblock_place(
+            place,
+            self,
+            location.block,
+            UnblockReasons::new(UnblockReason::EnsureExpansionTo(place)),
+            tcx,
+        );
+        self.apply_unblock_graph(ug, tcx);
         self.deref_expansions
-            .ensure_expansion_to(place, body, tcx, location);
+            .ensure_expansion_to_exactly(place, body, tcx, location);
     }
 
     pub fn roots_of(
@@ -243,7 +309,10 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     }
                 }
                 crate::combined_pcs::UnblockAction::Collapse(place, _) => {
-                    if self.deref_expansions.delete_descendants_of(place, tcx) {
+                    if self
+                        .deref_expansions
+                        .delete_descendants_of(place, tcx, None)
+                    {
                         changed = true;
                     }
                 }
@@ -382,7 +451,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn remove_borrow(&mut self, tcx: TyCtxt<'tcx>, borrow: &Borrow<'tcx>, block: BasicBlock) {
         let mut g = UnblockGraph::new();
 
-        // TODO: old places
         g.unblock_place(
             MaybeOldPlace::Current {
                 place: borrow.borrowed_place,

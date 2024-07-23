@@ -10,9 +10,7 @@ pub mod graph_constructor;
 pub mod mir_graph;
 
 use crate::{
-    borrows::borrows_state::BorrowsState,
-    borrows::domain::{Borrow, MaybeOldPlace, RegionAbstraction},
-    combined_pcs::UnblockGraph,
+    borrows::{borrows_state::BorrowsState, domain::{Borrow, MaybeOldPlace, RegionAbstraction}, unblock_graph::UnblockGraph},
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{place_snapshot::PlaceSnapshot, Place, PlaceRepacker},

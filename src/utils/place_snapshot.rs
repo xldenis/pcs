@@ -19,6 +19,10 @@ pub struct PlaceSnapshot<'tcx> {
 }
 
 impl<'tcx> PlaceSnapshot<'tcx> {
+    pub fn new(place: Place<'tcx>, at: Location) -> Self {
+        PlaceSnapshot { place, at }
+    }
+
     pub fn project_deref(&self, repacker: PlaceRepacker<'_, 'tcx>) -> PlaceSnapshot<'tcx> {
         PlaceSnapshot {
             place: self.place.project_deref(repacker),

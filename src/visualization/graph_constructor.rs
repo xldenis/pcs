@@ -1,7 +1,6 @@
 use crate::{
-    borrows::borrows_state::BorrowsState,
-    borrows::domain::{Borrow, MaybeOldPlace, RegionAbstraction},
-    combined_pcs::{UnblockEdgeType, UnblockGraph},
+    borrows::{borrows_state::BorrowsState, domain::{Borrow, MaybeOldPlace, RegionAbstraction}, unblock_graph::UnblockGraph},
+    combined_pcs::UnblockEdgeType,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker, PlaceSnapshot},

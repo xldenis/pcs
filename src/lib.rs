@@ -22,10 +22,10 @@ use std::{collections::HashMap, fs::create_dir_all, rc::Rc};
 use borrows::{
     borrows_state::BorrowsState,
     domain::{DerefExpansion, Reborrow},
-    engine::{BorrowsDomain, ReborrowAction},
+    engine::{BorrowsDomain, ReborrowAction}, unblock_graph::UnblockGraph,
 };
 use combined_pcs::{
-    BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary, UnblockGraph,
+    BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary,
 };
 use free_pcs::HasExtra;
 use rustc_interface::{
