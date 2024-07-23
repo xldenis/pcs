@@ -151,6 +151,14 @@ impl<'tcx> DerefExpansions<'tcx> {
             .collect()
     }
 
+    pub fn descendants_of_place(&self, place: Place<'tcx>) -> Vec<DerefExpansion<'tcx>> {
+        self.0
+            .iter()
+            .filter(|expansion| place.is_prefix(expansion.base.place()))
+            .cloned()
+            .collect()
+    }
+
     pub fn delete_descendants_of(
         &mut self,
         place: MaybeOldPlace<'tcx>,

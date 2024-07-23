@@ -30,10 +30,14 @@ use crate::{
     ReborrowBridge,
 };
 
-use super::domain::{Borrow, DerefExpansion, MaybeOldPlace, Reborrow};
 use super::{
     borrows_state::BorrowsState,
     engine::{BorrowsDomain, BorrowsEngine},
+};
+use super::{
+    domain::{Borrow, DerefExpansion, MaybeOldPlace, Reborrow},
+    unblock_graph::UnblockGraph,
+    unblock_reason::UnblockReasons,
 };
 
 pub struct BorrowsVisitor<'tcx, 'mir, 'state> {
@@ -194,10 +198,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 StatementKind::Assign(box (target, rvalue)) => {
                     if target.ty(self.body, self.tcx).ty.is_ref() {
                         let target = (*target).into();
-                        self.state.after.make_place_old(
-                            target,
-                            PlaceRepacker::new(self.body, self.tcx),
-                        );
+                        self.state
+                            .after
+                            .make_place_old(target, PlaceRepacker::new(self.body, self.tcx));
                     }
                 }
                 StatementKind::FakeRead(box (_, place)) => {
@@ -232,10 +235,19 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     target.project_deref(self.repacker()),
                                 );
                             }
-                            self.state.after.make_place_old(
-                                from,
-                                PlaceRepacker::new(self.body, self.tcx),
-                            );
+                            let mut ug = UnblockGraph::new();
+                            for d in self
+                                .state
+                                .after
+                                .deref_expansions
+                                .descendants_of_place(from.into())
+                            {
+                                ug.kill_place(d.base, &self.state.after, location.block, self.tcx);
+                            }
+                            self.state.after.apply_unblock_graph(ug, self.tcx);
+                            self.state
+                                .after
+                                .make_place_old(from, PlaceRepacker::new(self.body, self.tcx));
                         }
                         Rvalue::Use(Operand::Copy(from)) => {
                             if from.ty(self.body, self.tcx).ty.is_ref() {
