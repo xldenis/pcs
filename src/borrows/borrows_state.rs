@@ -81,13 +81,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         let added_reborrows: FxHashSet<Reborrow<'tcx>> = to
             .reborrows()
             .iter()
-            .filter(|rb| {
-                !self.has_reborrow_at_location(
-                    rb.blocked_place.place(),
-                    rb.assigned_place.place(),
-                    rb.location,
-                )
-            })
+            .filter(|rb| !self.has_reborrow_at_location(rb.location))
             .cloned()
             .collect();
         let expands: FxHashSet<DerefExpansion<'tcx>> = to
@@ -104,11 +98,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         let mut ug = UnblockGraph::new();
 
         for reborrow in self.reborrows().iter() {
-            if !to.has_reborrow_at_location(
-                reborrow.blocked_place.place(),
-                reborrow.assigned_place.place(),
-                reborrow.location,
-            ) {
+            if !to.has_reborrow_at_location(reborrow.location) {
                 ug.kill_reborrow(
                     *reborrow,
                     self,
@@ -378,13 +368,8 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.reborrows.contains(reborrow)
     }
 
-    pub fn has_reborrow_at_location(
-        &self,
-        from: Place<'tcx>,
-        to: Place<'tcx>,
-        location: Location,
-    ) -> bool {
-        self.reborrows.has_reborrow_at_location(from, to, location)
+    pub fn has_reborrow_at_location(&self, location: Location) -> bool {
+        self.reborrows.has_reborrow_at_location(location)
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {

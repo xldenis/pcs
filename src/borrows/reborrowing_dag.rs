@@ -66,17 +66,10 @@ impl<'tcx> ReborrowingDag<'tcx> {
         self.reborrows.contains(reborrow)
     }
 
-    pub fn has_reborrow_at_location(
-        &self,
-        from: Place<'tcx>,
-        to: Place<'tcx>,
-        location: Location,
-    ) -> bool {
-        self.reborrows.iter().any(|reborrow| {
-            reborrow.blocked_place.place() == from
-                && reborrow.assigned_place.place() == to
-                && reborrow.location == location
-        })
+    pub fn has_reborrow_at_location(&self, location: Location) -> bool {
+        self.reborrows
+            .iter()
+            .any(|reborrow| reborrow.location == location)
     }
 
     pub fn ensure_acyclic(&self) {
