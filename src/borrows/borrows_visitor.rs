@@ -236,7 +236,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                 from,
                                 PlaceRepacker::new(self.body, self.tcx),
                             );
-                            self.state.after.deref_expansions.delete(from.into());
                         }
                         Rvalue::Use(Operand::Copy(from)) => {
                             if from.ty(self.body, self.tcx).ty.is_ref() {
