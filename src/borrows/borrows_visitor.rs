@@ -32,6 +32,7 @@ use crate::{
 
 use super::{
     borrows_state::BorrowsState,
+    domain::AbstractionType,
     engine::{BorrowsDomain, BorrowsEngine},
 };
 use super::{
@@ -184,24 +185,19 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     destination,
                     ..
                 } => {
-                    let mut vids = FxHashSet::default();
-                    match func {
+                    let func_def_id = match func {
                         Operand::Constant(c) => match c.literal {
-                            ConstantKind::Val(_, ty) => match ty.kind() {
-                                ty::TyKind::FnDef(_, substs) => {
-                                    for region in substs.regions() {
-                                        vids.insert(get_vid(&region));
-                                    }
-                                }
-                                _ => {}
-                            },
+                            ConstantKind::Val(_, ty) => {match ty.kind() {
+                                ty::TyKind::FnDef(def_id, _) => def_id,
+                                _ => unreachable!(),
+                            }},
                             _ => unreachable!(),
                         },
                         _ => unreachable!(),
-                    }
+                    };
                     if let Some(result_vid) = self.vid_for_place((*destination).into()) {
-                        let mut ra = RegionAbstraction::new(result_vid);
-                        for arg in args {
+                        let mut blocks_args = vec![];
+                        for (i, arg) in args.iter().enumerate() {
                             if let Operand::Move(arg) = arg {
                                 let arg: utils::Place<'tcx> = (*arg).into();
                                 if !arg.is_mut_ref(self.body, self.tcx) {
@@ -213,7 +209,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     for r in
                                         self.state.after.reborrows_assigned_to(blocked_place.into())
                                     {
-                                        ra.add_blocked_place(r.blocked_place);
+                                        blocks_args.push((i, r.blocked_place));
                                     }
                                 }
                                 self.state.after.remove_loans_assigned_to(
@@ -225,7 +221,13 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                             }
                         }
                         let destination: utils::Place<'tcx> = (*destination).into();
-                        ra.add_blocked_by_place(destination.project_deref(self.repacker()).into());
+                        let ra_type = AbstractionType::FunctionCall {
+                            def_id: *func_def_id,
+                            location,
+                            blocks_args,
+                            blocked_place: destination.project_deref(self.repacker()).into(),
+                        };
+                        let mut ra = RegionAbstraction::new(result_vid, ra_type);
                         self.state.after.add_region_abstraction(ra);
                     } else {
                         for arg in args {

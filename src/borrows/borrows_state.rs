@@ -360,7 +360,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                         changed = true;
                     }
                 }
-                crate::combined_pcs::UnblockAction::TerminateRegion(vid) => {
+                crate::combined_pcs::UnblockAction::TerminateRegion(vid, ..) => {
                     self.region_abstractions.delete_region(vid)
                 }
             }
@@ -483,10 +483,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         debug_ctx: Option<DebugCtx>,
     ) {
         let location = self.get_latest(&place);
-        eprintln!(
-            "{:?} Making place old: {:?} to {:?}",
-            debug_ctx, place, location
-        );
         self.reborrows.make_place_old(place, location, debug_ctx);
         self.deref_expansions.make_place_old(place, location);
         self.region_abstractions.make_place_old(place, location);

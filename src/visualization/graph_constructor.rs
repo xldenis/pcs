@@ -1,7 +1,7 @@
 use crate::{
     borrows::{
         borrows_state::BorrowsState,
-        domain::{Borrow, MaybeOldPlace, RegionAbstraction},
+        domain::{AbstractionType, Borrow, MaybeOldPlace},
         unblock_graph::UnblockGraph,
     },
     combined_pcs::UnblockEdgeType,
@@ -105,12 +105,19 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
     }
 
-    fn insert_region_abstraction_node(&mut self, region: RegionVid) -> NodeId {
+    fn insert_region_abstraction_node(
+        &mut self,
+        region: RegionVid,
+        abstraction_type: &AbstractionType,
+    ) -> NodeId {
         if let Some(id) = self.region_abstraction_nodes.existing_id(&region) {
             return id;
         }
+        let call_location = match abstraction_type {
+            AbstractionType::FunctionCall { location, .. } => location,
+        };
         let id = self.region_abstraction_nodes.node_id(region);
-        let label = format!("{:?}", region);
+        let label = format!("{:?} for call at {:?}", region, call_location);
         let node = GraphNode {
             id,
             node_type: NodeType::RegionAbstractionNode { label },
@@ -207,10 +214,11 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                     }
                 }
                 UnblockEdgeType::Region(region_edge) => {
-                    let region = self
-                        .constructor
-                        .insert_region_abstraction_node(region_edge.region_vid());
-                    for place in &region_edge.blocked_places {
+                    let region = self.constructor.insert_region_abstraction_node(
+                        region_edge.region_vid(),
+                        region_edge.abstraction_type(),
+                    );
+                    for place in region_edge.blocked_places() {
                         let place = self.constructor.insert_place_node(
                             place.place(),
                             place.location(),
@@ -368,9 +376,11 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
         for abstraction in self.borrows_domain.region_abstractions.iter() {
             let r = self
                 .constructor
-                .insert_region_abstraction_node(abstraction.region);
+                .insert_region_abstraction_node(abstraction.region, &abstraction.abstraction_type);
             for vid in &abstraction.blocks_abstractions {
-                let blocked = self.constructor.insert_region_abstraction_node(*vid);
+                let blocked = self
+                    .constructor
+                    .insert_region_abstraction_node(*vid, &abstraction.abstraction_type);
                 self.constructor
                     .edges
                     .insert(GraphEdge::BlocksAbstractionEdge {
@@ -378,13 +388,13 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                         blocking_region: r,
                     });
             }
-            for place in &abstraction.blocked_by_places {
+            for place in &abstraction.blocked_by_places() {
                 let place = self.insert_maybe_old_place(*place);
                 self.constructor
                     .edges
                     .insert(GraphEdge::RegionBlockedByPlaceEdge { region: r, place });
             }
-            for place in &abstraction.blocks_places {
+            for place in &abstraction.blocks_places() {
                 let place = self.insert_maybe_old_place(*place);
                 self.constructor
                     .edges

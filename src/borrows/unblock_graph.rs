@@ -209,7 +209,10 @@ impl<'tcx> UnblockGraph<'tcx> {
                     }
                     UnblockEdgeType::Region(region_edge) => {
                         if is_leaf_abstraction(&region_edge) {
-                            push_action(UnblockAction::TerminateRegion(region_edge.region_vid()));
+                            push_action(UnblockAction::TerminateRegion(
+                                region_edge.region_vid(),
+                                region_edge.abstraction_type().clone(),
+                            ));
                             to_keep.remove(edge);
                         }
                     }
@@ -325,14 +328,14 @@ impl<'tcx> UnblockGraph<'tcx> {
         for abstraction in borrows.get_abstractions_blocking(place) {
             self.add_dependency(
                 UnblockEdgeType::Region(RegionEdge::new(
-                    abstraction.blocks_places.iter().cloned().collect(),
-                    abstraction.blocked_by_places.iter().cloned().collect(),
+                    abstraction.blocked_by_places().into_iter().collect(),
                     borrows
                         .get_abstractions_blocking_region(abstraction.region)
                         .into_iter()
                         .map(|a| a.region)
                         .collect(),
                     abstraction.region,
+                    abstraction.abstraction_type.clone(),
                 )),
                 block,
                 reason

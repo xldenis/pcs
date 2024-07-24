@@ -8,8 +8,11 @@ use rustc_interface::{
         graph::dominators::Dominators,
     },
     dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, PlaceElem, VarDebugInfo},
-    middle::ty::{RegionVid, TyCtxt},
+    hir::def_id::DefId,
+    middle::mir::{
+        self, tcx::PlaceTy, BasicBlock, Local, Location, Operand, PlaceElem, VarDebugInfo,
+    },
+    middle::ty::{self, RegionVid, TyCtxt},
 };
 
 use crate::{
@@ -18,27 +21,91 @@ use crate::{
     utils::{Place, PlaceSnapshot},
     ReborrowBridge,
 };
+
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum AbstractionType<'tcx> {
+    FunctionCall {
+        location: Location,
+
+        def_id: DefId,
+
+        /// For each (i, p) in args, `i` is the index of the argument in the
+        /// function definition, `p` is the place that was used as the argument
+        blocks_args: Vec<(usize, MaybeOldPlace<'tcx>)>,
+
+        /// The blocked place; e.g. for a function that returns a reference, this
+        /// would be the dereference of the target of the call
+        /// TODO: Actually multiple places may be blocked...
+        blocked_place: MaybeOldPlace<'tcx>,
+    },
+}
+
+impl<'tcx> AbstractionType<'tcx> {
+    pub fn blocked_by_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        match self {
+            AbstractionType::FunctionCall { blocked_place, .. } => {
+                vec![blocked_place.clone()].into_iter().collect()
+            }
+        }
+    }
+    pub fn blocks_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        match self {
+            AbstractionType::FunctionCall { blocks_args, .. } => {
+                blocks_args.iter().map(|(_, arg)| arg.clone()).collect()
+            }
+        }
+    }
+
+    pub fn blocks(&self, place: &MaybeOldPlace<'tcx>) -> bool {
+        match self {
+            AbstractionType::FunctionCall { blocks_args, .. } => {
+                blocks_args.iter().any(|(_, arg)| arg == place)
+            }
+        }
+    }
+
+    pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
+        match self {
+            AbstractionType::FunctionCall {
+                blocks_args,
+                blocked_place,
+                ..
+            } => {
+                for (i, arg) in blocks_args.iter_mut() {
+                    if arg.is_current() && place.is_prefix(arg.place()) {
+                        *arg = MaybeOldPlace::OldPlace(PlaceSnapshot {
+                            place: arg.place(),
+                            at: location,
+                        });
+                    }
+                }
+                if blocked_place.is_current() && place.is_prefix(blocked_place.place()) {
+                    *blocked_place = MaybeOldPlace::OldPlace(PlaceSnapshot {
+                        place: blocked_place.place(),
+                        at: location,
+                    });
+                }
+            }
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct RegionAbstraction<'tcx> {
     pub region: RegionVid,
 
-    /// The places that this region blocks
-    pub blocks_places: FxHashSet<MaybeOldPlace<'tcx>>,
-
-    /// The places blocked by this region
-    pub blocked_by_places: FxHashSet<MaybeOldPlace<'tcx>>,
-
     /// The regions blocked by this region
     pub blocks_abstractions: FxHashSet<RegionVid>,
+
+    pub abstraction_type: AbstractionType<'tcx>,
 }
 
 impl<'tcx> RegionAbstraction<'tcx> {
-    pub fn new(region: RegionVid) -> Self {
+    pub fn new(region: RegionVid, abstraction_type: AbstractionType<'tcx>) -> Self {
         Self {
             region,
-            blocks_places: FxHashSet::default(),
-            blocked_by_places: FxHashSet::default(),
             blocks_abstractions: FxHashSet::default(),
+            abstraction_type,
         }
     }
 
@@ -47,17 +114,15 @@ impl<'tcx> RegionAbstraction<'tcx> {
     }
 
     pub fn blocks(&self, place: MaybeOldPlace<'tcx>) -> bool {
-        self.blocks_places.contains(&place)
+        self.abstraction_type.blocks(&place)
     }
 
-    /// Add a place that this region blocks
-    pub fn add_blocked_place(&mut self, place: MaybeOldPlace<'tcx>) {
-        self.blocks_places.insert(place);
+    pub fn blocks_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        self.abstraction_type.blocks_places()
     }
 
-    /// Add a place that is blocked by this region
-    pub fn add_blocked_by_place(&mut self, place: MaybeOldPlace<'tcx>) {
-        self.blocked_by_places.insert(place);
+    pub fn blocked_by_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        self.abstraction_type.blocked_by_places()
     }
 
     /// Add a region that this region blocks
@@ -66,9 +131,7 @@ impl<'tcx> RegionAbstraction<'tcx> {
     }
 
     pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
-        eprintln!("I am making place old: {:?}", self);
-        self.blocks_places = make_places_old(self.blocks_places.clone(), place, location);
-        self.blocked_by_places = make_places_old(self.blocked_by_places.clone(), place, location);
+        self.abstraction_type.make_place_old(place, location);
     }
 }
 

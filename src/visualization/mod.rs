@@ -12,7 +12,7 @@ pub mod mir_graph;
 use crate::{
     borrows::{
         borrows_state::BorrowsState,
-        domain::{Borrow, MaybeOldPlace, RegionAbstraction},
+        domain::{Borrow, MaybeOldPlace},
         unblock_graph::UnblockGraph,
     },
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
