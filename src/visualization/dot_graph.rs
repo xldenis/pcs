@@ -68,14 +68,15 @@ pub struct DotNode {
     pub label: DotLabel,
     pub font_color: String,
     pub color: String,
+    pub shape: String,
 }
 
 impl Display for DotNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "\"{}\" [label={}, fontcolor=\"{}\", color=\"{}\"];",
-            self.id, self.label, self.font_color, self.color
+            "\"{}\" [label={}, fontcolor=\"{}\", color=\"{}\", shape=\"{}\"];",
+            self.id, self.label, self.font_color, self.color, self.shape
         )
     }
 }

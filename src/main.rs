@@ -266,6 +266,7 @@ fn subset_base_visualization(file_contents: String) {
                 label: DotLabel::Text(n.to_string()),
                 font_color: "black".to_string(),
                 color: "blue".to_string(),
+                shape: "rect".to_string(),
             })
             .collect(),
         edges: edges.into_iter().collect(),
@@ -332,6 +333,7 @@ fn polonius_visualization(file_contents: String) {
                             label: DotLabel::Text(borrow.clone()),
                             font_color: "black".to_string(),
                             color: "blue".to_string(),
+                            shape: "rect".to_string(),
                         },
                     })
                     .collect(),
@@ -361,6 +363,6 @@ fn main() {
     // let file_contents = std::fs::read_to_string(filename).expect("Failed to read file");
     // polonius_visualization(file_contents);
     subset_base_visualization(std::fs::read_to_string(
-        "/Users/zgrannan/choose/nll-facts/get_to_end/subset_base.facts"
+        "/Users/zgrannan/prusti-dev/local-testing/rpe/pass/nll-facts/main/subset_base.facts"
     ).unwrap());
 }

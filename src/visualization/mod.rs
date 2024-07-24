@@ -10,7 +10,11 @@ pub mod graph_constructor;
 pub mod mir_graph;
 
 use crate::{
-    borrows::{borrows_state::BorrowsState, domain::{Borrow, MaybeOldPlace, RegionAbstraction}, unblock_graph::UnblockGraph},
+    borrows::{
+        borrows_state::BorrowsState,
+        domain::{Borrow, MaybeOldPlace, RegionAbstraction},
+        unblock_graph::UnblockGraph,
+    },
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{place_snapshot::PlaceSnapshot, Place, PlaceRepacker},
@@ -58,11 +62,11 @@ struct GraphDrawer<T: io::Write> {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-struct NodeId(usize);
+struct NodeId(char, usize);
 
 impl std::fmt::Display for NodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "n{}", self.0)
+        write!(f, "{}{}", self.0, self.1)
     }
 }
 
@@ -105,8 +109,16 @@ impl GraphNode {
                     label: DotLabel::Html(label),
                     color: color.to_string(),
                     font_color: color.to_string(),
+                    shape: "rect".to_string(),
                 }
             }
+            NodeType::RegionAbstractionNode { label } => DotNode {
+                id: format!("{}", self.id.to_string()),
+                label: DotLabel::Text(label.clone()),
+                color: "blue".to_string(),
+                font_color: "blue".to_string(),
+                shape: "octagon".to_string(),
+            },
         }
     }
 }
@@ -117,6 +129,9 @@ enum NodeType {
         label: String,
         capability: Option<CapabilityKind>,
         location: Option<Location>,
+    },
+    RegionAbstractionNode {
+        label: String,
     },
 }
 
@@ -139,6 +154,18 @@ impl std::fmt::Display for ReferenceEdgeType {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum GraphEdge {
+    RegionBlockedByPlaceEdge {
+        region: NodeId,
+        place: NodeId,
+    },
+    RegionBlocksPlaceEdge {
+        region: NodeId,
+        place: NodeId,
+    },
+    BlocksAbstractionEdge {
+        blocked_region: NodeId,
+        blocking_region: NodeId,
+    },
     UnblockReborrowEdge {
         blocked_place: NodeId,
         blocking_place: NodeId,
@@ -236,6 +263,24 @@ impl GraphEdge {
                 options: EdgeOptions::directed()
                     .with_color("darkred".to_string())
                     .with_label(format!("{:?}({})", block, reason)),
+            },
+            GraphEdge::BlocksAbstractionEdge {
+                blocked_region,
+                blocking_region,
+            } => DotEdge {
+                from: blocked_region.to_string(),
+                to: blocking_region.to_string(),
+                options: EdgeOptions::directed(),
+            },
+            GraphEdge::RegionBlockedByPlaceEdge { region, place } => DotEdge {
+                from: place.to_string(),
+                to: region.to_string(),
+                options: EdgeOptions::directed(),
+            },
+            GraphEdge::RegionBlocksPlaceEdge { region, place } => DotEdge {
+                from: region.to_string(),
+                to: place.to_string(),
+                options: EdgeOptions::directed(),
             },
         }
     }

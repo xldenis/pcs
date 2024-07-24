@@ -9,7 +9,7 @@ use rustc_interface::{
     },
     dataflow::{AnalysisDomain, JoinSemiLattice},
     middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, PlaceElem, VarDebugInfo},
-    middle::ty::TyCtxt,
+    middle::ty::{RegionVid, TyCtxt},
 };
 
 use crate::{
@@ -20,25 +20,76 @@ use crate::{
 };
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct RegionAbstraction<'tcx> {
-    pub loans_in: FxHashSet<mir::Place<'tcx>>,
-    pub loans_out: FxHashSet<mir::Place<'tcx>>,
+    pub region: RegionVid,
+
+    /// The places that this region blocks
+    pub blocks_places: FxHashSet<MaybeOldPlace<'tcx>>,
+
+    /// The places blocked by this region
+    pub blocked_by_places: FxHashSet<MaybeOldPlace<'tcx>>,
+
+    /// The regions blocked by this region
+    pub blocks_abstractions: FxHashSet<RegionVid>,
 }
 
 impl<'tcx> RegionAbstraction<'tcx> {
-    pub fn new() -> Self {
+    pub fn new(region: RegionVid) -> Self {
         Self {
-            loans_in: FxHashSet::default(),
-            loans_out: FxHashSet::default(),
+            region,
+            blocks_places: FxHashSet::default(),
+            blocked_by_places: FxHashSet::default(),
+            blocks_abstractions: FxHashSet::default(),
         }
     }
 
-    pub fn add_loan_in(&mut self, loan: mir::Place<'tcx>) {
-        self.loans_in.insert(loan);
+    pub fn blocks_abstraction(&self, region: RegionVid) -> bool {
+        self.blocks_abstractions.contains(&region)
     }
 
-    pub fn add_loan_out(&mut self, loan: mir::Place<'tcx>) {
-        self.loans_out.insert(loan);
+    pub fn blocks(&self, place: MaybeOldPlace<'tcx>) -> bool {
+        self.blocks_places.contains(&place)
     }
+
+    /// Add a place that this region blocks
+    pub fn add_blocked_place(&mut self, place: MaybeOldPlace<'tcx>) {
+        self.blocks_places.insert(place);
+    }
+
+    /// Add a place that is blocked by this region
+    pub fn add_blocked_by_place(&mut self, place: MaybeOldPlace<'tcx>) {
+        self.blocked_by_places.insert(place);
+    }
+
+    /// Add a region that this region blocks
+    pub fn add_blocked_abstraction(&mut self, vid: RegionVid) {
+        self.blocks_abstractions.insert(vid);
+    }
+
+    pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
+        eprintln!("I am making place old: {:?}", self);
+        self.blocks_places = make_places_old(self.blocks_places.clone(), place, location);
+        self.blocked_by_places = make_places_old(self.blocked_by_places.clone(), place, location);
+    }
+}
+
+fn make_places_old<'tcx>(
+    places: FxHashSet<MaybeOldPlace<'tcx>>,
+    place: Place<'tcx>,
+    location: Location,
+) -> FxHashSet<MaybeOldPlace<'tcx>> {
+    places
+        .into_iter()
+        .map(|p| {
+            if p.is_current() && place.is_prefix(p.place()) {
+                MaybeOldPlace::OldPlace(PlaceSnapshot {
+                    place: p.place(),
+                    at: location,
+                })
+            } else {
+                p
+            }
+        })
+        .collect()
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
@@ -153,7 +204,7 @@ impl<'tcx> Borrow<'tcx> {
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct DerefExpansion<'tcx> {
     pub base: MaybeOldPlace<'tcx>,
-    expansion: Vec<PlaceElem<'tcx>>,
+    pub expansion: Vec<PlaceElem<'tcx>>,
     pub location: Location,
 }
 

@@ -1,7 +1,10 @@
 use crate::utils::Place;
 
 use super::domain::{Borrow, MaybeOldPlace, Reborrow};
-use crate::rustc_interface::middle::mir::Location;
+use crate::rustc_interface::middle::{
+    mir::Location,
+    ty::RegionVid,
+};
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub enum UnblockReason<'tcx> {
@@ -13,11 +16,12 @@ pub enum UnblockReason<'tcx> {
     NotInProjection(Place<'tcx>),
     ReborrowAssignedTo(Reborrow<'tcx>, MaybeOldPlace<'tcx>),
     KillReborrowAssignedPlace(Reborrow<'tcx>, MaybeOldPlace<'tcx>),
-    ChildOfPlace(MaybeOldPlace<'tcx>, MaybeOldPlace<'tcx>),
+    Projection(MaybeOldPlace<'tcx>),
     NotInStateToBridge(Reborrow<'tcx>),
     DerefExpansionDoesntExist(Place<'tcx>, Location),
     EnsureExpansionTo(MaybeOldPlace<'tcx>),
     FpcsCollapse(MaybeOldPlace<'tcx>),
+    KillAbstraction(RegionVid),
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]

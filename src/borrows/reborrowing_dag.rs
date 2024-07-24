@@ -11,7 +11,10 @@ use rustc_interface::{
 
 use crate::{rustc_interface, utils::Place};
 
-use super::domain::{MaybeOldPlace, Reborrow};
+use super::{
+    borrows_visitor::DebugCtx,
+    domain::{MaybeOldPlace, Reborrow},
+};
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct ReborrowingDag<'tcx> {
     reborrows: FxHashSet<Reborrow<'tcx>>,
@@ -24,7 +27,12 @@ impl<'tcx> ReborrowingDag<'tcx> {
     pub fn assigned_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.reborrows.iter().map(|r| r.assigned_place).collect()
     }
-    pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
+    pub fn make_place_old(
+        &mut self,
+        place: Place<'tcx>,
+        location: Location,
+        debug_ctx: Option<DebugCtx>,
+    ) {
         let mut new = FxHashSet::default();
         for mut reborrow in self.reborrows.clone() {
             if reborrow.blocked_place.is_current()
@@ -36,6 +44,10 @@ impl<'tcx> ReborrowingDag<'tcx> {
             if reborrow.assigned_place.is_current()
                 && place.is_prefix(reborrow.assigned_place.place())
             {
+                eprintln!(
+                    "{:?} Making assigned place old: {:?} to {:?}",
+                    debug_ctx, reborrow.assigned_place, location
+                );
                 reborrow.assigned_place =
                     MaybeOldPlace::new(reborrow.assigned_place.place(), Some(location));
             }

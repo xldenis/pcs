@@ -9,7 +9,7 @@ use rustc_interface::{
     },
     dataflow::{AnalysisDomain, JoinSemiLattice},
     middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, VarDebugInfo},
-    middle::ty::TyCtxt,
+    middle::ty::{RegionVid, TyCtxt},
 };
 use serde_json::{json, Value};
 
@@ -26,6 +26,7 @@ use crate::{
 };
 
 use super::{
+    borrows_visitor::DebugCtx,
     deref_expansions::DerefExpansions,
     domain::{Borrow, DerefExpansion, Latest, MaybeOldPlace, Reborrow, RegionAbstraction},
     reborrowing_dag::ReborrowingDag,
@@ -35,9 +36,8 @@ use super::{
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
-        for region_abstraction in &other.region_abstractions {
-            if !self.region_abstractions.contains(region_abstraction) {
-                self.region_abstractions.push(region_abstraction.clone());
+        for region_abstraction in other.region_abstractions.iter() {
+            if self.region_abstractions.insert(region_abstraction.clone()) {
                 changed = true;
             }
         }
@@ -57,11 +57,45 @@ impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
 }
 
 #[derive(Clone, Debug)]
+pub struct RegionAbstractions<'tcx>(Vec<RegionAbstraction<'tcx>>);
+
+impl<'tcx> RegionAbstractions<'tcx> {
+    pub fn new() -> Self {
+        Self(vec![])
+    }
+
+    pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
+        for abstraction in &mut self.0 {
+            abstraction.make_place_old(place, location);
+        }
+    }
+
+    pub fn blocks(&self, place: MaybeOldPlace<'tcx>) -> bool {
+        self.0.iter().any(|abstraction| abstraction.blocks(place))
+    }
+
+    pub fn insert(&mut self, abstraction: RegionAbstraction<'tcx>) -> bool {
+        if !self.0.contains(&abstraction) {
+            self.0.push(abstraction);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &RegionAbstraction<'tcx>> {
+        self.0.iter()
+    }
+    pub fn delete_region(&mut self, vid: RegionVid) {
+        self.0.retain(|abstraction| abstraction.region != vid);
+    }
+}
+#[derive(Clone, Debug)]
 pub struct BorrowsState<'mir, 'tcx> {
     body: &'mir mir::Body<'tcx>,
     latest: Latest<'tcx>,
     pub reborrows: ReborrowingDag<'tcx>,
-    pub region_abstractions: Vec<RegionAbstraction<'tcx>>,
+    pub region_abstractions: RegionAbstractions<'tcx>,
     pub deref_expansions: DerefExpansions<'tcx>,
     pub logs: Vec<String>,
 }
@@ -103,6 +137,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     *reborrow,
                     self,
                     UnblockReasons::new(UnblockReason::NotInStateToBridge(reborrow.clone())),
+                    block,
                     tcx,
                 );
             }
@@ -178,6 +213,26 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         }
     }
 
+    pub fn get_abstractions_blocking_region(
+        &self,
+        region: RegionVid,
+    ) -> Vec<&RegionAbstraction<'tcx>> {
+        self.region_abstractions
+            .iter()
+            .filter(|abstraction| abstraction.blocks_abstraction(region))
+            .collect()
+    }
+
+    pub fn get_abstractions_blocking(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> Vec<&RegionAbstraction<'tcx>> {
+        self.region_abstractions
+            .iter()
+            .filter(|abstraction| abstraction.blocks(place))
+            .collect()
+    }
+
     pub fn ensure_expansion_to_exactly(
         &mut self,
         tcx: TyCtxt<'tcx>,
@@ -194,6 +249,8 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             tcx,
         );
         self.apply_unblock_graph(ug, tcx);
+
+        // Originally we may not have been expanded enough
         self.deref_expansions
             .ensure_expansion_to_exactly(place, body, tcx, location);
     }
@@ -221,10 +278,13 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     }
 
     pub fn is_leaf(&self, place: MaybeOldPlace<'tcx>) -> bool {
-        self.reborrows.get_places_blocking(place).is_empty()
+        !self.region_abstractions.blocks(place)
+            && self.reborrows.get_places_blocking(place).is_empty()
             && !self.deref_expansions.contains_expansion_from(place)
     }
 
+    /// Reborrows and deref expansions that form the "interface" of the graph: the graph
+    /// could be extended via these.
     pub fn leaves(
         &self,
         tcx: TyCtxt<'tcx>,
@@ -250,6 +310,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             .collect::<FxHashSet<DerefExpansion<'tcx>>>();
         for rb in reborrows {
             if !rb.assigned_place.is_current() {
+                eprintln!("Removing reborrow: {:?}", rb);
                 if self.reborrows.remove(&rb) {
                     changed = true;
                 }
@@ -280,7 +341,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
 
     pub fn apply_unblock_graph(&mut self, graph: UnblockGraph<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
         let mut changed = false;
-        for action in graph.actions() {
+        for action in graph.actions(tcx) {
             match action {
                 crate::combined_pcs::UnblockAction::TerminateReborrow {
                     blocked_place,
@@ -298,6 +359,9 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     {
                         changed = true;
                     }
+                }
+                crate::combined_pcs::UnblockAction::TerminateRegion(vid) => {
+                    self.region_abstractions.delete_region(vid)
                 }
             }
         }
@@ -379,7 +443,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             deref_expansions: DerefExpansions::new(),
             latest: Latest::new(),
             reborrows: ReborrowingDag::new(),
-            region_abstractions: vec![],
+            region_abstractions: RegionAbstractions::new(),
             logs: vec![],
         }
     }
@@ -409,15 +473,23 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     }
 
     pub fn add_region_abstraction(&mut self, abstraction: RegionAbstraction<'tcx>) {
-        if !self.region_abstractions.contains(&abstraction) {
-            self.region_abstractions.push(abstraction);
-        }
+        self.region_abstractions.insert(abstraction);
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) {
+    pub fn make_place_old(
+        &mut self,
+        place: Place<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+        debug_ctx: Option<DebugCtx>,
+    ) {
         let location = self.get_latest(&place);
-        self.reborrows.make_place_old(place, location);
+        eprintln!(
+            "{:?} Making place old: {:?} to {:?}",
+            debug_ctx, place, location
+        );
+        self.reborrows.make_place_old(place, location, debug_ctx);
         self.deref_expansions.make_place_old(place, location);
+        self.region_abstractions.make_place_old(place, location);
         self.remove_dangling_old_places(repacker.tcx());
     }
 

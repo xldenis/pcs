@@ -22,10 +22,11 @@ use rustc_interface::{
     index::{Idx, IndexVec},
     middle::{
         mir::{
-            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Local, Location, Promoted, Rvalue,
-            Statement, StatementKind, Terminator, TerminatorEdges, RETURN_PLACE, START_BLOCK,
+            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Local, Location, PlaceElem,
+            Promoted, Rvalue, Statement, StatementKind, Terminator, TerminatorEdges, RETURN_PLACE,
+            START_BLOCK,
         },
-        ty::TyCtxt,
+        ty::{RegionVid, TyCtxt},
     },
 };
 
@@ -130,26 +131,79 @@ impl<'a, 'tcx> AnalysisDomain<'tcx> for PcsEngine<'a, 'tcx> {
 }
 
 #[derive(Eq, PartialEq, Hash, Clone, Debug)]
-pub enum UnblockEdgeType {
-    Reborrow { is_mut: bool },
-    Projection(usize),
+pub struct ProjectionEdge<'tcx> {
+    pub blockers: Vec<PlaceElem<'tcx>>,
+    pub blocked: MaybeOldPlace<'tcx>,
 }
 
-impl UnblockEdgeType {
-    pub fn is_projection(&self) -> bool {
-        matches!(self, UnblockEdgeType::Projection(_))
+impl<'tcx> ProjectionEdge<'tcx> {
+    pub fn blocks_place(&self, place: MaybeOldPlace<'tcx>) -> bool {
+        self.blocked == place
     }
-    pub fn expect_projection(&self) -> usize {
-        if let UnblockEdgeType::Projection(idx) = self {
-            *idx
-        } else {
-            panic!("Expected projection edge type, got {self:?}");
+    pub fn blocker_places(&self, tcx: TyCtxt<'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
+        self.blockers
+            .iter()
+            .map(|p| self.blocked.project_deeper(tcx, *p))
+            .collect()
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, Clone, Debug)]
+pub struct RegionEdge<'tcx> {
+    /// Terminating the region makes these places accessible
+    pub blocked_places: Vec<MaybeOldPlace<'tcx>>,
+
+    /// Terminating the region requires these places to expire
+    pub blocker_places: Vec<MaybeOldPlace<'tcx>>,
+
+    /// Terminating the region requires these regions to expire
+    pub blocker_regions: Vec<RegionVid>,
+
+    region_vid: RegionVid,
+}
+
+impl<'tcx> RegionEdge<'tcx> {
+    pub fn region_vid(&self) -> RegionVid {
+        self.region_vid
+    }
+
+    pub fn new(
+        blocked_places: Vec<MaybeOldPlace<'tcx>>,
+        blocker_places: Vec<MaybeOldPlace<'tcx>>,
+        blocker_regions: Vec<RegionVid>,
+        region_vid: RegionVid,
+    ) -> Self {
+        assert!(
+            blocked_places
+                .iter()
+                .all(|place| !blocker_places.contains(place)),
+            "blocked_places and blocker_places must be disjoint"
+        );
+        Self {
+            blocked_places,
+            blocker_places,
+            blocker_regions,
+            region_vid,
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Eq, PartialEq, Hash, Clone, Debug)]
+pub enum UnblockEdgeType<'tcx> {
+    Reborrow {
+        is_mut: bool,
+        /// Terminating the reborrow requires this place to expire
+        blocker: MaybeOldPlace<'tcx>,
+        /// Terminating the reborrow makes this place available
+        blocked: MaybeOldPlace<'tcx>,
+    },
+    Projection(ProjectionEdge<'tcx>),
+    Region(RegionEdge<'tcx>),
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub enum UnblockAction<'tcx> {
+    TerminateRegion(RegionVid),
     TerminateReborrow {
         blocked_place: MaybeOldPlace<'tcx>,
         assigned_place: MaybeOldPlace<'tcx>,
@@ -160,16 +214,81 @@ pub enum UnblockAction<'tcx> {
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct UnblockEdge<'tcx> {
-    pub blocked: MaybeOldPlace<'tcx>,
-    pub blocker: MaybeOldPlace<'tcx>,
     pub block: BasicBlock,
-    pub edge_type: UnblockEdgeType,
+    pub edge_type: UnblockEdgeType<'tcx>,
     pub reason: UnblockReasons<'tcx>,
 }
 
 impl<'tcx> UnblockEdge<'tcx> {
-    pub fn expect_projection(&self) -> usize {
-        self.edge_type.expect_projection()
+    pub fn is_mut_reborrow(&self) -> bool {
+        match &self.edge_type {
+            UnblockEdgeType::Reborrow { is_mut, .. } => *is_mut,
+            _ => false,
+        }
+    }
+    pub fn relevant_for_path(&self, path: &[BasicBlock]) -> bool {
+        if !path.contains(&self.block) {
+            return false;
+        }
+        let relevant = |place: &MaybeOldPlace<'tcx>| {
+            place
+                .location()
+                .map_or(true, |loc| path.contains(&loc.block))
+        };
+        match &self.edge_type {
+            UnblockEdgeType::Reborrow {
+                blocker, blocked, ..
+            } => relevant(blocker) && relevant(blocked),
+            UnblockEdgeType::Projection(edge) => relevant(&edge.blocked),
+            UnblockEdgeType::Region(edge) =>
+            /* TODO */
+            {
+                true
+            }
+        }
+    }
+    /// These regions must expire to make this edge accessible
+    pub fn blocked_by_abstraction(&self, region_vid: RegionVid) -> bool {
+        match &self.edge_type {
+            UnblockEdgeType::Region(edge) => edge.blocker_regions.contains(&region_vid),
+            _ => false,
+        }
+    }
+
+    /// These places must expire to make this edge accessible
+    pub fn blocked_by_places(&self, tcx: TyCtxt<'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
+        match &self.edge_type {
+            UnblockEdgeType::Reborrow {
+                is_mut,
+                blocker,
+                blocked,
+            } => vec![*blocker],
+            UnblockEdgeType::Projection(edge) => edge.blocker_places(tcx),
+            UnblockEdgeType::Region(edge) => edge.blocker_places.clone(),
+        }
+    }
+
+    /// This edge must expire for these places to become accessible
+    pub fn blocked_places(&self) -> Vec<MaybeOldPlace<'tcx>> {
+        match &self.edge_type {
+            UnblockEdgeType::Reborrow {
+                is_mut,
+                blocker,
+                blocked,
+            } => vec![*blocked],
+            UnblockEdgeType::Projection(edge) => vec![edge.blocked],
+            UnblockEdgeType::Region(edge) => edge.blocked_places.clone(),
+        }
+    }
+
+    /// This edge must expire to make `place` accessible
+    pub fn blocks_place(&self, place: MaybeOldPlace<'tcx>) -> bool {
+        self.blocked_places().contains(&place)
+    }
+
+    /// `place` must expire to make this edge accessible
+    pub fn blocked_by_place(&self, tcx: TyCtxt<'tcx>, place: MaybeOldPlace<'tcx>) -> bool {
+        self.blocked_by_places(tcx).contains(&place)
     }
 }
 

@@ -14,8 +14,8 @@ use rustc_interface::{
     middle::{
         mir::{
             visit::{TyContext, Visitor},
-            BasicBlock, Body, CallReturnPlaces, HasLocalDecls, Local, Location, Operand, Place,
-            ProjectionElem, Promoted, Rvalue, Statement, StatementKind, Terminator,
+            BasicBlock, Body, CallReturnPlaces, ConstantKind, HasLocalDecls, Local, Location,
+            Operand, Place, ProjectionElem, Promoted, Rvalue, Statement, StatementKind, Terminator,
             TerminatorEdges, TerminatorKind, VarDebugInfo, RETURN_PLACE, START_BLOCK,
         },
         ty::{self, Region, RegionKind, RegionVid, TyCtxt, TypeVisitor},
@@ -40,6 +40,11 @@ use super::{
     unblock_reason::UnblockReasons,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub struct DebugCtx {
+    pub location: Location,
+}
+
 pub struct BorrowsVisitor<'tcx, 'mir, 'state> {
     tcx: TyCtxt<'tcx>,
     body: &'mir Body<'tcx>,
@@ -49,6 +54,8 @@ pub struct BorrowsVisitor<'tcx, 'mir, 'state> {
     borrow_set: Rc<BorrowSet<'tcx>>,
     before: bool,
     preparing: bool,
+    region_inference_context: Rc<RegionInferenceContext<'tcx>>,
+    debug_ctx: Option<DebugCtx>,
 }
 
 impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
@@ -86,6 +93,8 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
             preparing,
             location_table: engine.location_table,
             borrow_set: engine.borrow_set.clone(),
+            region_inference_context: engine.region_inference_context.clone(),
+            debug_ctx: None,
         }
     }
     fn ensure_expansion_to_exactly(&mut self, place: utils::Place<'tcx>, location: Location) {
@@ -95,6 +104,13 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
             MaybeOldPlace::Current { place },
             location,
         )
+    }
+
+    fn vid_for_place(&self, place: utils::Place<'tcx>) -> Option<RegionVid> {
+        match place.ty(self.repacker()).ty.kind() {
+            ty::TyKind::Ref(region, _, _) => Some(get_vid(region)),
+            _ => None,
+        }
     }
 
     fn loans_invalidated_at(&self, location: Location, start: bool) -> Vec<BorrowIndex> {
@@ -113,6 +129,28 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
                 },
             )
             .collect()
+    }
+
+    fn outlives(&self, sup: RegionVid, sub: RegionVid) -> bool {
+        for o in self
+            .region_inference_context
+            .outlives_constraints()
+            .filter(|c| c.sup == sup)
+        {
+            if o.sub == sub {
+                return true;
+            } else if self.outlives(o.sub, sub) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+fn get_vid(region: &Region) -> RegionVid {
+    match region.kind() {
+        RegionKind::ReVar(vid) => vid,
+        _ => unreachable!(),
     }
 }
 
@@ -140,15 +178,65 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
         if !self.before && !self.preparing {
             match &terminator.kind {
-                TerminatorKind::Call { args, .. } => {
-                    for arg in args {
-                        if let Operand::Move(arg) = arg {
-                            self.state.after.remove_loans_assigned_to(
-                                self.tcx,
-                                &self.borrow_set,
-                                (*arg).into(),
-                                location.block,
-                            );
+                TerminatorKind::Call {
+                    func,
+                    args,
+                    destination,
+                    ..
+                } => {
+                    let mut vids = FxHashSet::default();
+                    match func {
+                        Operand::Constant(c) => match c.literal {
+                            ConstantKind::Val(_, ty) => match ty.kind() {
+                                ty::TyKind::FnDef(_, substs) => {
+                                    for region in substs.regions() {
+                                        vids.insert(get_vid(&region));
+                                    }
+                                }
+                                _ => {}
+                            },
+                            _ => unreachable!(),
+                        },
+                        _ => unreachable!(),
+                    }
+                    if let Some(result_vid) = self.vid_for_place((*destination).into()) {
+                        let mut ra = RegionAbstraction::new(result_vid);
+                        for arg in args {
+                            if let Operand::Move(arg) = arg {
+                                let arg: utils::Place<'tcx> = (*arg).into();
+                                if !arg.is_mut_ref(self.body, self.tcx) {
+                                    continue;
+                                }
+                                let arg_vid = self.vid_for_place(arg).unwrap();
+                                if self.outlives(arg_vid, result_vid) {
+                                    let blocked_place = arg.project_deref(self.repacker());
+                                    for r in
+                                        self.state.after.reborrows_assigned_to(blocked_place.into())
+                                    {
+                                        ra.add_blocked_place(r.blocked_place);
+                                    }
+                                }
+                                self.state.after.remove_loans_assigned_to(
+                                    self.tcx,
+                                    &self.borrow_set,
+                                    arg,
+                                    location.block,
+                                );
+                            }
+                        }
+                        let destination: utils::Place<'tcx> = (*destination).into();
+                        ra.add_blocked_by_place(destination.project_deref(self.repacker()).into());
+                        self.state.after.add_region_abstraction(ra);
+                    } else {
+                        for arg in args {
+                            if let Operand::Move(arg) = arg {
+                                self.state.after.remove_loans_assigned_to(
+                                    self.tcx,
+                                    &self.borrow_set,
+                                    (*arg).into(),
+                                    location.block,
+                                );
+                            }
                         }
                     }
                 }
@@ -182,10 +270,13 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     }
                 }
                 StatementKind::StorageDead(local) => {
+                    self.debug_ctx = Some(DebugCtx { location });
                     let place: utils::Place<'tcx> = (*local).into();
                     let repacker = PlaceRepacker::new(self.body, self.tcx);
                     if place.ty(repacker).ty.is_ref() {
-                        self.state.after.make_place_old(place, repacker);
+                        self.state
+                            .after
+                            .make_place_old(place, repacker, self.debug_ctx);
                     }
                 }
                 _ => {}
@@ -198,9 +289,11 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 StatementKind::Assign(box (target, rvalue)) => {
                     if target.ty(self.body, self.tcx).ty.is_ref() {
                         let target = (*target).into();
-                        self.state
-                            .after
-                            .make_place_old(target, PlaceRepacker::new(self.body, self.tcx));
+                        self.state.after.make_place_old(
+                            target,
+                            PlaceRepacker::new(self.body, self.tcx),
+                            self.debug_ctx,
+                        );
                     }
                 }
                 StatementKind::FakeRead(box (_, place)) => {
@@ -245,9 +338,11 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                 ug.kill_place(d.base, &self.state.after, location.block, self.tcx);
                             }
                             self.state.after.apply_unblock_graph(ug, self.tcx);
-                            self.state
-                                .after
-                                .make_place_old(from, PlaceRepacker::new(self.body, self.tcx));
+                            self.state.after.make_place_old(
+                                from,
+                                PlaceRepacker::new(self.body, self.tcx),
+                                None,
+                            );
                         }
                         Rvalue::Use(Operand::Copy(from)) => {
                             if from.ty(self.body, self.tcx).ty.is_ref() {
