@@ -41,6 +41,12 @@ pub enum AbstractionType<'tcx> {
 }
 
 impl<'tcx> AbstractionType<'tcx> {
+    pub fn location(&self) -> Location {
+        match self {
+            AbstractionType::FunctionCall { location, .. } => *location,
+        }
+    }
+
     pub fn blocked_by_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         match self {
             AbstractionType::FunctionCall { blocked_place, .. } => {
@@ -107,6 +113,10 @@ impl<'tcx> RegionAbstraction<'tcx> {
             blocks_abstractions: FxHashSet::default(),
             abstraction_type,
         }
+    }
+
+    pub fn location(&self) -> Location {
+        self.abstraction_type.location()
     }
 
     pub fn blocks_abstraction(&self, region: RegionVid) -> bool {

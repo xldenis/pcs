@@ -2,12 +2,13 @@ use crate::utils::Place;
 
 use super::domain::{Borrow, MaybeOldPlace, Reborrow};
 use crate::rustc_interface::middle::{
-    mir::Location,
+    mir::{Local, Location},
     ty::RegionVid,
 };
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub enum UnblockReason<'tcx> {
+    BackwardsFunction(Local),
     RemoveBorrow(Borrow<'tcx>),
     ReborrowBlocksPlace(Reborrow<'tcx>, MaybeOldPlace<'tcx>),
     KillPlace(MaybeOldPlace<'tcx>),

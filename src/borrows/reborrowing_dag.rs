@@ -21,6 +21,9 @@ pub struct ReborrowingDag<'tcx> {
 }
 
 impl<'tcx> ReborrowingDag<'tcx> {
+    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+        self.reborrows.retain(|r| path.contains(&r.location.block));
+    }
     pub fn remove(&mut self, reborrow: &Reborrow<'tcx>) -> bool {
         self.reborrows.remove(reborrow)
     }

@@ -20,6 +20,11 @@ use super::domain::{DerefExpansion, MaybeOldPlace};
 pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);
 
 impl<'tcx> DerefExpansions<'tcx> {
+    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+        self.0
+            .retain(|expansion| path.contains(&expansion.location.block));
+    }
+
     pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
         let mut new: FxHashSet<DerefExpansion<'tcx>> = FxHashSet::default();
         for mut expansion in self.0.clone() {

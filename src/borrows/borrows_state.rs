@@ -64,6 +64,11 @@ impl<'tcx> RegionAbstractions<'tcx> {
         Self(vec![])
     }
 
+    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+        self.0
+            .retain(|abstraction| path.contains(&abstraction.location().block));
+    }
+
     pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
         for abstraction in &mut self.0 {
             abstraction.make_place_old(place, location);
@@ -111,6 +116,11 @@ impl<'mir, 'tcx> PartialEq for BorrowsState<'mir, 'tcx> {
 impl<'mir, 'tcx> Eq for BorrowsState<'mir, 'tcx> {}
 
 impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
+    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+        self.reborrows.filter_for_path(path);
+        self.deref_expansions.filter_for_path(path);
+        self.region_abstractions.filter_for_path(path);
+    }
     pub fn bridge(&self, to: &Self, block: BasicBlock, tcx: TyCtxt<'tcx>) -> ReborrowBridge<'tcx> {
         let added_reborrows: FxHashSet<Reborrow<'tcx>> = to
             .reborrows()
