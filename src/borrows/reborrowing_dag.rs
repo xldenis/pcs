@@ -47,10 +47,6 @@ impl<'tcx> ReborrowingDag<'tcx> {
             if reborrow.assigned_place.is_current()
                 && place.is_prefix(reborrow.assigned_place.place())
             {
-                eprintln!(
-                    "{:?} Making assigned place old: {:?} to {:?}",
-                    debug_ctx, reborrow.assigned_place, location
-                );
                 reborrow.assigned_place =
                     MaybeOldPlace::new(reborrow.assigned_place.place(), Some(location));
             }

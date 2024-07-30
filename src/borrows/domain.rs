@@ -12,7 +12,7 @@ use rustc_interface::{
     middle::mir::{
         self, tcx::PlaceTy, BasicBlock, Local, Location, Operand, PlaceElem, VarDebugInfo,
     },
-    middle::ty::{self, RegionVid, TyCtxt},
+    middle::ty::{self, RegionVid, TyCtxt, GenericArgsRef},
 };
 
 use crate::{
@@ -28,6 +28,8 @@ pub enum AbstractionType<'tcx> {
         location: Location,
 
         def_id: DefId,
+
+        substs: GenericArgsRef<'tcx>,
 
         /// For each (i, p) in args, `i` is the index of the argument in the
         /// function definition, `p` is the place that was used as the argument

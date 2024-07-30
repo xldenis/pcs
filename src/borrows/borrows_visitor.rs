@@ -185,10 +185,10 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     destination,
                     ..
                 } => {
-                    let func_def_id = match func {
+                    let (func_def_id, substs) = match func {
                         Operand::Constant(c) => match c.literal {
                             ConstantKind::Val(_, ty) => {match ty.kind() {
-                                ty::TyKind::FnDef(def_id, _) => def_id,
+                                ty::TyKind::FnDef(def_id, substs) => (def_id, substs),
                                 _ => unreachable!(),
                             }},
                             _ => unreachable!(),
@@ -225,6 +225,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                             def_id: *func_def_id,
                             location,
                             blocks_args,
+                            substs,
                             blocked_place: destination.project_deref(self.repacker()).into(),
                         };
                         let mut ra = RegionAbstraction::new(result_vid, ra_type);

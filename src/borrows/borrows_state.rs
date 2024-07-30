@@ -320,7 +320,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             .collect::<FxHashSet<DerefExpansion<'tcx>>>();
         for rb in reborrows {
             if !rb.assigned_place.is_current() {
-                eprintln!("Removing reborrow: {:?}", rb);
                 if self.reborrows.remove(&rb) {
                     changed = true;
                 }
