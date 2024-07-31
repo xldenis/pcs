@@ -109,7 +109,7 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
 
     fn vid_for_place(&self, place: utils::Place<'tcx>) -> Option<RegionVid> {
         match place.ty(self.repacker()).ty.kind() {
-            ty::TyKind::Ref(region, _, _) => Some(get_vid(region)),
+            ty::TyKind::Ref(region, _, _) => get_vid(region),
             _ => None,
         }
     }
@@ -148,10 +148,10 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
     }
 }
 
-fn get_vid(region: &Region) -> RegionVid {
+fn get_vid(region: &Region) -> Option<RegionVid> {
     match region.kind() {
-        RegionKind::ReVar(vid) => vid,
-        _ => unreachable!(),
+        RegionKind::ReVar(vid) => Some(vid),
+        other => None,
     }
 }
 
@@ -187,10 +187,10 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 } => {
                     let (func_def_id, substs) = match func {
                         Operand::Constant(c) => match c.literal {
-                            ConstantKind::Val(_, ty) => {match ty.kind() {
+                            ConstantKind::Val(_, ty) => match ty.kind() {
                                 ty::TyKind::FnDef(def_id, substs) => (def_id, substs),
                                 _ => unreachable!(),
-                            }},
+                            },
                             _ => unreachable!(),
                         },
                         _ => unreachable!(),
