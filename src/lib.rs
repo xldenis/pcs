@@ -106,7 +106,7 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
 pub fn run_free_pcs<'mir, 'tcx>(
     mir: &'mir BodyWithBorrowckFacts<'tcx>,
     tcx: TyCtxt<'tcx>,
-    visualization_output_path: Option<&str>,
+    visualization_output_path: Option<String>,
 ) -> FpcsOutput<'mir, 'tcx> {
     let cgx = PcsContext::new(tcx, mir);
     let fpcs = PcsEngine::new(cgx);

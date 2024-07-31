@@ -190,6 +190,13 @@ impl<'tcx> MaybeOldPlace<'tcx> {
         }
     }
 
+    pub fn old_place(&self) -> Option<PlaceSnapshot<'tcx>> {
+        match self {
+            MaybeOldPlace::Current { .. } => None,
+            MaybeOldPlace::OldPlace(old_place) => Some(old_place.clone()),
+        }
+    }
+
     pub fn ty(&self, repacker: PlaceRepacker<'_, 'tcx>) -> PlaceTy<'tcx> {
         self.place().ty(repacker)
     }
