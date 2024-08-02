@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt::Display;
 
 type NodeId = String;
@@ -16,17 +17,41 @@ impl DotGraph {
 }
 
 pub struct DotSubgraph {
-    pub name: String,
+    pub id: String,
     pub label: String,
     pub nodes: Vec<DotNode>,
+    pub rank_annotations: Vec<RankAnnotation>,
+}
+
+pub struct RankAnnotation {
+    pub rank_type: String,
+    pub nodes: BTreeSet<NodeId>,
+}
+
+impl Display for RankAnnotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{{ rank = {}; {}; }}",
+            self.rank_type,
+            self.nodes
+                .iter()
+                .map(|n| format!("{}", n))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )
+    }
 }
 
 impl Display for DotSubgraph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "subgraph {} {{", self.name)?;
+        write!(f, "subgraph {} {{", self.id)?;
         writeln!(f, "label=\"{}\";", self.label)?;
         for node in &self.nodes {
             writeln!(f, "{}", node)?;
+        }
+        for rank_annotation in &self.rank_annotations {
+            writeln!(f, "{}", rank_annotation)?;
         }
         writeln!(f, "}}")
     }
@@ -63,22 +88,71 @@ impl Display for DotLabel {
     }
 }
 
+impl DotAttr for DotLabel {}
+
 pub struct DotNode {
     pub id: NodeId,
     pub label: DotLabel,
-    pub font_color: String,
-    pub color: String,
-    pub shape: String,
+    pub font_color: DotStringAttr,
+    pub color: DotStringAttr,
+    pub shape: DotStringAttr,
+    pub style: Option<DotStringAttr>,
+    pub penwidth: Option<DotFloatAttr>,
+}
+
+trait DotAttr: Display {}
+
+pub struct DotStringAttr(pub String);
+
+impl Display for DotStringAttr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "\"{}\"", self.0)
+    }
+}
+
+impl DotAttr for DotStringAttr {}
+
+pub struct DotFloatAttr(pub f64);
+
+impl Display for DotFloatAttr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl DotAttr for DotFloatAttr {}
+
+fn format_attr<T: DotAttr>(name: &'static str, value: &T) -> String {
+    format!("{}={}", name, value)
+}
+
+fn format_optional<T: DotAttr>(name: &'static str, value: &Option<T>) -> String {
+    match value {
+        Some(value) => format!("{}={}", name, value),
+        None => "".to_string(),
+    }
 }
 
 impl Display for DotNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "\"{}\" [label={}, fontcolor=\"{}\", color=\"{}\", shape=\"{}\"];",
-            self.id, self.label, self.font_color, self.color, self.shape
-        )
+        let attrs = [
+            format_attr("label", &self.label),
+            format_attr("fontcolor", &self.font_color),
+            format_attr("color", &self.color),
+            format_attr("shape", &self.shape),
+            format_optional("style", &self.style),
+            format_optional("penwidth", &self.penwidth),
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+        write!(f, "\"{}\" [{}]", self.id, attrs.join(", "))
     }
+}
+
+#[derive(Eq, PartialEq, PartialOrd, Ord)]
+pub enum EdgeDirection {
+    Forward,
+    Backward,
 }
 
 #[derive(Eq, PartialEq, PartialOrd, Ord)]
@@ -86,16 +160,16 @@ pub struct EdgeOptions {
     label: String,
     color: Option<String>,
     style: Option<String>,
-    directed: bool,
+    direction: Option<EdgeDirection>,
 }
 
 impl EdgeOptions {
-    pub fn directed() -> Self {
+    pub fn directed(direction: EdgeDirection) -> Self {
         Self {
             label: "".to_string(),
             color: None,
             style: None,
-            directed: true,
+            direction: Some(direction),
         }
     }
 
@@ -104,7 +178,7 @@ impl EdgeOptions {
             label: "".to_string(),
             color: None,
             style: None,
-            directed: false,
+            direction: None,
         }
     }
 
@@ -137,10 +211,10 @@ impl Display for DotEdge {
             Some(style) => format!(", style=\"{}\"", style),
             None => "".to_string(),
         };
-        let arrowhead_part = if !self.options.directed {
-            ", arrowhead=\"none\""
-        } else {
-            ""
+        let direction_part = match &self.options.direction {
+            Some(EdgeDirection::Backward) => ", dir=\"back\"",
+            Some(EdgeDirection::Forward) => "",
+            None => ", arrowhead=\"none\"",
         };
         let color_part = match &self.options.color {
             Some(color) => format!(", color=\"{}\"", color),
@@ -150,7 +224,7 @@ impl Display for DotEdge {
         write!(
             f,
             "    \"{}\" -> \"{}\" [label=\"{}\"{}{}{}]",
-            self.from, self.to, self.options.label, style_part, arrowhead_part, color_part
+            self.from, self.to, self.options.label, style_part, direction_part, color_part
         )
     }
 }

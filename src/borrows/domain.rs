@@ -35,10 +35,10 @@ pub enum AbstractionType<'tcx> {
         /// function definition, `p` is the place that was used as the argument
         blocks_args: Vec<(usize, MaybeOldPlace<'tcx>)>,
 
-        /// The blocked place; e.g. for a function that returns a reference, this
+        /// e.g. for a function that returns a reference, this
         /// would be the dereference of the target of the call
         /// TODO: Actually multiple places may be blocked...
-        blocked_place: MaybeOldPlace<'tcx>,
+        assigned_place: MaybeOldPlace<'tcx>,
     },
 }
 
@@ -49,10 +49,10 @@ impl<'tcx> AbstractionType<'tcx> {
         }
     }
 
-    pub fn blocked_by_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+    pub fn assigned_to_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         match self {
-            AbstractionType::FunctionCall { blocked_place, .. } => {
-                vec![blocked_place.clone()].into_iter().collect()
+            AbstractionType::FunctionCall { assigned_place, .. } => {
+                vec![assigned_place.clone()].into_iter().collect()
             }
         }
     }
@@ -76,7 +76,7 @@ impl<'tcx> AbstractionType<'tcx> {
         match self {
             AbstractionType::FunctionCall {
                 blocks_args,
-                blocked_place,
+                assigned_place,
                 ..
             } => {
                 for (i, arg) in blocks_args.iter_mut() {
@@ -87,9 +87,9 @@ impl<'tcx> AbstractionType<'tcx> {
                         });
                     }
                 }
-                if blocked_place.is_current() && place.is_prefix(blocked_place.place()) {
-                    *blocked_place = MaybeOldPlace::OldPlace(PlaceSnapshot {
-                        place: blocked_place.place(),
+                if assigned_place.is_current() && place.is_prefix(assigned_place.place()) {
+                    *assigned_place = MaybeOldPlace::OldPlace(PlaceSnapshot {
+                        place: assigned_place.place(),
                         at: location,
                     });
                 }
@@ -100,7 +100,7 @@ impl<'tcx> AbstractionType<'tcx> {
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct RegionAbstraction<'tcx> {
-    pub region: RegionVid,
+    region: RegionVid,
 
     /// The regions blocked by this region
     pub blocks_abstractions: FxHashSet<RegionVid>,
@@ -115,6 +115,10 @@ impl<'tcx> RegionAbstraction<'tcx> {
             blocks_abstractions: FxHashSet::default(),
             abstraction_type,
         }
+    }
+
+    pub fn region(&self) -> RegionVid {
+        self.region
     }
 
     pub fn location(&self) -> Location {
@@ -134,7 +138,7 @@ impl<'tcx> RegionAbstraction<'tcx> {
     }
 
     pub fn blocked_by_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        self.abstraction_type.blocked_by_places()
+        self.abstraction_type.assigned_to_places()
     }
 
     /// Add a region that this region blocks
@@ -404,6 +408,8 @@ pub struct Reborrow<'tcx> {
 
     /// The location when the reborrow was created
     pub location: Location,
+
+    pub region: RegionVid,
 }
 
 impl<'tcx> Reborrow<'tcx> {

@@ -323,7 +323,7 @@ fn polonius_visualization(file_contents: String) {
 
         for (i, (region, region_facts)) in facts_by_region.iter().enumerate() {
             let cluster = DotSubgraph {
-                name: format!("cluster_{}", i),
+                id: format!("cluster_{}", i),
                 label: region.clone(),
                 nodes: region_facts
                     .into_iter()

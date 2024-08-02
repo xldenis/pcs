@@ -226,7 +226,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                             location,
                             blocks_args,
                             substs,
-                            blocked_place: destination.project_deref(self.repacker()).into(),
+                            assigned_place: destination.project_deref(self.repacker()).into(),
                         };
                         let mut ra = RegionAbstraction::new(result_vid, ra_type);
                         self.state.after.add_region_abstraction(ra);
@@ -356,6 +356,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     target.project_deref(self.repacker()),
                                     Mutability::Not,
                                     location,
+                                    self.borrow_set.location_map.get(&location).unwrap().region,
                                 )
                             }
                         }
@@ -374,6 +375,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                 assigned_place,
                                 kind.mutability(),
                                 location,
+                                self.borrow_set.location_map.get(&location).unwrap().region,
                             );
                         }
                         _ => {}

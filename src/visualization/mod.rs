@@ -49,8 +49,10 @@ use rustc_interface::{
 };
 
 use self::{
-    dot_graph::{DotEdge, DotLabel, DotNode, EdgeOptions},
-    graph_constructor::{PCSGraphConstructor, UnblockGraphConstructor},
+    dot_graph::{
+        DotEdge, DotFloatAttr, DotLabel, DotNode, DotStringAttr, EdgeDirection, EdgeOptions,
+    },
+    graph_constructor::{GraphCluster, PCSGraphConstructor, UnblockGraphConstructor},
 };
 
 pub fn place_id<'tcx>(place: &Place<'tcx>) -> String {
@@ -61,7 +63,7 @@ struct GraphDrawer<T: io::Write> {
     out: T,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Ord, PartialOrd)]
 struct NodeId(char, usize);
 
 impl std::fmt::Display for NodeId {
@@ -79,10 +81,30 @@ struct GraphNode {
 impl GraphNode {
     fn to_dot_node(&self) -> DotNode {
         match &self.node_type {
-            NodeType::PlaceNode {
+            NodeType::ReborrowingDagNode { label, location } => {
+                let location_text = match location {
+                    Some(l) => escape_html(&format!(" at {:?}", l)),
+                    None => "".to_string(),
+                };
+                let label = format!(
+                    "<FONT FACE=\"courier\">{}</FONT>&nbsp;{}",
+                    escape_html(&label),
+                    escape_html(&location_text)
+                );
+                DotNode {
+                    id: self.id.to_string(),
+                    label: DotLabel::Html(label.clone()),
+                    color: DotStringAttr("darkgreen".to_string()),
+                    font_color: DotStringAttr("darkgreen".to_string()),
+                    shape: DotStringAttr("rect".to_string()),
+                    style: Some(DotStringAttr("rounded".to_string())),
+                    penwidth: Some(DotFloatAttr(1.5)),
+                }
+            }
+            NodeType::FPCSNode {
                 capability,
-                label,
                 location,
+                label,
             } => {
                 let capability_text = match capability {
                     Some(k) => format!("{:?}", k),
@@ -107,17 +129,21 @@ impl GraphNode {
                 DotNode {
                     id: self.id.to_string(),
                     label: DotLabel::Html(label),
-                    color: color.to_string(),
-                    font_color: color.to_string(),
-                    shape: "rect".to_string(),
+                    color: DotStringAttr(color.to_string()),
+                    font_color: DotStringAttr(color.to_string()),
+                    shape: DotStringAttr("rect".to_string()),
+                    style: None,
+                    penwidth: None,
                 }
             }
             NodeType::RegionAbstractionNode { label } => DotNode {
-                id: format!("{}", self.id.to_string()),
+                id: self.id.to_string(),
                 label: DotLabel::Text(label.clone()),
-                color: "blue".to_string(),
-                font_color: "blue".to_string(),
-                shape: "octagon".to_string(),
+                color: DotStringAttr("blue".to_string()),
+                font_color: DotStringAttr("blue".to_string()),
+                shape: DotStringAttr("octagon".to_string()),
+                style: None,
+                penwidth: None,
             },
         }
     }
@@ -125,9 +151,13 @@ impl GraphNode {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum NodeType {
-    PlaceNode {
+    FPCSNode {
         label: String,
         capability: Option<CapabilityKind>,
+        location: Option<Location>,
+    },
+    ReborrowingDagNode {
+        label: String,
         location: Option<Location>,
     },
     RegionAbstractionNode {
@@ -154,6 +184,10 @@ impl std::fmt::Display for ReferenceEdgeType {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum GraphEdge {
+    AbstractEdge {
+        blocked: NodeId,
+        blocking: NodeId,
+    },
     RegionBlockedByPlaceEdge {
         region: NodeId,
         place: NodeId,
@@ -182,6 +216,7 @@ enum GraphEdge {
         borrowed_place: NodeId,
         assigned_place: NodeId,
         location: Location,
+        region: RegionVid,
     },
     ReferenceEdge {
         borrowed_place: NodeId,
@@ -209,7 +244,7 @@ impl GraphEdge {
             } => DotEdge {
                 from: borrowed_place.to_string(),
                 to: assigned_place.to_string(),
-                options: EdgeOptions::directed()
+                options: EdgeOptions::directed(EdgeDirection::Backward)
                     .with_label(format!("{}", edge_type))
                     .with_style("dashed".to_string()),
             },
@@ -222,12 +257,13 @@ impl GraphEdge {
                 borrowed_place,
                 assigned_place,
                 location,
+                region,
             } => DotEdge {
-                from: assigned_place.to_string(),
-                to: borrowed_place.to_string(),
-                options: EdgeOptions::directed()
+                to: assigned_place.to_string(),
+                from: borrowed_place.to_string(),
+                options: EdgeOptions::directed(EdgeDirection::Backward)
                     .with_color("orange".to_string())
-                    .with_label(format!("{:?}", location)),
+                    .with_label(format!("{:?}", region)),
             },
             GraphEdge::DerefExpansionEdge {
                 source,
@@ -248,7 +284,7 @@ impl GraphEdge {
             } => DotEdge {
                 from: blocked_place.to_string(),
                 to: blocking_place.to_string(),
-                options: EdgeOptions::directed()
+                options: EdgeOptions::directed(EdgeDirection::Backward)
                     .with_color("red".to_string())
                     .with_label(format!("{:?}({})", block, reason)),
             },
@@ -260,7 +296,7 @@ impl GraphEdge {
             } => DotEdge {
                 from: blocked_place.to_string(),
                 to: blocking_place.to_string(),
-                options: EdgeOptions::directed()
+                options: EdgeOptions::directed(EdgeDirection::Forward)
                     .with_color("darkred".to_string())
                     .with_label(format!("{:?}({})", block, reason)),
             },
@@ -270,17 +306,22 @@ impl GraphEdge {
             } => DotEdge {
                 from: blocked_region.to_string(),
                 to: blocking_region.to_string(),
-                options: EdgeOptions::directed(),
+                options: EdgeOptions::directed(EdgeDirection::Backward),
             },
             GraphEdge::RegionBlockedByPlaceEdge { region, place } => DotEdge {
-                from: place.to_string(),
-                to: region.to_string(),
-                options: EdgeOptions::directed(),
-            },
-            GraphEdge::RegionBlocksPlaceEdge { region, place } => DotEdge {
                 from: region.to_string(),
                 to: place.to_string(),
-                options: EdgeOptions::directed(),
+                options: EdgeOptions::directed(EdgeDirection::Backward),
+            },
+            GraphEdge::RegionBlocksPlaceEdge { region, place } => DotEdge {
+                from: place.to_string(),
+                to: region.to_string(),
+                options: EdgeOptions::directed(EdgeDirection::Backward),
+            },
+            GraphEdge::AbstractEdge { blocked, blocking } => DotEdge {
+                from: blocked.to_string(),
+                to: blocking.to_string(),
+                options: EdgeOptions::directed(EdgeDirection::Backward),
             },
         }
     }
@@ -289,11 +330,20 @@ impl GraphEdge {
 pub struct Graph {
     nodes: Vec<GraphNode>,
     edges: HashSet<GraphEdge>,
+    clusters: HashSet<GraphCluster>,
 }
 
 impl Graph {
-    fn new(nodes: Vec<GraphNode>, edges: HashSet<GraphEdge>) -> Self {
-        Self { nodes, edges }
+    fn new(
+        nodes: Vec<GraphNode>,
+        edges: HashSet<GraphEdge>,
+        clusters: HashSet<GraphCluster>,
+    ) -> Self {
+        Self {
+            nodes,
+            edges,
+            clusters,
+        }
     }
 }
 

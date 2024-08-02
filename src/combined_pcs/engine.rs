@@ -175,6 +175,10 @@ impl<'tcx> RegionEdge<'tcx> {
         self.region_vid
     }
 
+    pub fn assigned_place(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        self.abstraction_type.assigned_to_places()
+    }
+
     pub fn new(
         blocker_places: Vec<MaybeOldPlace<'tcx>>,
         blocker_regions: Vec<RegionVid>,

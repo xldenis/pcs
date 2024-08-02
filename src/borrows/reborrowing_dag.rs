@@ -6,7 +6,7 @@ use rustc_interface::{
     data_structures::fx::{FxHashMap, FxHashSet},
     dataflow::{AnalysisDomain, JoinSemiLattice},
     middle::mir::{self, BasicBlock, Location, VarDebugInfo},
-    middle::ty::TyCtxt,
+    middle::ty::{TyCtxt, RegionVid},
 };
 
 use crate::{rustc_interface, utils::Place};
@@ -147,8 +147,10 @@ impl<'tcx> ReborrowingDag<'tcx> {
         assigned_place: Place<'tcx>,
         mutability: Mutability,
         location: Location,
+        region: RegionVid,
     ) -> bool {
         self.insert(Reborrow {
+            region,
             mutability,
             blocked_place: MaybeOldPlace::Current {
                 place: blocked_place,

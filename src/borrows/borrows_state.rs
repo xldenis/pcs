@@ -92,7 +92,7 @@ impl<'tcx> RegionAbstractions<'tcx> {
         self.0.iter()
     }
     pub fn delete_region(&mut self, vid: RegionVid) {
-        self.0.retain(|abstraction| abstraction.region != vid);
+        self.0.retain(|abstraction| abstraction.region() != vid);
     }
 }
 #[derive(Clone, Debug)]
@@ -369,8 +369,11 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                         changed = true;
                     }
                 }
-                crate::combined_pcs::UnblockAction::TerminateRegion(vid, ..) => {
-                    self.region_abstractions.delete_region(vid)
+                crate::combined_pcs::UnblockAction::TerminateRegion(vid, call) => {
+                    self.region_abstractions.delete_region(vid);
+                    // match call {
+                    //     super::domain::AbstractionType::FunctionCall { location, def_id, substs, blocks_args, blocked_place } => todo!(),
+                    // }
                 }
             }
         }
@@ -428,9 +431,10 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         assigned_place: Place<'tcx>,
         mutability: Mutability,
         location: Location,
+        region: RegionVid,
     ) {
         self.reborrows
-            .add_reborrow(blocked_place, assigned_place, mutability, location);
+            .add_reborrow(blocked_place, assigned_place, mutability, location, region);
         self.log("Add reborrow".to_string());
     }
 

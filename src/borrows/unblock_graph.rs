@@ -330,18 +330,21 @@ impl<'tcx> UnblockGraph<'tcx> {
                 UnblockEdgeType::Region(RegionEdge::new(
                     abstraction.blocked_by_places().into_iter().collect(),
                     borrows
-                        .get_abstractions_blocking_region(abstraction.region)
+                        .get_abstractions_blocking_region(abstraction.region())
                         .into_iter()
-                        .map(|a| a.region)
+                        .map(|a| a.region())
                         .collect(),
-                    abstraction.region,
+                    abstraction.region(),
                     abstraction.abstraction_type.clone(),
                 )),
                 block,
                 reason
                     .clone()
-                    .add(UnblockReason::KillAbstraction(abstraction.region)),
+                    .add(UnblockReason::KillAbstraction(abstraction.region())),
             );
+            for place in abstraction.abstraction_type.assigned_to_places() {
+                self.kill_place(place, borrows, block, tcx);
+            }
         }
     }
 

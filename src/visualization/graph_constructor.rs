@@ -1,17 +1,18 @@
 use crate::{
     borrows::{
         borrows_state::BorrowsState,
-        domain::{AbstractionType, Borrow, MaybeOldPlace},
+        domain::{AbstractionType, Borrow, MaybeOldPlace, RegionAbstraction},
         unblock_graph::UnblockGraph,
     },
     combined_pcs::UnblockEdgeType,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker, PlaceSnapshot},
+    visualization::dot_graph::RankAnnotation,
 };
 use serde_derive::Serialize;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs::File,
     io::{self, Write},
     ops::Deref,
@@ -38,14 +39,53 @@ use rustc_interface::{
     },
 };
 
-use super::{Graph, GraphEdge, GraphNode, NodeId, NodeType, ReferenceEdgeType};
+use super::{
+    dot_graph::DotSubgraph, Graph, GraphEdge, GraphNode, NodeId, NodeType, ReferenceEdgeType,
+};
+
+#[derive(Eq, PartialEq, Hash)]
+pub struct GraphCluster {
+    label: String,
+    id: String,
+    nodes: BTreeSet<NodeId>,
+    min_rank_nodes: Option<BTreeSet<NodeId>>,
+}
+
+impl GraphCluster {
+    pub fn to_dot_subgraph(&self, nodes: &[GraphNode]) -> DotSubgraph {
+        DotSubgraph {
+            id: format!("cluster_{}", self.id),
+            label: self.label.clone(),
+            nodes: self
+                .nodes
+                .iter()
+                .map(|node_id| {
+                    nodes
+                        .iter()
+                        .find(|n| n.id == *node_id)
+                        .unwrap()
+                        .to_dot_node()
+                })
+                .collect(),
+            rank_annotations: self
+                .min_rank_nodes
+                .as_ref()
+                .map(|nodes| {
+                    vec![RankAnnotation {
+                        rank_type: "min".to_string(),
+                        nodes: nodes.iter().map(|n| n.to_string()).collect(),
+                    }]
+                })
+                .unwrap_or_default(),
+        }
+    }
+}
 
 struct GraphConstructor<'mir, 'tcx> {
     place_nodes: IdLookup<(Place<'tcx>, Option<Location>)>,
-    region_abstraction_nodes: IdLookup<RegionVid>,
+    region_clusters: HashMap<RegionVid, GraphCluster>,
     nodes: Vec<GraphNode>,
     edges: HashSet<GraphEdge>,
-    rank: HashMap<NodeId, usize>,
     repacker: PlaceRepacker<'mir, 'tcx>,
 }
 
@@ -77,26 +117,23 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
     fn new(repacker: PlaceRepacker<'a, 'tcx>) -> Self {
         Self {
             place_nodes: IdLookup::new('p'),
-            region_abstraction_nodes: IdLookup::new('r'),
+            region_clusters: HashMap::new(),
             nodes: vec![],
             edges: HashSet::new(),
-            rank: HashMap::new(),
             repacker,
         }
     }
 
     fn to_graph(self) -> Graph {
-        let mut nodes = self.nodes.clone().into_iter().collect::<Vec<_>>();
-        nodes.sort_by(|a, b| self.rank(a.id).cmp(&self.rank(b.id)));
-        Graph::new(nodes, self.edges)
+        Graph::new(
+            self.nodes,
+            self.edges,
+            self.region_clusters.into_values().collect(),
+        )
     }
 
     fn place_node_id(&mut self, place: Place<'tcx>, location: Option<Location>) -> NodeId {
         self.place_nodes.node_id((place, location))
-    }
-
-    fn rank(&self, node: NodeId) -> usize {
-        *self.rank.get(&node).unwrap_or(&usize::MAX)
     }
 
     fn insert_node(&mut self, node: GraphNode) {
@@ -105,48 +142,68 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
     }
 
-    fn insert_region_abstraction_node(
-        &mut self,
-        region: RegionVid,
-        abstraction_type: &AbstractionType,
-    ) -> NodeId {
-        if let Some(id) = self.region_abstraction_nodes.existing_id(&region) {
-            return id;
+    fn insert_region_abstraction(&mut self, region_abstraction: &RegionAbstraction<'tcx>) {
+        if self
+            .region_clusters
+            .contains_key(&region_abstraction.region())
+        {
+            return;
         }
-        let call_location = match abstraction_type {
-            AbstractionType::FunctionCall { location, .. } => location,
+        let blocked_place_nodes = region_abstraction
+            .blocked_by_places()
+            .into_iter()
+            .map(|p| self.insert_place_node(p.place(), p.location(), None))
+            .collect::<Vec<_>>();
+        let blocks_place_nodes = region_abstraction
+            .blocks_places()
+            .into_iter()
+            .map(|p| self.insert_place_node(p.place(), p.location(), None))
+            .collect::<Vec<_>>();
+        let cluster = GraphCluster {
+            id: format!("c{}", region_abstraction.region().as_usize()),
+            label: format!("{:?}", region_abstraction.region()),
+            nodes: blocked_place_nodes
+                .iter()
+                .chain(blocks_place_nodes.iter())
+                .cloned()
+                .collect(),
+            min_rank_nodes: Some(blocks_place_nodes.iter().cloned().collect()),
         };
-        let id = self.region_abstraction_nodes.node_id(region);
-        let label = format!("{:?} for call at {:?}", region, call_location);
-        let node = GraphNode {
-            id,
-            node_type: NodeType::RegionAbstractionNode { label },
-        };
-        self.insert_node(node);
-        id
+        self.region_clusters
+            .insert(region_abstraction.region(), cluster);
+        for blocked in blocked_place_nodes {
+            for blocking in blocks_place_nodes.iter() {
+                self.edges.insert(GraphEdge::AbstractEdge {
+                    blocked,
+                    blocking: *blocking,
+                });
+            }
+        }
     }
 
     fn insert_place_node(
         &mut self,
         place: Place<'tcx>,
         location: Option<Location>,
-        kind: Option<CapabilityKind>,
+        capability: Option<CapabilityKind>,
     ) -> NodeId {
         if let Some(node_id) = self.place_nodes.existing_id(&(place, location)) {
             return node_id;
         }
         let id = self.place_node_id(place, location);
         let label = format!("{:?}", place.to_string(self.repacker));
-        let node = GraphNode {
-            id,
-            node_type: NodeType::PlaceNode {
+        let node_type = if place.is_owned(self.repacker.body(), self.repacker.tcx()) {
+            NodeType::FPCSNode {
                 label,
-                capability: kind,
+                capability,
                 location,
-            },
+            }
+        } else {
+            assert!(capability.is_none());
+            NodeType::ReborrowingDagNode { label, location }
         };
+        let node = GraphNode { id, node_type };
         self.insert_node(node);
-        self.rank.insert(id, place.local.as_usize());
         id
     }
 }
@@ -214,29 +271,23 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                     }
                 }
                 UnblockEdgeType::Region(region_edge) => {
-                    let region = self.constructor.insert_region_abstraction_node(
-                        region_edge.region_vid(),
-                        region_edge.abstraction_type(),
-                    );
                     for place in region_edge.blocked_places() {
-                        let place = self.constructor.insert_place_node(
+                        let blocked_node = self.constructor.insert_place_node(
                             place.place(),
                             place.location(),
                             None,
                         );
-                        self.constructor
-                            .edges
-                            .insert(GraphEdge::RegionBlocksPlaceEdge { region, place });
-                    }
-                    for place in &region_edge.blocker_places {
-                        let place = self.constructor.insert_place_node(
-                            place.place(),
-                            place.location(),
-                            None,
-                        );
-                        self.constructor
-                            .edges
-                            .insert(GraphEdge::RegionBlockedByPlaceEdge { region, place });
+                        for place in &region_edge.blocker_places {
+                            let blocking_node = self.constructor.insert_place_node(
+                                place.place(),
+                                place.location(),
+                                None,
+                            );
+                            self.constructor.edges.insert(GraphEdge::AbstractEdge {
+                                blocked: blocked_node,
+                                blocking: blocking_node,
+                            });
+                        }
                     }
                 }
             }
@@ -357,6 +408,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                 borrowed_place,
                 assigned_place,
                 location: reborrow.location,
+                region: reborrow.region,
             });
         }
 
@@ -374,32 +426,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
         }
 
         for abstraction in self.borrows_domain.region_abstractions.iter() {
-            let r = self
-                .constructor
-                .insert_region_abstraction_node(abstraction.region, &abstraction.abstraction_type);
-            for vid in &abstraction.blocks_abstractions {
-                let blocked = self
-                    .constructor
-                    .insert_region_abstraction_node(*vid, &abstraction.abstraction_type);
-                self.constructor
-                    .edges
-                    .insert(GraphEdge::BlocksAbstractionEdge {
-                        blocked_region: blocked,
-                        blocking_region: r,
-                    });
-            }
-            for place in &abstraction.blocked_by_places() {
-                let place = self.insert_maybe_old_place(*place);
-                self.constructor
-                    .edges
-                    .insert(GraphEdge::RegionBlockedByPlaceEdge { region: r, place });
-            }
-            for place in &abstraction.blocks_places() {
-                let place = self.insert_maybe_old_place(*place);
-                self.constructor
-                    .edges
-                    .insert(GraphEdge::RegionBlocksPlaceEdge { region: r, place });
-            }
+            let r = self.constructor.insert_region_abstraction(abstraction);
         }
 
         self.constructor.to_graph()
