@@ -1,11 +1,18 @@
-use std::{borrow::Cow, collections::HashSet, ops::ControlFlow, rc::Rc};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet, HashSet},
+    ops::ControlFlow,
+    rc::Rc,
+};
 
+use polonius_engine::FactTypes;
 use rustc_interface::{
     ast::Mutability,
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
-            BorrowIndex, LocationTable, PoloniusInput, RegionInferenceContext, RichLocation,
+            BorrowIndex, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext,
+            RichLocation, RustcFacts,
         },
     },
     data_structures::fx::{FxHashMap, FxHashSet},
@@ -14,17 +21,21 @@ use rustc_interface::{
     middle::{
         mir::{
             visit::{TyContext, Visitor},
-            BasicBlock, Body, CallReturnPlaces, ConstantKind, HasLocalDecls, Local, Location,
-            Operand, Place, ProjectionElem, Promoted, Rvalue, Statement, StatementKind, Terminator,
-            TerminatorEdges, TerminatorKind, VarDebugInfo, RETURN_PLACE, START_BLOCK,
+            BasicBlock, Body, BorrowKind, CallReturnPlaces, ConstantKind, HasLocalDecls, Local,
+            Location, Operand, Place, ProjectionElem, Promoted, Rvalue, Statement, StatementKind,
+            Terminator, TerminatorEdges, TerminatorKind, VarDebugInfo, RETURN_PLACE, START_BLOCK,
         },
-        ty::{self, Region, RegionKind, RegionVid, TyCtxt, TypeVisitor},
+        ty::{
+            self, EarlyBinder, Region, RegionKind, RegionVid, TyCtxt, TypeVisitable, TypeVisitor,
+        },
     },
 };
 use serde_json::{json, Value};
 
 use crate::{
-    borrows::domain::RegionAbstraction,
+    borrows::domain::{
+        AbstractionBlockEdge, AbstractionTarget, RegionAbstraction, RegionProjection,
+    },
     rustc_interface,
     utils::{self, PlaceRepacker, PlaceSnapshot},
     ReborrowBridge,
@@ -38,7 +49,6 @@ use super::{
 use super::{
     domain::{Borrow, DerefExpansion, MaybeOldPlace, Reborrow},
     unblock_graph::UnblockGraph,
-    unblock_reason::UnblockReasons,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -57,6 +67,7 @@ pub struct BorrowsVisitor<'tcx, 'mir, 'state> {
     preparing: bool,
     region_inference_context: Rc<RegionInferenceContext<'tcx>>,
     debug_ctx: Option<DebugCtx>,
+    output_facts: &'mir PoloniusOutput,
 }
 
 impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
@@ -96,6 +107,7 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
             borrow_set: engine.borrow_set.clone(),
             region_inference_context: engine.region_inference_context.clone(),
             debug_ctx: None,
+            output_facts: engine.output_facts,
         }
     }
     fn ensure_expansion_to_exactly(&mut self, place: utils::Place<'tcx>, location: Location) {
@@ -114,21 +126,58 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         }
     }
 
+    fn subsets_at(
+        &self,
+        location: Location,
+        start: bool,
+    ) -> BTreeMap<RegionVid, BTreeSet<RegionVid>> {
+        let location = if start {
+            self.location_table.start_index(location)
+        } else {
+            self.location_table.mid_index(location)
+        };
+        self.output_facts.subsets_at(location).into_owned()
+    }
+
+    fn origins_containing_loans_at(&self, location: Location, start: bool) -> Vec<RegionVid> {
+        let location = if start {
+            self.location_table.start_index(location)
+        } else {
+            self.location_table.mid_index(location)
+        };
+        self.output_facts
+            .origin_contains_loan_at(location)
+            .iter()
+            .filter(|(_, loans)| !loans.is_empty())
+            .map(|(origin, _)| origin.to_owned())
+            .collect()
+    }
+
+    fn origins_live_at(&self, location: Location, start: bool) -> &[RegionVid] {
+        let location = if start {
+            self.location_table.start_index(location)
+        } else {
+            self.location_table.mid_index(location)
+        };
+        self.output_facts.origins_live_at(location)
+    }
+
     fn loans_invalidated_at(&self, location: Location, start: bool) -> Vec<BorrowIndex> {
+        let location = if start {
+            self.location_table.start_index(location)
+        } else {
+            self.location_table.mid_index(location)
+        };
         self.input_facts
             .loan_invalidated_at
             .iter()
-            .filter_map(
-                |(loan_point, loan)| match self.location_table.to_location(*loan_point) {
-                    RichLocation::Start(loan_location) if loan_location == location && start => {
-                        Some(*loan)
-                    }
-                    RichLocation::Mid(loan_location) if loan_location == location && !start => {
-                        Some(*loan)
-                    }
-                    _ => None,
-                },
-            )
+            .filter_map(|(loan_point, loan)| {
+                if *loan_point == location {
+                    Some(*loan)
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
@@ -146,6 +195,157 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         }
         false
     }
+
+    fn construct_region_abstraction_if_necessary(
+        &mut self,
+        func: &Operand<'tcx>,
+        args: &[Operand<'tcx>],
+        destination: Place<'tcx>,
+        location: Location,
+    ) {
+        let (func_def_id, substs) = match func {
+            Operand::Constant(c) => match c.literal {
+                ConstantKind::Val(_, ty) => match ty.kind() {
+                    ty::TyKind::FnDef(def_id, substs) => (def_id, substs),
+                    _ => unreachable!(),
+                },
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+        let sig = EarlyBinder::instantiate_identity(self.tcx.fn_sig(func_def_id));
+        let sig = self.tcx.liberate_late_bound_regions(*func_def_id, sig);
+        let output_lifetimes = extract_lifetimes(sig.output());
+        if output_lifetimes.is_empty() {
+            eprintln!(
+                "No output lifetimes for {:?} {:?}",
+                func_def_id,
+                sig.output()
+            );
+            return;
+        }
+        let param_env = self.tcx.param_env(func_def_id);
+        let mut edges = vec![];
+
+        for (idx, ty) in sig.inputs().iter().enumerate() {
+            let input_place: utils::Place<'tcx> = args[idx].place().unwrap().into();
+            let input_place = input_place.project_deref(self.repacker());
+            let ty = match ty.kind() {
+                ty::TyKind::Ref(region, ty, Mutability::Mut) => {
+                    for output in self.matches_for_input_lifetime(
+                        *region,
+                        param_env,
+                        substs,
+                        sig.output(),
+                        destination.into(),
+                    ) {
+                        edges.push((
+                            idx,
+                            AbstractionBlockEdge {
+                                input: AbstractionTarget::MaybeOldPlace(input_place.into()),
+                                output,
+                            },
+                        ));
+                    }
+                    *ty
+                }
+                _ => *ty,
+            };
+            for input_lifetime in extract_lifetimes(ty) {
+                for output in self.matches_for_input_lifetime(
+                    input_lifetime,
+                    param_env,
+                    substs,
+                    sig.output(),
+                    destination.into(),
+                ) {
+                    edges.push((
+                        idx,
+                        AbstractionBlockEdge {
+                            input: AbstractionTarget::RegionProjection(RegionProjection {
+                                place: input_place.into(),
+                                region: get_vid_from_substs(input_lifetime, substs),
+                            }),
+                            output,
+                        },
+                    ));
+                }
+            }
+        }
+        assert!(edges.len() > 0, "No edges for {:?}", func_def_id);
+        self.state
+            .after
+            .add_region_abstraction(RegionAbstraction::new(AbstractionType::FunctionCall {
+                def_id: *func_def_id,
+                location,
+                substs,
+                edges,
+            }));
+    }
+
+    fn matches_for_input_lifetime(
+        &self,
+        input_lifetime: ty::Region<'tcx>,
+        param_env: ty::ParamEnv<'tcx>,
+        substs: ty::GenericArgsRef<'tcx>,
+        output_ty: ty::Ty<'tcx>,
+        output_place: utils::Place<'tcx>,
+    ) -> Vec<AbstractionTarget<'tcx>> {
+        let mut result = vec![];
+        let output_ty = match output_ty.kind() {
+            ty::TyKind::Ref(output_lifetime, ty, Mutability::Mut) => {
+                if outlives_in_param_env(input_lifetime, *output_lifetime, param_env) {
+                    result.push(AbstractionTarget::MaybeOldPlace(
+                        output_place.project_deref(self.repacker()).into(),
+                    ));
+                }
+                *ty
+            }
+            _ => output_ty,
+        };
+        for output_lifetime in extract_lifetimes(output_ty) {
+            if outlives_in_param_env(input_lifetime, output_lifetime, param_env) {
+                result.push(AbstractionTarget::RegionProjection(RegionProjection {
+                    place: output_place.into(),
+                    region: get_vid_from_substs(output_lifetime, substs),
+                }));
+            }
+        }
+        result
+    }
+}
+fn get_vid_from_substs<'tcx>(
+    region: ty::Region<'tcx>,
+    substs: ty::GenericArgsRef<'tcx>,
+) -> RegionVid {
+    match region.kind() {
+        ty::RegionKind::ReEarlyBound(early_bound) => {
+            get_vid(&substs[early_bound.index as usize].expect_region()).unwrap()
+        }
+        _ => todo!(),
+    }
+}
+
+fn outlives_in_param_env<'tcx>(
+    input_lifetime: ty::Region<'tcx>,
+    output_lifetime: ty::Region<'tcx>,
+    param_env: ty::ParamEnv<'tcx>,
+) -> bool {
+    if input_lifetime == output_lifetime {
+        return true;
+    }
+    for bound in param_env.caller_bounds() {
+        match bound.as_region_outlives_clause() {
+            Some(outlives) => {
+                let outlives = outlives.no_bound_vars().unwrap();
+                if outlives.0 == input_lifetime && outlives.1 == output_lifetime {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn get_vid(region: &Region) -> Option<RegionVid> {
@@ -160,16 +360,29 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
         self.super_operand(operand, location);
         if self.before && self.preparing {
             match operand {
+                Operand::Move(place) => {
+                    eprintln!("Making {:?} old at {:?}", place, location);
+                    self.state.after.set_latest((*place).into(), location);
+                    self.state.after.make_place_old(
+                        (*place).into(),
+                        PlaceRepacker::new(self.body, self.tcx),
+                        None,
+                    );
+                }
+                _ => {}
+            }
+            match operand {
                 Operand::Copy(place) | Operand::Move(place) => {
                     let place: utils::Place<'tcx> = (*place).into();
-                    if place.is_owned(self.body, self.tcx) && place.is_ref(self.body, self.tcx) {
-                        self.ensure_expansion_to_exactly(
-                            place.project_deref(self.repacker()),
-                            location,
-                        );
-                    } else {
-                        self.ensure_expansion_to_exactly(place, location);
-                    }
+                    self.ensure_expansion_to_exactly(place, location);
+                }
+                _ => {}
+            }
+        }
+        if !self.before && !self.preparing {
+            match operand {
+                Operand::Move(place) => {
+                    self.state.after.set_latest((*place).into(), location);
                 }
                 _ => {}
             }
@@ -177,6 +390,8 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
+        self.super_terminator(terminator, location);
+        eprintln!("Visiting terminator {:?} at {:?}", terminator, location);
         if !self.before && !self.preparing {
             match &terminator.kind {
                 TerminatorKind::Call {
@@ -185,63 +400,12 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     destination,
                     ..
                 } => {
-                    let (func_def_id, substs) = match func {
-                        Operand::Constant(c) => match c.literal {
-                            ConstantKind::Val(_, ty) => match ty.kind() {
-                                ty::TyKind::FnDef(def_id, substs) => (def_id, substs),
-                                _ => unreachable!(),
-                            },
-                            _ => unreachable!(),
-                        },
-                        _ => unreachable!(),
-                    };
-                    if let Some(result_vid) = self.vid_for_place((*destination).into()) {
-                        let mut blocks_args = vec![];
-                        for (i, arg) in args.iter().enumerate() {
-                            if let Operand::Move(arg) = arg {
-                                let arg: utils::Place<'tcx> = (*arg).into();
-                                if !arg.is_mut_ref(self.body, self.tcx) {
-                                    continue;
-                                }
-                                let arg_vid = self.vid_for_place(arg).unwrap();
-                                if self.outlives(arg_vid, result_vid) {
-                                    let blocked_place = arg.project_deref(self.repacker());
-                                    for r in
-                                        self.state.after.reborrows_assigned_to(blocked_place.into())
-                                    {
-                                        blocks_args.push((i, r.blocked_place));
-                                    }
-                                }
-                                self.state.after.remove_loans_assigned_to(
-                                    self.tcx,
-                                    &self.borrow_set,
-                                    arg,
-                                    location.block,
-                                );
-                            }
-                        }
-                        let destination: utils::Place<'tcx> = (*destination).into();
-                        let ra_type = AbstractionType::FunctionCall {
-                            def_id: *func_def_id,
-                            location,
-                            blocks_args,
-                            substs,
-                            assigned_place: destination.project_deref(self.repacker()).into(),
-                        };
-                        let mut ra = RegionAbstraction::new(result_vid, ra_type);
-                        self.state.after.add_region_abstraction(ra);
-                    } else {
-                        for arg in args {
-                            if let Operand::Move(arg) = arg {
-                                self.state.after.remove_loans_assigned_to(
-                                    self.tcx,
-                                    &self.borrow_set,
-                                    (*arg).into(),
-                                    location.block,
-                                );
-                            }
-                        }
-                    }
+                    self.construct_region_abstraction_if_necessary(
+                        func,
+                        args,
+                        (*destination).into(),
+                        location,
+                    );
                 }
                 _ => {}
             }
@@ -250,16 +414,53 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
         self.super_statement(statement, location);
+        eprintln!(
+            "Visiting statement {:?} at {:?} {:?} {:?}",
+            statement, location, self.before, self.preparing
+        );
+        eprintln!(
+            "of {:?} at {:?}",
+            self.body.basic_blocks[location.block].statements.len(),
+            location
+        );
         if self.preparing {
+            let mut g = UnblockGraph::new();
+
             for loan in self.loans_invalidated_at(location, self.before) {
-                self.state.after.remove_rustc_borrow(
-                    self.tcx,
-                    &loan,
-                    &self.borrow_set,
-                    &self.body,
+                let borrow = &self.borrow_set[loan];
+                let borrow = Borrow::new(
+                    borrow.borrowed_place.into(),
+                    borrow.assigned_place.into(),
+                    matches!(borrow.kind, BorrowKind::Mut { .. }),
+                );
+                g.unblock_place(
+                    MaybeOldPlace::Current {
+                        place: borrow.borrowed_place.into(),
+                    },
+                    &self.state.after,
                     location.block,
+                    self.repacker(),
                 );
             }
+
+            let live_origins = self.origins_live_at(location, self.before);
+
+            for abstraction in self.state.after.region_abstractions.iter() {
+                if abstraction
+                    .outputs()
+                    .iter()
+                    .all(|i| !live_origins.contains(&i.region(self.repacker())))
+                {
+                    eprintln!("Killing abstraction at {:?} because abstraction does not refer to live regions {:?}", location, live_origins);
+                    g.kill_abstraction(
+                        &self.state.after,
+                        &abstraction.abstraction_type,
+                        self.repacker(),
+                    );
+                }
+            }
+
+            self.state.after.apply_unblock_graph(g, self.tcx);
         }
 
         // Stuff in this block will be included as the middle "bridge" ops that
@@ -270,16 +471,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     let target: utils::Place<'tcx> = (*target).into();
                     if !target.is_owned(self.body, self.tcx) {
                         self.ensure_expansion_to_exactly(target, location);
-                    }
-                }
-                StatementKind::StorageDead(local) => {
-                    self.debug_ctx = Some(DebugCtx { location });
-                    let place: utils::Place<'tcx> = (*local).into();
-                    let repacker = PlaceRepacker::new(self.body, self.tcx);
-                    if place.ty(repacker).ty.is_ref() {
-                        self.state
-                            .after
-                            .make_place_old(place, repacker, self.debug_ctx);
                     }
                 }
                 _ => {}
@@ -318,19 +509,34 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
         if !self.preparing && !self.before {
             match &statement.kind {
+                StatementKind::StorageDead(local) => {
+                    self.debug_ctx = Some(DebugCtx { location });
+                    let place: utils::Place<'tcx> = (*local).into();
+                    let repacker = PlaceRepacker::new(self.body, self.tcx);
+                    if place.ty(repacker).ty.is_ref() {
+                        self.state
+                            .after
+                            .make_place_old(place, repacker, self.debug_ctx);
+                    }
+                }
                 StatementKind::Assign(box (target, rvalue)) => {
                     self.state.after.set_latest((*target).into(), location);
+                    eprintln!("Assigning {:?} to {:?} at {:?}", rvalue, target, location);
                     match rvalue {
                         Rvalue::Use(Operand::Move(from)) => {
                             let from: utils::Place<'tcx> = (*from).into();
                             let target: utils::Place<'tcx> = (*target).into();
                             if matches!(from.ty(self.repacker()).ty.kind(), ty::TyKind::Ref(_, _, r) if r.is_mut())
                             {
-                                self.state.after.move_reborrows(
-                                    from.project_deref(self.repacker()),
-                                    target.project_deref(self.repacker()),
+                                self.state.after.reborrows.move_reborrows(
+                                    MaybeOldPlace::new(
+                                        from.project_deref(self.repacker()),
+                                        Some(self.state.after.get_latest(&from)),
+                                    ),
+                                    target.project_deref(self.repacker()).into(),
                                 );
                             }
+                            eprintln!("Moving {:?} to {:?} at {:?}", from, target, location);
                             let mut ug = UnblockGraph::new();
                             for d in self
                                 .state
@@ -338,29 +544,32 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                 .deref_expansions
                                 .descendants_of_place(from.into())
                             {
-                                ug.kill_place(d.base, &self.state.after, location.block, self.tcx);
+                                ug.kill_place(
+                                    d.base(),
+                                    &self.state.after,
+                                    location.block,
+                                    self.repacker(),
+                                );
                             }
                             self.state.after.apply_unblock_graph(ug, self.tcx);
-                            self.state.after.make_place_old(
-                                from,
-                                PlaceRepacker::new(self.body, self.tcx),
-                                None,
-                            );
                         }
                         Rvalue::Use(Operand::Copy(from)) => {
-                            if from.ty(self.body, self.tcx).ty.is_ref() {
-                                let from: utils::Place<'tcx> = (*from).into();
-                                let target: utils::Place<'tcx> = (*target).into();
-                                self.state.after.add_reborrow(
-                                    from.project_deref(self.repacker()),
-                                    target.project_deref(self.repacker()),
-                                    Mutability::Not,
-                                    location,
-                                    self.borrow_set.location_map.get(&location).unwrap().region,
-                                )
+                            match from.ty(self.body, self.tcx).ty.kind() {
+                                ty::TyKind::Ref(region, _, _) => {
+                                    let from: utils::Place<'tcx> = (*from).into();
+                                    let target: utils::Place<'tcx> = (*target).into();
+                                    self.state.after.add_reborrow(
+                                        from.project_deref(self.repacker()),
+                                        target.project_deref(self.repacker()),
+                                        Mutability::Not,
+                                        location,
+                                        *region, // TODO: This is the region for the place, not the loan, does that matter?
+                                    );
+                                }
+                                _ => {}
                             }
                         }
-                        Rvalue::Ref(_, kind, blocked_place) => {
+                        Rvalue::Ref(region, kind, blocked_place) => {
                             let blocked_place: utils::Place<'tcx> = (*blocked_place).into();
                             let target: utils::Place<'tcx> = (*target).into();
                             let assigned_place = target.project_deref(self.repacker());
@@ -375,7 +584,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                 assigned_place,
                                 kind.mutability(),
                                 location,
-                                self.borrow_set.location_map.get(&location).unwrap().region,
+                                *region,
                             );
                         }
                         _ => {}
@@ -413,4 +622,21 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
             }
         }
     }
+}
+
+struct LifetimeExtractor<'tcx> {
+    lifetimes: Vec<ty::Region<'tcx>>,
+}
+
+impl<'tcx> TypeVisitor<ty::TyCtxt<'tcx>> for LifetimeExtractor<'tcx> {
+    fn visit_region(&mut self, rr: ty::Region<'tcx>) -> ControlFlow<Self::BreakTy> {
+        self.lifetimes.push(rr);
+        ControlFlow::Continue(())
+    }
+}
+
+fn extract_lifetimes<'tcx>(ty: ty::Ty<'tcx>) -> Vec<ty::Region<'tcx>> {
+    let mut visitor = LifetimeExtractor { lifetimes: vec![] };
+    ty.visit_with(&mut visitor);
+    visitor.lifetimes
 }

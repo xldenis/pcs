@@ -6,14 +6,14 @@ use rustc_interface::{
     data_structures::fx::{FxHashMap, FxHashSet},
     dataflow::{AnalysisDomain, JoinSemiLattice},
     middle::mir::{self, BasicBlock, Location, VarDebugInfo},
-    middle::ty::{TyCtxt, RegionVid},
+    middle::ty::{Region, RegionVid, TyCtxt},
 };
 
 use crate::{rustc_interface, utils::Place};
 
 use super::{
     borrows_visitor::DebugCtx,
-    domain::{MaybeOldPlace, Reborrow},
+    domain::{Latest, MaybeOldPlace, Reborrow},
 };
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct ReborrowingDag<'tcx> {
@@ -33,7 +33,7 @@ impl<'tcx> ReborrowingDag<'tcx> {
     pub fn make_place_old(
         &mut self,
         place: Place<'tcx>,
-        location: Location,
+        latest: &Latest<'tcx>,
         debug_ctx: Option<DebugCtx>,
     ) {
         let mut new = FxHashSet::default();
@@ -41,14 +41,18 @@ impl<'tcx> ReborrowingDag<'tcx> {
             if reborrow.blocked_place.is_current()
                 && place.is_prefix(reborrow.blocked_place.place())
             {
-                reborrow.blocked_place =
-                    MaybeOldPlace::new(reborrow.blocked_place.place(), Some(location));
+                reborrow.blocked_place = MaybeOldPlace::new(
+                    reborrow.blocked_place.place(),
+                    Some(latest.get(&reborrow.blocked_place.place())),
+                );
             }
             if reborrow.assigned_place.is_current()
                 && place.is_prefix(reborrow.assigned_place.place())
             {
-                reborrow.assigned_place =
-                    MaybeOldPlace::new(reborrow.assigned_place.place(), Some(location));
+                reborrow.assigned_place = MaybeOldPlace::new(
+                    reborrow.assigned_place.place(),
+                    Some(latest.get(&reborrow.assigned_place.place())),
+                );
             }
             new.insert(reborrow);
         }
@@ -109,11 +113,11 @@ impl<'tcx> ReborrowingDag<'tcx> {
 
     pub fn get_places_blocking(
         &self,
-        place: MaybeOldPlace<'tcx>,
+        place: &MaybeOldPlace<'tcx>,
     ) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.reborrows
             .iter()
-            .filter(|r| r.blocked_place == place)
+            .filter(|r| r.blocked_place == *place)
             .map(|r| r.assigned_place)
             .collect()
     }
@@ -147,7 +151,7 @@ impl<'tcx> ReborrowingDag<'tcx> {
         assigned_place: Place<'tcx>,
         mutability: Mutability,
         location: Location,
-        region: RegionVid,
+        region: Region<'tcx>,
     ) -> bool {
         self.insert(Reborrow {
             region,

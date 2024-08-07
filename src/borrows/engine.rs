@@ -5,7 +5,7 @@ use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
-            BorrowIndex, LocationTable, PoloniusInput, RegionInferenceContext, RichLocation,
+            BorrowIndex, LocationTable, PoloniusInput, RegionInferenceContext, RichLocation, PoloniusOutput
         },
     },
     data_structures::fx::{FxHashMap, FxHashSet},
@@ -40,6 +40,7 @@ pub struct BorrowsEngine<'mir, 'tcx> {
     pub input_facts: &'mir PoloniusInput,
     pub borrow_set: Rc<BorrowSet<'tcx>>,
     pub region_inference_context: Rc<RegionInferenceContext<'tcx>>,
+    pub output_facts: &'mir PoloniusOutput,
 }
 
 
@@ -51,6 +52,7 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
         input_facts: &'mir PoloniusInput,
         borrow_set: Rc<BorrowSet<'tcx>>,
         region_inference_context: Rc<RegionInferenceContext<'tcx>>,
+        output_facts: &'mir PoloniusOutput,
     ) -> Self {
         BorrowsEngine {
             tcx,
@@ -59,44 +61,7 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
             input_facts,
             borrow_set,
             region_inference_context,
-        }
-    }
-
-    fn get_regions_in(&self, ty: ty::Ty<'tcx>, location: Location) -> HashSet<RegionVid> {
-        struct RegionVisitor(HashSet<RegionVid>);
-
-        impl<'tcx> ty::TypeVisitor<ty::TyCtxt<'tcx>> for RegionVisitor {
-            fn visit_region(&mut self, region: Region<'tcx>) -> ControlFlow<Self::BreakTy> {
-                match region.kind() {
-                    RegionKind::ReEarlyBound(_) => todo!(),
-                    RegionKind::ReLateBound(_, _) => todo!(),
-                    RegionKind::ReFree(_) => todo!(),
-                    RegionKind::ReStatic => todo!(),
-                    RegionKind::ReVar(vid) => {
-                        self.0.insert(vid);
-                    }
-                    RegionKind::RePlaceholder(_) => todo!(),
-                    RegionKind::ReErased => todo!(),
-                    RegionKind::ReError(_) => todo!(),
-                }
-                ControlFlow::Continue(())
-            }
-        }
-        let mut visitor = RegionVisitor(HashSet::new());
-        visitor.visit_ty(ty);
-        visitor.0
-    }
-
-    fn outlives_or_eq(&self, sup: RegionVid, sub: RegionVid) -> bool {
-        if sup == sub {
-            true
-        } else {
-            self.region_inference_context
-                .outlives_constraints()
-                .any(|constraint| {
-                    sup == constraint.sup
-                        && (sub == constraint.sub || self.outlives_or_eq(constraint.sub, sub))
-                })
+            output_facts
         }
     }
 }
@@ -122,7 +87,7 @@ impl<'tcx> ReborrowAction<'tcx> {
             }),
             ReborrowAction::ExpandPlace(e) => json!({
                 "action": "ExpandPlace",
-                "place": e.base.to_json(repacker),
+                "place": e.base().to_json(repacker),
             }),
             ReborrowAction::CollapsePlace(_, place) => json!({
                 "action": "CollapsePlace",

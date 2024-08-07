@@ -1,7 +1,10 @@
 use crate::{
     borrows::{
         borrows_state::BorrowsState,
-        domain::{AbstractionType, Borrow, MaybeOldPlace, RegionAbstraction},
+        domain::{
+            AbstractionTarget, AbstractionType, Borrow, MaybeOldPlace, RegionAbstraction,
+            RegionProjection,
+        },
         unblock_graph::UnblockGraph,
     },
     combined_pcs::UnblockEdgeType,
@@ -83,7 +86,8 @@ impl GraphCluster {
 
 struct GraphConstructor<'mir, 'tcx> {
     place_nodes: IdLookup<(Place<'tcx>, Option<Location>)>,
-    region_clusters: HashMap<RegionVid, GraphCluster>,
+    region_projection_nodes: IdLookup<RegionProjection<'tcx>>,
+    region_clusters: HashMap<Location, GraphCluster>,
     nodes: Vec<GraphNode>,
     edges: HashSet<GraphEdge>,
     repacker: PlaceRepacker<'mir, 'tcx>,
@@ -103,11 +107,11 @@ impl<T: Eq + Clone> IdLookup<T> {
             .map(|idx| NodeId(self.0, idx))
     }
 
-    fn node_id(&mut self, item: T) -> NodeId {
-        if let Some(idx) = self.existing_id(&item) {
+    fn node_id(&mut self, item: &T) -> NodeId {
+        if let Some(idx) = self.existing_id(item) {
             idx
         } else {
-            self.1.push(item);
+            self.1.push(item.clone());
             NodeId(self.0, self.1.len() - 1)
         }
     }
@@ -117,6 +121,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
     fn new(repacker: PlaceRepacker<'a, 'tcx>) -> Self {
         Self {
             place_nodes: IdLookup::new('p'),
+            region_projection_nodes: IdLookup::new('r'),
             region_clusters: HashMap::new(),
             nodes: vec![],
             edges: HashSet::new(),
@@ -133,7 +138,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
     }
 
     fn place_node_id(&mut self, place: Place<'tcx>, location: Option<Location>) -> NodeId {
-        self.place_nodes.node_id((place, location))
+        self.place_nodes.node_id(&(place, location))
     }
 
     fn insert_node(&mut self, node: GraphNode) {
@@ -142,43 +147,75 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
     }
 
+    fn insert_abstraction_target(&mut self, target: &AbstractionTarget<'tcx>) -> NodeId {
+        match target {
+            AbstractionTarget::MaybeOldPlace(place) => {
+                self.insert_place_node(place.place(), place.location(), None)
+            }
+            AbstractionTarget::RegionProjection(projection) => {
+                self.insert_region_projection_node(projection)
+            }
+        }
+    }
+
+    fn insert_region_projection_node(&mut self, projection: &RegionProjection<'tcx>) -> NodeId {
+        if let Some(id) = self.region_projection_nodes.existing_id(projection) {
+            return id;
+        }
+        let id = self.region_projection_nodes.node_id(projection);
+        let node = GraphNode {
+            id,
+            node_type: NodeType::RegionProjectionNode {
+                label: format!(
+                    "{}|{:?}",
+                    projection.place.to_short_string(self.repacker),
+                    projection.region
+                ),
+            },
+        };
+        self.insert_node(node);
+        id
+    }
+
     fn insert_region_abstraction(&mut self, region_abstraction: &RegionAbstraction<'tcx>) {
         if self
             .region_clusters
-            .contains_key(&region_abstraction.region())
+            .contains_key(&region_abstraction.location())
         {
             return;
         }
-        let blocked_place_nodes = region_abstraction
-            .blocked_by_places()
-            .into_iter()
-            .map(|p| self.insert_place_node(p.place(), p.location(), None))
-            .collect::<Vec<_>>();
-        let blocks_place_nodes = region_abstraction
-            .blocks_places()
-            .into_iter()
-            .map(|p| self.insert_place_node(p.place(), p.location(), None))
-            .collect::<Vec<_>>();
+
+        let mut input_nodes = BTreeSet::new();
+        let mut output_nodes = BTreeSet::new();
+
+        for edge in region_abstraction.edges() {
+            let input = self.insert_abstraction_target(&edge.input);
+            let output = self.insert_abstraction_target(&edge.output);
+            input_nodes.insert(input);
+            output_nodes.insert(output);
+            self.edges.insert(GraphEdge::AbstractEdge {
+                blocked: input,
+                blocking: output,
+            });
+        }
+
+        assert!(!input_nodes.is_empty());
         let cluster = GraphCluster {
-            id: format!("c{}", region_abstraction.region().as_usize()),
-            label: format!("{:?}", region_abstraction.region()),
-            nodes: blocked_place_nodes
+            id: format!(
+                "c{:?}_{}",
+                region_abstraction.location().block,
+                region_abstraction.location().statement_index
+            ),
+            label: format!("{:?}", region_abstraction.location()),
+            nodes: input_nodes
                 .iter()
-                .chain(blocks_place_nodes.iter())
+                .chain(output_nodes.iter())
                 .cloned()
                 .collect(),
-            min_rank_nodes: Some(blocks_place_nodes.iter().cloned().collect()),
+            min_rank_nodes: Some(input_nodes),
         };
         self.region_clusters
-            .insert(region_abstraction.region(), cluster);
-        for blocked in blocked_place_nodes {
-            for blocking in blocks_place_nodes.iter() {
-                self.edges.insert(GraphEdge::AbstractEdge {
-                    blocked,
-                    blocking: *blocking,
-                });
-            }
-        }
+            .insert(region_abstraction.location(), cluster);
     }
 
     fn insert_place_node(
@@ -192,11 +229,16 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
         let id = self.place_node_id(place, location);
         let label = format!("{:?}", place.to_string(self.repacker));
+        let region = match place.ty(self.repacker).ty.kind() {
+            ty::TyKind::Ref(region, _, _) => Some(format!("{:?}", region)),
+            _ => None,
+        };
         let node_type = if place.is_owned(self.repacker.body(), self.repacker.tcx()) {
             NodeType::FPCSNode {
                 label,
                 capability,
                 location,
+                region,
             }
         } else {
             assert!(capability.is_none());
@@ -245,7 +287,7 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                             blocked_place,
                             blocking_place,
                             block: edge.block,
-                            reason: format!("{:?}", edge.reason),
+                            reason: "".to_string(),
                         });
                 }
                 UnblockEdgeType::Projection(proj_edge) => {
@@ -266,18 +308,18 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
                                 blocked_place,
                                 blocking_place,
                                 block: edge.block,
-                                reason: format!("{:?}", edge.reason),
+                                reason: "".to_string(),
                             });
                     }
                 }
-                UnblockEdgeType::Region(region_edge) => {
+                UnblockEdgeType::Abstraction(region_edge) => {
                     for place in region_edge.blocked_places() {
                         let blocked_node = self.constructor.insert_place_node(
                             place.place(),
                             place.location(),
                             None,
                         );
-                        for place in &region_edge.blocker_places {
+                        for place in &region_edge.blocker_places() {
                             let blocking_node = self.constructor.insert_place_node(
                                 place.place(),
                                 place.location(),
@@ -301,6 +343,7 @@ pub struct PCSGraphConstructor<'a, 'tcx> {
     borrows_domain: &'a BorrowsState<'a, 'tcx>,
     borrow_set: &'a BorrowSet<'tcx>,
     constructor: GraphConstructor<'a, 'tcx>,
+    repacker: PlaceRepacker<'a, 'tcx>,
 }
 
 impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
@@ -315,6 +358,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
             borrows_domain,
             borrow_set,
             constructor: GraphConstructor::new(repacker),
+            repacker,
         }
     }
 
@@ -388,15 +432,15 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
             }
         }
         for deref_expansion in self.borrows_domain.deref_expansions.iter() {
-            let base = self.insert_maybe_old_place(deref_expansion.base);
-            for place in deref_expansion.expansion(self.tcx()) {
+            let base = self.insert_maybe_old_place(deref_expansion.base());
+            for place in deref_expansion.expansion(self.repacker) {
                 let place = self.insert_maybe_old_place(place);
                 self.constructor
                     .edges
                     .insert(GraphEdge::DerefExpansionEdge {
                         source: base,
                         target: place,
-                        location: deref_expansion.location,
+                        location: deref_expansion.location(),
                     });
             }
         }
@@ -408,7 +452,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                 borrowed_place,
                 assigned_place,
                 location: reborrow.location,
-                region: reborrow.region,
+                region: format!("{:?}", reborrow.region),
             });
         }
 

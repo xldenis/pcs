@@ -36,7 +36,6 @@ use crate::{
         deref_expansions::DerefExpansions,
         domain::{AbstractionType, MaybeOldPlace, Reborrow},
         engine::{BorrowsEngine, ReborrowAction},
-        unblock_reason::{UnblockReason, UnblockReasons},
     },
     free_pcs::{
         engine::FpcsEngine, CapabilityKind, CapabilityLocal, CapabilitySummary,
@@ -103,6 +102,7 @@ impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
             cgx.mir.input_facts.as_ref().unwrap(),
             cgx.mir.borrow_set.clone(),
             cgx.mir.region_inference_context.clone(),
+            cgx.mir.output_facts.as_ref().unwrap(),
         );
         Self {
             cgx,
@@ -149,19 +149,11 @@ impl<'tcx> ProjectionEdge<'tcx> {
 }
 
 #[derive(Eq, PartialEq, Hash, Clone, Debug)]
-pub struct RegionEdge<'tcx> {
-    /// Terminating the region requires these places to expire
-    pub blocker_places: Vec<MaybeOldPlace<'tcx>>,
-
-    /// Terminating the region requires these regions to expire
-    pub blocker_regions: Vec<RegionVid>,
-
-    region_vid: RegionVid,
-
+pub struct AbstractionEdge<'tcx> {
     abstraction_type: AbstractionType<'tcx>,
 }
 
-impl<'tcx> RegionEdge<'tcx> {
+impl<'tcx> AbstractionEdge<'tcx> {
     /// Terminating the region makes these places accessible
     pub fn blocked_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.abstraction_type.blocks_places()
@@ -171,26 +163,18 @@ impl<'tcx> RegionEdge<'tcx> {
         &self.abstraction_type
     }
 
-    pub fn region_vid(&self) -> RegionVid {
-        self.region_vid
+    pub fn location(&self) -> Location {
+        self.abstraction_type.location()
     }
 
-    pub fn assigned_place(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        self.abstraction_type.assigned_to_places()
+    /// Capabilities to these places must be given up to make the blocked places
+    /// accessible
+    pub fn blocker_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        self.abstraction_type.blocker_places()
     }
 
-    pub fn new(
-        blocker_places: Vec<MaybeOldPlace<'tcx>>,
-        blocker_regions: Vec<RegionVid>,
-        region_vid: RegionVid,
-        abstraction_type: AbstractionType<'tcx>,
-    ) -> Self {
-        Self {
-            blocker_places,
-            blocker_regions,
-            region_vid,
-            abstraction_type,
-        }
+    pub fn new(abstraction_type: AbstractionType<'tcx>) -> Self {
+        Self { abstraction_type }
     }
 }
 
@@ -204,12 +188,12 @@ pub enum UnblockEdgeType<'tcx> {
         blocked: MaybeOldPlace<'tcx>,
     },
     Projection(ProjectionEdge<'tcx>),
-    Region(RegionEdge<'tcx>),
+    Abstraction(AbstractionEdge<'tcx>),
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum UnblockAction<'tcx> {
-    TerminateRegion(RegionVid, AbstractionType<'tcx>),
+    TerminateAbstraction(Location, AbstractionType<'tcx>),
     TerminateReborrow {
         blocked_place: MaybeOldPlace<'tcx>,
         assigned_place: MaybeOldPlace<'tcx>,
@@ -222,7 +206,6 @@ pub enum UnblockAction<'tcx> {
 pub struct UnblockEdge<'tcx> {
     pub block: BasicBlock,
     pub edge_type: UnblockEdgeType<'tcx>,
-    pub reason: UnblockReasons<'tcx>,
 }
 
 impl<'tcx> UnblockEdge<'tcx> {
@@ -246,18 +229,11 @@ impl<'tcx> UnblockEdge<'tcx> {
                 blocker, blocked, ..
             } => relevant(blocker) && relevant(blocked),
             UnblockEdgeType::Projection(edge) => relevant(&edge.blocked),
-            UnblockEdgeType::Region(edge) =>
+            UnblockEdgeType::Abstraction(edge) =>
             /* TODO */
             {
                 true
             }
-        }
-    }
-    /// These regions must expire to make this edge accessible
-    pub fn blocked_by_abstraction(&self, region_vid: RegionVid) -> bool {
-        match &self.edge_type {
-            UnblockEdgeType::Region(edge) => edge.blocker_regions.contains(&region_vid),
-            _ => false,
         }
     }
 
@@ -270,7 +246,7 @@ impl<'tcx> UnblockEdge<'tcx> {
                 blocked,
             } => vec![*blocker],
             UnblockEdgeType::Projection(edge) => edge.blocker_places(tcx),
-            UnblockEdgeType::Region(edge) => edge.blocker_places.clone(),
+            UnblockEdgeType::Abstraction(edge) => edge.blocker_places().into_iter().collect(),
         }
     }
 
@@ -283,7 +259,7 @@ impl<'tcx> UnblockEdge<'tcx> {
                 blocked,
             } => vec![*blocked],
             UnblockEdgeType::Projection(edge) => vec![edge.blocked],
-            UnblockEdgeType::Region(edge) => edge.blocked_places().into_iter().collect(),
+            UnblockEdgeType::Abstraction(edge) => edge.blocked_places().into_iter().collect(),
         }
     }
 

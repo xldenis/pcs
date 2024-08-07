@@ -47,6 +47,11 @@ impl<'tcx> Place<'tcx> {
         Self(PlaceRef { local, projection }, DebugInfo::new_static())
     }
 
+    pub fn prefix_place(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Option<Place<'tcx>> {
+        let (prefix, _) = self.last_projection()?;
+        Some(Place::new(prefix.local, &prefix.projection))
+    }
+
     // pub fn belongs_to_fpcs(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
     //     !self.iter_projections().any(|(place, elem)| {
     //         let place: Place<'tcx> = place.into();
@@ -86,6 +91,7 @@ impl<'tcx> Place<'tcx> {
         let right = other.projection.iter().copied();
         left.zip(right).map(|(e1, e2)| (elem_eq((e1, e2)), e1, e2))
     }
+
 
     /// Check if the place `left` is a prefix of `right` or vice versa. For example:
     ///

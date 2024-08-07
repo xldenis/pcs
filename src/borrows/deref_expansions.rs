@@ -14,7 +14,7 @@ use crate::{
     utils::{Place, PlaceRepacker},
 };
 
-use super::domain::{DerefExpansion, MaybeOldPlace};
+use super::domain::{DerefExpansion, Latest, MaybeOldPlace};
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);
@@ -22,18 +22,19 @@ pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);
 impl<'tcx> DerefExpansions<'tcx> {
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
         self.0
-            .retain(|expansion| path.contains(&expansion.location.block));
+            .retain(|expansion| path.contains(&expansion.location().block));
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, location: Location) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         let mut new: FxHashSet<DerefExpansion<'tcx>> = FxHashSet::default();
         for mut expansion in self.0.clone() {
-            let value = if expansion.base.is_current() && place.is_prefix(expansion.base.place()) {
-                expansion.make_base_old(location);
-                expansion
-            } else {
-                expansion
-            };
+            let value =
+                if expansion.base().is_current() && place.is_prefix(expansion.base().place()) {
+                    expansion.make_base_old(latest.get(&expansion.base().place()));
+                    expansion
+                } else {
+                    expansion
+                };
             new.insert(value);
         }
         self.0 = new;
@@ -50,29 +51,29 @@ impl<'tcx> DerefExpansions<'tcx> {
     pub fn get(
         &self,
         place: MaybeOldPlace<'tcx>,
-        tcx: TyCtxt<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
     ) -> Option<Vec<MaybeOldPlace<'tcx>>> {
         self.0
             .iter()
-            .find(|expansion| expansion.base == place)
-            .map(|expansion| expansion.expansion(tcx))
+            .find(|expansion| expansion.base() == place)
+            .map(|expansion| expansion.expansion(repacker))
     }
 
     pub fn get_parents(
         &self,
-        place: MaybeOldPlace<'tcx>,
-        tcx: TyCtxt<'tcx>,
+        place: &MaybeOldPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
     ) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.0
             .iter()
-            .filter(|expansion| expansion.expansion(tcx).contains(&place))
-            .map(|expansion| expansion.base)
+            .filter(|expansion| expansion.expansion(repacker).contains(&place))
+            .map(|expansion| expansion.base())
             .collect()
     }
 
     pub fn ensure_deref_expansion_to_at_least(
         &mut self,
-        place: MaybeOldPlace<'tcx>,
+        place: &MaybeOldPlace<'tcx>,
         body: &mir::Body<'tcx>,
         tcx: TyCtxt<'tcx>,
         location: Location,
@@ -87,7 +88,7 @@ impl<'tcx> DerefExpansions<'tcx> {
             }
             if in_dag {
                 let origin_place = MaybeOldPlace::new(place, place_location);
-                if !self.contains_expansion_from(origin_place) {
+                if !self.contains_expansion_from(&origin_place) {
                     let expansion = match elem {
                         mir::ProjectionElem::Downcast(_, _) | // For downcast we can't blindly expand since we don't know which instance, use this specific one
                         mir::ProjectionElem::Deref // For Box we don't want to expand fields because it's actually an ADT w/ a ptr inside
@@ -96,7 +97,12 @@ impl<'tcx> DerefExpansions<'tcx> {
                         }
                         _ => place.expand_field(None, PlaceRepacker::new(&body, tcx)),
                     };
-                    self.insert(origin_place, expansion, location);
+                    self.insert(
+                        origin_place,
+                        expansion,
+                        location,
+                        PlaceRepacker::new(&body, tcx),
+                    );
                 }
             }
         }
@@ -109,32 +115,15 @@ impl<'tcx> DerefExpansions<'tcx> {
         tcx: TyCtxt<'tcx>,
         location: Location,
     ) {
-        self.ensure_deref_expansion_to_at_least(place, body, tcx, location);
-        self.delete_descendants_of(place, tcx, Some(location));
-    }
-
-    pub fn move_expansion(
-        &mut self,
-        old_place: MaybeOldPlace<'tcx>,
-        new_place: MaybeOldPlace<'tcx>,
-    ) {
-        let old_expansion = self.iter().find(|expansion| expansion.base == old_place);
-        if let Some(expansion) = old_expansion {
-            todo!("Move expansion from {:?} to {:?}", old_place, new_place);
-            let mut expansion = expansion.clone();
-            self.0.remove(&expansion);
-            expansion.base = new_place;
-            self.0.insert(expansion);
-        } else {
-            eprintln!("No expansion found for {:?}", old_place);
-        }
+        self.ensure_deref_expansion_to_at_least(&place, body, tcx, location);
+        self.delete_descendants_of(place, PlaceRepacker::new(body, tcx), Some(location));
     }
 
     pub fn delete(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
         let mut changed = false;
         for expansion in self
             .iter()
-            .filter(|expansion| expansion.base == place)
+            .filter(|expansion| expansion.base() == place)
             .cloned()
             .collect::<Vec<_>>()
         {
@@ -149,8 +138,8 @@ impl<'tcx> DerefExpansions<'tcx> {
         self.0
             .iter()
             .filter(|expansion| {
-                place.place().is_prefix(expansion.base.place())
-                    && place.location() == expansion.base.location()
+                place.place().is_prefix(expansion.base().place())
+                    && place.location() == expansion.base().location()
             })
             .cloned()
             .collect()
@@ -159,7 +148,7 @@ impl<'tcx> DerefExpansions<'tcx> {
     pub fn descendants_of_place(&self, place: Place<'tcx>) -> Vec<DerefExpansion<'tcx>> {
         self.0
             .iter()
-            .filter(|expansion| place.is_prefix(expansion.base.place()))
+            .filter(|expansion| place.is_prefix(expansion.base().place()))
             .cloned()
             .collect()
     }
@@ -167,18 +156,18 @@ impl<'tcx> DerefExpansions<'tcx> {
     pub fn delete_descendants_of(
         &mut self,
         place: MaybeOldPlace<'tcx>,
-        tcx: TyCtxt<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
         location: Option<Location>,
     ) -> bool {
         let mut changed = false;
         for expansion in self
             .iter()
-            .filter(|expansion| expansion.base == place)
+            .filter(|expansion| expansion.base() == place)
             .cloned()
             .collect::<Vec<_>>()
         {
-            for p in expansion.expansion(tcx) {
-                if self.delete_descendants_of(p, tcx, location) {
+            for p in expansion.expansion(repacker) {
+                if self.delete_descendants_of(p, repacker, location) {
                     changed = true;
                 }
                 if self.delete(p) {
@@ -197,30 +186,44 @@ impl<'tcx> DerefExpansions<'tcx> {
         place: MaybeOldPlace<'tcx>,
         expansion: Vec<Place<'tcx>>,
         location: Location,
+        repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for p in expansion.iter() {
             assert!(p.projection.len() > place.place().projection.len());
         }
-        self.0
-            .insert(DerefExpansion::new(place, expansion, location));
+        let de = if place.place().is_owned(repacker.body(), repacker.tcx()) {
+            DerefExpansion::OwnedExpansion {
+                base: place,
+                location,
+            }
+        } else {
+            DerefExpansion::borrowed(place, expansion, location, repacker)
+        };
+        self.0.insert(de);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &DerefExpansion<'tcx>> {
         self.0.iter()
     }
 
-    pub fn contains_expansion_from(&self, place: MaybeOldPlace<'tcx>) -> bool {
-        self.0.iter().any(|expansion| expansion.base == place)
+    pub fn contains_expansion_from(&self, place: &MaybeOldPlace<'tcx>) -> bool {
+        self.0.iter().any(|expansion| expansion.base() == *place)
     }
 
     pub fn contains(&self, expansion: &DerefExpansion<'tcx>) -> bool {
         self.0.contains(expansion)
     }
 
+    pub fn expansion_at_location(&self, location: Location) -> Option<&DerefExpansion<'tcx>> {
+        self.0
+            .iter()
+            .find(|expansion| expansion.location() == location)
+    }
+
     pub fn has_expansion_at_location(&self, location: Location) -> bool {
         self.0
             .iter()
-            .any(|expansion| expansion.location == location)
+            .any(|expansion| expansion.location() == location)
     }
 }
 

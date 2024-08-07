@@ -19,7 +19,7 @@ use rustc_interface::{
 };
 
 use crate::{
-    borrows::{engine::{BorrowsDomain, ReborrowAction}, unblock_graph::UnblockGraph, unblock_reason::{UnblockReason, UnblockReasons}},
+    borrows::{engine::BorrowsDomain, unblock_graph::UnblockGraph},
     free_pcs::{
         CapabilityLocal, CapabilityProjections, FreePlaceCapabilitySummary, HasFpcs, RepackOp,
     },
@@ -69,15 +69,14 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
         let fpcs = self.fpcs.join(&other.fpcs);
         let borrows = self.borrows.join(&other.borrows);
         let mut g = UnblockGraph::new();
-        for root in self.borrows.after.reborrow_roots(self.cgx.rp.tcx()) {
+        for root in self.borrows.after.reborrow_roots(self.cgx.rp) {
             match &self.fpcs.after[root.local] {
                 CapabilityLocal::Unallocated => {
                     g.unblock_place(
                         crate::borrows::domain::MaybeOldPlace::Current { place: root },
                         &self.borrows.after,
                         self.block, // TODO: Check
-                        UnblockReasons::new(UnblockReason::Unallocated(root)),
-                        self.cgx.rp.tcx(),
+                        self.cgx.rp,
                     );
                 }
                 CapabilityLocal::Allocated(projs) => {
@@ -86,8 +85,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                             crate::borrows::domain::MaybeOldPlace::Current { place: root },
                             &self.borrows.after,
                             self.block, // TODO: Check
-                            UnblockReasons::new(UnblockReason::NotInProjection(root)),
-                            self.cgx.rp.tcx(),
+                            self.cgx.rp,
                         );
                     }
                 }

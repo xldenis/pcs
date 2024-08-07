@@ -57,10 +57,7 @@ pub struct PlaceRepacker<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx: 'a> PlaceRepacker<'a, 'tcx> {
-    pub fn new(
-        mir: &'a Body<'tcx>,
-        tcx: TyCtxt<'tcx>,
-    ) -> Self {
+    pub fn new(mir: &'a Body<'tcx>, tcx: TyCtxt<'tcx>) -> Self {
         Self { mir, tcx }
     }
 
@@ -381,6 +378,10 @@ impl<'tcx> Place<'tcx> {
                 &TyKind::RawPtr(_) => Some((None, projs)),
                 _ => None,
             })
+    }
+
+    pub fn is_shared_ref(self, repacker: PlaceRepacker<'_, 'tcx>) -> bool {
+        matches!(self.ty(repacker).ty.ref_mutability(), Some(Mutability::Not))
     }
 
     pub fn projects_shared_ref(self, repacker: PlaceRepacker<'_, 'tcx>) -> bool {

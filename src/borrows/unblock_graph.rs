@@ -29,17 +29,18 @@ use crate::{
         deref_expansions::DerefExpansions,
         domain::{MaybeOldPlace, Reborrow},
         engine::{BorrowsEngine, ReborrowAction},
-        unblock_reason::{UnblockReason, UnblockReasons},
     },
-    combined_pcs::{ProjectionEdge, RegionEdge, UnblockAction, UnblockEdge, UnblockEdgeType},
+    combined_pcs::{AbstractionEdge, ProjectionEdge, UnblockAction, UnblockEdge, UnblockEdgeType},
     free_pcs::{
         engine::FpcsEngine, CapabilityKind, CapabilityLocal, CapabilitySummary,
         FreePlaceCapabilitySummary,
     },
     rustc_interface,
-    utils::{Place, PlaceOrdering, PlaceRepacker},
+    utils::{Place, PlaceOrdering, PlaceRepacker, PlaceSnapshot},
     visualization::generate_unblock_dot_graph,
 };
+
+use super::domain::{AbstractionType, DerefExpansion};
 #[derive(Clone, Debug)]
 pub struct UnblockGraph<'tcx>(HashSet<UnblockEdge<'tcx>>);
 
@@ -54,8 +55,20 @@ impl<'tcx> UnblockGraph<'tcx> {
             "dot_graph": dot_graph
         })
     }
+
     pub fn new() -> Self {
         Self(HashSet::new())
+    }
+
+    pub fn for_place(
+        place: Place<'tcx>,
+        state: &BorrowsState<'_, 'tcx>,
+        block: BasicBlock,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> Self {
+        let mut ug = Self::new();
+        ug.unblock_place(MaybeOldPlace::Current { place }, state, block, repacker);
+        ug
     }
 
     pub fn is_empty(&self) -> bool {
@@ -104,17 +117,6 @@ impl<'tcx> UnblockGraph<'tcx> {
 
     fn remove_edge_and_trim(&mut self, edge: &UnblockEdge<'tcx>) {
         self.0.remove(edge);
-        // TODO
-        // if self.edges_blocking(edge.blocked).is_empty() {
-        //     let edges_to_kill = self
-        //         .edges_blocked_by(edge.blocked)
-        //         .into_iter()
-        //         .cloned()
-        //         .collect::<Vec<_>>();
-        //     for edge in edges_to_kill {
-        //         self.remove_edge_and_trim(&edge.clone());
-        //     }
-        // }
     }
 
     /// Edges that require `place` to expire before becoming available
@@ -172,17 +174,19 @@ impl<'tcx> UnblockGraph<'tcx> {
 
             // A region is a leaf if no edge contains a region blocked by it,
             // and all places blocked by the region are leaves
-            let is_leaf_abstraction = |abstraction: &RegionEdge<'tcx>| {
+            let is_leaf_abstraction = |abstraction: &AbstractionEdge<'tcx>| {
                 abstraction
-                    .blocker_places
+                    .blocker_places()
                     .iter()
                     .all(|place| is_leaf(*place))
-                    && abstraction.blocker_regions.iter().all(|region_vid| {
-                        edges.iter().all(|e| match &e.edge_type {
-                            UnblockEdgeType::Region(edge) => edge.region_vid() != *region_vid,
-                            _ => true,
-                        })
-                    })
+                // && abstraction.blocker_regions.iter().all(|region_vid| {
+                //     edges.iter().all(|e| match &e.edge_type {
+                //         UnblockEdgeType::Abstraction(edge) => {
+                //             edge.location() != abstraction.location()
+                //         }
+                //         _ => true,
+                //     })
+                // })
             };
             for edge in edges.iter() {
                 match &edge.edge_type {
@@ -207,17 +211,20 @@ impl<'tcx> UnblockGraph<'tcx> {
                             to_keep.remove(edge);
                         }
                     }
-                    UnblockEdgeType::Region(region_edge) => {
-                        if is_leaf_abstraction(&region_edge) {
-                            push_action(UnblockAction::TerminateRegion(
-                                region_edge.region_vid(),
-                                region_edge.abstraction_type().clone(),
+                    UnblockEdgeType::Abstraction(abstraction_edge) => {
+                        if is_leaf_abstraction(&abstraction_edge) {
+                            push_action(UnblockAction::TerminateAbstraction(
+                                abstraction_edge.location(),
+                                abstraction_edge.abstraction_type().clone(),
                             ));
                             to_keep.remove(edge);
                         }
                     }
                 }
             }
+            // if to_keep.len() == edges.len() {
+            //     break;
+            // }
             assert!(
                 to_keep.len() < edges.len(),
                 "Didn't remove any leaves! {:#?}",
@@ -228,28 +235,8 @@ impl<'tcx> UnblockGraph<'tcx> {
         actions
     }
 
-    fn add_dependency(
-        &mut self,
-        edge_type: UnblockEdgeType<'tcx>,
-        block: BasicBlock,
-        reason: UnblockReasons<'tcx>,
-    ) {
-        let existing = self
-            .0
-            .iter()
-            .find(|e| e.block == block && e.edge_type == edge_type);
-        if let Some(existing) = existing {
-            let mut existing = existing.clone();
-            self.0.remove(&existing);
-            existing.reason = existing.reason.merge(reason);
-            self.0.insert(existing);
-        } else {
-            self.0.insert(UnblockEdge {
-                edge_type,
-                block,
-                reason,
-            });
-        }
+    fn add_dependency(&mut self, edge_type: UnblockEdgeType<'tcx>, block: BasicBlock) {
+        self.0.insert(UnblockEdge { edge_type, block });
     }
 
     pub fn kill_reborrows_assigned_to<'a>(
@@ -257,19 +244,31 @@ impl<'tcx> UnblockGraph<'tcx> {
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
-        tcx: TyCtxt<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for reborrow in borrows.reborrows_assigned_to(place) {
-            self.kill_reborrow(
-                reborrow.clone(),
-                borrows,
-                UnblockReasons::new(UnblockReason::ReborrowAssignedTo(
-                    reborrow.clone(),
-                    place.clone(),
-                )),
-                block,
-                tcx,
-            )
+            self.kill_reborrow(reborrow.clone(), borrows, block, repacker)
+        }
+    }
+
+    pub fn kill_abstraction(
+        &mut self,
+        borrows: &BorrowsState<'_, 'tcx>,
+        abstraction_type: &AbstractionType<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) {
+        let location = abstraction_type.location();
+        self.add_dependency(
+            UnblockEdgeType::Abstraction(AbstractionEdge::new(abstraction_type.clone())),
+            location.block,
+        );
+        for place in abstraction_type.blocks_places() {
+            match place {
+                MaybeOldPlace::OldPlace(p) => {
+                    self.trim_old_leaves_from(borrows, p, location.block, repacker)
+                }
+                _ => {}
+            }
         }
     }
 
@@ -278,16 +277,11 @@ impl<'tcx> UnblockGraph<'tcx> {
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
-        tcx: TyCtxt<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
     ) {
-        self.unblock_place(
-            place,
-            borrows,
-            block,
-            UnblockReasons::new(UnblockReason::KillPlace(place)),
-            tcx,
-        );
-        self.kill_reborrows_assigned_to(place, borrows, block, tcx);
+        eprintln!("Killing place {:?} at {:?}", place, block);
+        self.unblock_place(place, borrows, block, repacker);
+        self.kill_reborrows_assigned_to(place, borrows, block, repacker);
     }
 
     pub fn unblock_place<'a>(
@@ -295,55 +289,34 @@ impl<'tcx> UnblockGraph<'tcx> {
         place: MaybeOldPlace<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
-        reason: UnblockReasons<'tcx>,
-        tcx: TyCtxt<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
     ) {
+        eprintln!("Unblocking place {:?} at {:?}", place, block);
         for reborrow in borrows.reborrows_blocking(place) {
-            self.kill_reborrow(
-                reborrow.clone(),
-                borrows,
-                reason.clone().add(UnblockReason::ReborrowBlocksPlace(
-                    reborrow.clone(),
-                    place.clone(),
-                )),
-                block,
-                tcx,
-            )
+            eprintln!("Kill reborrow {:?} at {:?}", reborrow, block);
+            self.kill_reborrow(reborrow.clone(), borrows, block, repacker)
         }
 
-        if let Some(expansion) = borrows.deref_expansions.iter().find(|de| de.base == place) {
+        if let Some(expansion) = borrows
+            .deref_expansions
+            .iter()
+            .find(|de| de.base() == place)
+        {
             self.add_dependency(
                 UnblockEdgeType::Projection(ProjectionEdge {
-                    blockers: expansion.expansion.clone(),
+                    blockers: expansion.expansion_elems(),
                     blocked: place,
                 }),
                 block,
-                reason.clone().add(UnblockReason::Projection(place)),
             );
-            for place in &expansion.expansion(tcx) {
-                self.kill_place(place.clone(), borrows, block, tcx);
+            for place in &expansion.expansion(repacker) {
+                self.kill_place(place.clone(), borrows, block, repacker);
             }
         }
 
-        for abstraction in borrows.get_abstractions_blocking(place) {
-            self.add_dependency(
-                UnblockEdgeType::Region(RegionEdge::new(
-                    abstraction.blocked_by_places().into_iter().collect(),
-                    borrows
-                        .get_abstractions_blocking_region(abstraction.region())
-                        .into_iter()
-                        .map(|a| a.region())
-                        .collect(),
-                    abstraction.region(),
-                    abstraction.abstraction_type.clone(),
-                )),
-                block,
-                reason
-                    .clone()
-                    .add(UnblockReason::KillAbstraction(abstraction.region())),
-            );
-            for place in abstraction.abstraction_type.assigned_to_places() {
-                self.kill_place(place, borrows, block, tcx);
+        for abstraction in borrows.get_abstractions_blocking(&place) {
+            for place in abstraction.abstraction_type.blocker_places() {
+                self.kill_place(place, borrows, block, repacker);
             }
         }
     }
@@ -352,9 +325,8 @@ impl<'tcx> UnblockGraph<'tcx> {
         &mut self,
         reborrow: Reborrow<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
-        reason: UnblockReasons<'tcx>,
         block: BasicBlock,
-        tcx: TyCtxt<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         self.add_dependency(
             UnblockEdgeType::Reborrow {
@@ -363,20 +335,33 @@ impl<'tcx> UnblockGraph<'tcx> {
                 blocked: reborrow.blocked_place,
             },
             block,
-            reason
-                .clone()
-                .add(UnblockReason::KillReborrow(reborrow.clone())),
         );
         self.unblock_place(
             reborrow.assigned_place,
             borrows,
             reborrow.location.block,
-            reason.add(UnblockReason::KillReborrowAssignedPlace(
-                reborrow.clone(),
-                reborrow.assigned_place.clone(),
-            )),
-            tcx,
+            repacker,
         );
-        // TODO: confirm right block
+    }
+
+    pub fn trim_old_leaves_from(
+        &mut self,
+        borrows: &BorrowsState<'_, 'tcx>,
+        place: PlaceSnapshot<'tcx>,
+        block: BasicBlock,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) {
+        for reborrow in borrows
+            .reborrows
+            .reborrows_blocked_by(MaybeOldPlace::OldPlace(place))
+        {
+            self.kill_reborrow(reborrow.clone(), borrows, block, repacker);
+            match reborrow.blocked_place {
+                MaybeOldPlace::OldPlace(p) => {
+                    self.trim_old_leaves_from(borrows, p, block, repacker)
+                }
+                _ => {}
+            }
+        }
     }
 }

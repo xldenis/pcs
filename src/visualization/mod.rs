@@ -105,6 +105,7 @@ impl GraphNode {
                 capability,
                 location,
                 label,
+                region,
             } => {
                 let capability_text = match capability {
                     Some(k) => format!("{:?}", k),
@@ -120,11 +121,16 @@ impl GraphNode {
                     } else {
                         "black"
                     };
+                let region_html = match region {
+                    Some(r) => format!("<br/>{}", r),
+                    None => "".to_string(),
+                };
                 let label = format!(
-                    "<FONT FACE=\"courier\">{}</FONT>&nbsp;{}{}",
+                    "<FONT FACE=\"courier\">{}</FONT>&nbsp;{}{}{}",
                     escape_html(&label),
                     escape_html(&capability_text),
-                    escape_html(&location_text)
+                    escape_html(&location_text),
+                    region_html
                 );
                 DotNode {
                     id: self.id.to_string(),
@@ -136,7 +142,7 @@ impl GraphNode {
                     penwidth: None,
                 }
             }
-            NodeType::RegionAbstractionNode { label } => DotNode {
+            NodeType::RegionProjectionNode { label } => DotNode {
                 id: self.id.to_string(),
                 label: DotLabel::Text(label.clone()),
                 color: DotStringAttr("blue".to_string()),
@@ -155,13 +161,14 @@ enum NodeType {
         label: String,
         capability: Option<CapabilityKind>,
         location: Option<Location>,
+        region: Option<String>,
+    },
+    RegionProjectionNode {
+        label: String,
     },
     ReborrowingDagNode {
         label: String,
         location: Option<Location>,
-    },
-    RegionAbstractionNode {
-        label: String,
     },
 }
 
@@ -216,7 +223,7 @@ enum GraphEdge {
         borrowed_place: NodeId,
         assigned_place: NodeId,
         location: Location,
-        region: RegionVid,
+        region: String,
     },
     ReferenceEdge {
         borrowed_place: NodeId,
@@ -263,7 +270,7 @@ impl GraphEdge {
                 from: borrowed_place.to_string(),
                 options: EdgeOptions::directed(EdgeDirection::Backward)
                     .with_color("orange".to_string())
-                    .with_label(format!("{:?}", region)),
+                    .with_label(region.to_string()),
             },
             GraphEdge::DerefExpansionEdge {
                 source,

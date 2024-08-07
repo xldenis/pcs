@@ -1,6 +1,6 @@
 use crate::{
-    borrows::domain::Borrow,
     borrows::borrows_state::BorrowsState,
+    borrows::domain::Borrow,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker},
@@ -194,7 +194,9 @@ fn format_stmt<'tcx>(stmt: &Statement<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) 
             format!("StorageDead({})", format_local(local, repacker))
         }
         mir::StatementKind::Retag(_, _) => todo!(),
-        mir::StatementKind::PlaceMention(_) => todo!(),
+        mir::StatementKind::PlaceMention(place) => {
+            format!("PlaceMention({})", format_place(place, repacker))
+        }
         mir::StatementKind::AscribeUserType(_, _) => {
             format!("AscribeUserType(...)")
         }
