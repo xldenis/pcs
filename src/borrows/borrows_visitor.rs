@@ -118,7 +118,7 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         self.state.after.ensure_expansion_to_exactly(
             self.tcx,
             self.body,
-            MaybeOldPlace::Current { place },
+            place,
             location,
         )
     }

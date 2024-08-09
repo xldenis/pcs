@@ -252,10 +252,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                             CapabilityKind::Exclusive => {
                                 if place.is_ref(body, tcx) {
                                     self.deref_expansions.ensure_deref_expansion_to_at_least(
-                                        &MaybeOldPlace::Current {
-                                            place: place
-                                                .project_deref(PlaceRepacker::new(body, tcx)),
-                                        },
+                                        place.project_deref(PlaceRepacker::new(body, tcx)),
                                         body,
                                         tcx,
                                         location,
@@ -299,21 +296,21 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         &mut self,
         tcx: TyCtxt<'tcx>,
         body: &mir::Body<'tcx>,
-        place: MaybeOldPlace<'tcx>,
+        place: Place<'tcx>,
         location: Location,
     ) {
         let mut ug = UnblockGraph::new();
-        ug.unblock_place(place, self, location.block, PlaceRepacker::new(body, tcx));
+        ug.unblock_place(
+            place.into(),
+            self,
+            location.block,
+            PlaceRepacker::new(body, tcx),
+        );
         self.apply_unblock_graph(ug, tcx);
 
         // Originally we may not have been expanded enough
         self.deref_expansions
-            .ensure_expansion_to_exactly(place, body, tcx, location);
-
-        match place.place().last_projection() {
-            Some((ref_place, PlaceElem::Deref)) => {}
-            _ => {}
-        }
+            .ensure_expansion_to_exactly(place.into(), body, tcx, location);
     }
 
     pub fn roots_of(

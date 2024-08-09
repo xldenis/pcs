@@ -14,7 +14,10 @@ use crate::{
     utils::{Place, PlaceRepacker},
 };
 
-use super::{deref_expansion::DerefExpansion, domain::{Latest, MaybeOldPlace}};
+use super::{
+    deref_expansion::DerefExpansion,
+    domain::{Latest, MaybeOldPlace},
+};
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);
@@ -73,21 +76,19 @@ impl<'tcx> DerefExpansions<'tcx> {
 
     pub fn ensure_deref_expansion_to_at_least(
         &mut self,
-        place: &MaybeOldPlace<'tcx>,
+        place: Place<'tcx>,
         body: &mir::Body<'tcx>,
         tcx: TyCtxt<'tcx>,
         location: Location,
     ) {
-        let orig_place = place.place();
-        let place_location = place.location();
         let mut in_dag = false;
-        for (place, elem) in place.place().iter_projections() {
+        for (place, elem) in place.iter_projections() {
             let place: Place<'tcx> = place.into();
             if place.is_ref(body, tcx) {
                 in_dag = true;
             }
             if in_dag {
-                let origin_place = MaybeOldPlace::new(place, place_location);
+                let origin_place = place.into();
                 if !self.contains_expansion_from(&origin_place) {
                     let expansion = match elem {
                         mir::ProjectionElem::Downcast(_, _) | // For downcast we can't blindly expand since we don't know which instance, use this specific one
@@ -110,13 +111,13 @@ impl<'tcx> DerefExpansions<'tcx> {
 
     pub fn ensure_expansion_to_exactly(
         &mut self,
-        place: MaybeOldPlace<'tcx>,
+        place: Place<'tcx>,
         body: &mir::Body<'tcx>,
         tcx: TyCtxt<'tcx>,
         location: Location,
     ) {
-        self.ensure_deref_expansion_to_at_least(&place, body, tcx, location);
-        self.delete_descendants_of(place, PlaceRepacker::new(body, tcx), Some(location));
+        self.ensure_deref_expansion_to_at_least(place, body, tcx, location);
+        self.delete_descendants_of(place.into(), PlaceRepacker::new(body, tcx), Some(location));
     }
 
     pub fn delete(&mut self, place: MaybeOldPlace<'tcx>) -> bool {
