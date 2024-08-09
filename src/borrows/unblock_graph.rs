@@ -26,6 +26,7 @@ use rustc_interface::{
 use crate::{
     borrows::{
         borrows_state::BorrowsState,
+        deref_expansion::DerefExpansion,
         deref_expansions::DerefExpansions,
         domain::{MaybeOldPlace, Reborrow},
         engine::{BorrowsEngine, ReborrowAction},
@@ -40,7 +41,7 @@ use crate::{
     visualization::generate_unblock_dot_graph,
 };
 
-use super::domain::{AbstractionType, DerefExpansion};
+use super::domain::AbstractionType;
 #[derive(Clone, Debug)]
 pub struct UnblockGraph<'tcx>(HashSet<UnblockEdge<'tcx>>);
 
@@ -247,7 +248,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for reborrow in borrows.reborrows_assigned_to(place) {
-            self.kill_reborrow(reborrow.clone(), borrows, block, repacker)
+            self.kill_reborrow(reborrow, borrows, block, repacker)
         }
     }
 
@@ -279,7 +280,6 @@ impl<'tcx> UnblockGraph<'tcx> {
         block: BasicBlock,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
-        eprintln!("Killing place {:?} at {:?}", place, block);
         self.unblock_place(place, borrows, block, repacker);
         self.kill_reborrows_assigned_to(place, borrows, block, repacker);
     }
@@ -291,10 +291,8 @@ impl<'tcx> UnblockGraph<'tcx> {
         block: BasicBlock,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
-        eprintln!("Unblocking place {:?} at {:?}", place, block);
         for reborrow in borrows.reborrows_blocking(place) {
-            eprintln!("Kill reborrow {:?} at {:?}", reborrow, block);
-            self.kill_reborrow(reborrow.clone(), borrows, block, repacker)
+            self.kill_reborrow(reborrow, borrows, block, repacker)
         }
 
         if let Some(expansion) = borrows
@@ -323,7 +321,7 @@ impl<'tcx> UnblockGraph<'tcx> {
 
     pub fn kill_reborrow<'a>(
         &mut self,
-        reborrow: Reborrow<'tcx>,
+        reborrow: &Reborrow<'tcx>,
         borrows: &BorrowsState<'a, 'tcx>,
         block: BasicBlock,
         repacker: PlaceRepacker<'_, 'tcx>,
@@ -355,7 +353,7 @@ impl<'tcx> UnblockGraph<'tcx> {
             .reborrows
             .reborrows_blocked_by(MaybeOldPlace::OldPlace(place))
         {
-            self.kill_reborrow(reborrow.clone(), borrows, block, repacker);
+            self.kill_reborrow(&reborrow, borrows, block, repacker);
             match reborrow.blocked_place {
                 MaybeOldPlace::OldPlace(p) => {
                     self.trim_old_leaves_from(borrows, p, block, repacker)

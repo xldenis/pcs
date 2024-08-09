@@ -20,9 +20,7 @@ pub mod visualization;
 use std::{collections::HashMap, fs::create_dir_all, rc::Rc};
 
 use borrows::{
-    borrows_state::BorrowsState,
-    domain::{DerefExpansion, Reborrow},
-    engine::{BorrowsDomain, ReborrowAction}, unblock_graph::UnblockGraph,
+    borrows_state::BorrowsState, deref_expansion::DerefExpansion, domain::Reborrow, engine::{BorrowsDomain, ReborrowAction}, unblock_graph::UnblockGraph
 };
 use combined_pcs::{
     BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary,

@@ -142,50 +142,6 @@ impl<'tcx> AbstractionType<'tcx> {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug)]
-pub struct RegionAbstraction<'tcx> {
-    pub abstraction_type: AbstractionType<'tcx>,
-}
-
-impl<'tcx> RegionAbstraction<'tcx> {
-    pub fn new(abstraction_type: AbstractionType<'tcx>) -> Self {
-        Self { abstraction_type }
-    }
-
-    pub fn location(&self) -> Location {
-        self.abstraction_type.location()
-    }
-
-    pub fn inputs(&self) -> Vec<&AbstractionTarget<'tcx>> {
-        self.abstraction_type.inputs()
-    }
-
-    pub fn outputs(&self) -> Vec<&AbstractionTarget<'tcx>> {
-        self.abstraction_type.outputs()
-    }
-
-    pub fn blocks(&self, place: &MaybeOldPlace<'tcx>) -> bool {
-        self.abstraction_type.blocks(place)
-    }
-
-    pub fn blocks_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        self.abstraction_type.blocks_places()
-    }
-
-    pub fn blocked_by_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        self.abstraction_type.blocker_places()
-    }
-
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
-        self.abstraction_type.make_place_old(place, latest);
-    }
-
-    pub fn edges(&self) -> impl Iterator<Item = &AbstractionBlockEdge<'tcx>> {
-        match &self.abstraction_type {
-            AbstractionType::FunctionCall { edges, .. } => edges.iter().map(|(_, edge)| edge),
-        }
-    }
-}
 
 fn make_places_old<'tcx>(
     places: FxHashSet<MaybeOldPlace<'tcx>>,
@@ -222,6 +178,24 @@ impl<'tcx> From<mir::Place<'tcx>> for MaybeOldPlace<'tcx> {
 }
 
 impl<'tcx> MaybeOldPlace<'tcx> {
+    pub fn region_projection(
+        &self,
+        idx: usize,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> RegionProjection<'tcx> {
+        RegionProjection::new(self.region_projections(repacker)[idx].region, self.clone())
+    }
+
+    pub fn region_projections(
+        &self,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> Vec<RegionProjection<'tcx>> {
+        extract_nested_lifetimes(self.ty(repacker).ty)
+            .iter()
+            .map(|region| RegionProjection::new(get_vid(region).unwrap(), self.clone()))
+            .collect()
+    }
+
     pub fn new(place: Place<'tcx>, at: Option<Location>) -> Self {
         if let Some(at) = at {
             Self::OldPlace(PlaceSnapshot { place, at })
@@ -331,122 +305,6 @@ impl<'tcx> Borrow<'tcx> {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub struct BorrowDerefExpansion<'tcx> {
-    base: MaybeOldPlace<'tcx>,
-    expansion: Vec<PlaceElem<'tcx>>,
-    location: Location,
-}
-
-impl<'tcx> BorrowDerefExpansion<'tcx> {
-    pub fn base(&self) -> MaybeOldPlace<'tcx> {
-        self.base
-    }
-
-    pub fn location(&self) -> Location {
-        self.location
-    }
-
-    pub fn expansion(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
-        self.expansion
-            .iter()
-            .map(|p| self.base.project_deeper(repacker.tcx(), *p))
-            .collect()
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum DerefExpansion<'tcx> {
-    OwnedExpansion {
-        base: MaybeOldPlace<'tcx>,
-        location: Location,
-    },
-    BorrowExpansion(BorrowDerefExpansion<'tcx>),
-}
-
-impl<'tcx> DerefExpansion<'tcx> {
-    pub fn location(&self) -> Location {
-        match self {
-            DerefExpansion::OwnedExpansion { location, .. } => *location,
-            DerefExpansion::BorrowExpansion(e) => e.location,
-        }
-    }
-
-    pub fn borrow_expansion(&self) -> Option<&BorrowDerefExpansion<'tcx>> {
-        match self {
-            DerefExpansion::BorrowExpansion(e) => Some(e),
-            _ => None,
-        }
-    }
-
-    pub fn borrowed(
-        base: MaybeOldPlace<'tcx>,
-        expansion: Vec<Place<'tcx>>,
-        location: Location,
-        repacker: PlaceRepacker<'_, 'tcx>,
-    ) -> Self {
-        assert!(!base.place().is_owned(repacker.body(), repacker.tcx()));
-        assert!(expansion.iter().all(|p| base.place().is_prefix(*p)
-            && p.projection.len() == base.place().projection.len() + 1));
-        DerefExpansion::BorrowExpansion(BorrowDerefExpansion {
-            base,
-            expansion: expansion
-                .into_iter()
-                .map(|p| p.projection.last().unwrap())
-                .copied()
-                .collect(),
-            location,
-        })
-    }
-
-    pub fn base(&self) -> MaybeOldPlace<'tcx> {
-        match self {
-            DerefExpansion::OwnedExpansion { base, .. } => *base,
-            DerefExpansion::BorrowExpansion(e) => e.base,
-        }
-    }
-
-    pub fn set_base(&mut self, base: MaybeOldPlace<'tcx>) {
-        match self {
-            DerefExpansion::OwnedExpansion { base: b, .. } => {
-                *b = base;
-            }
-            DerefExpansion::BorrowExpansion(e) => {
-                e.base = base;
-            }
-        }
-    }
-
-    pub fn make_base_old(&mut self, place_location: Location) {
-        let base = self.base();
-        assert!(base.is_current());
-        self.set_base(MaybeOldPlace::OldPlace(PlaceSnapshot {
-            place: base.place(),
-            at: place_location,
-        }));
-    }
-
-    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
-        json!({
-            "base": self.base().to_json(repacker),
-            "expansion": self.expansion(repacker).iter().map(|p| p.to_json(repacker)).collect::<Vec<_>>(),
-        })
-    }
-
-    pub fn expansion_elems(&self) -> Vec<PlaceElem<'tcx>> {
-        match self {
-            DerefExpansion::OwnedExpansion { .. } => vec![PlaceElem::Deref],
-            DerefExpansion::BorrowExpansion(e) => e.expansion.clone(),
-        }
-    }
-
-    pub fn expansion(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
-        match self {
-            DerefExpansion::OwnedExpansion { base, .. } => vec![base.project_deref(repacker)],
-            DerefExpansion::BorrowExpansion(e) => e.expansion(repacker),
-        }
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Latest<'tcx>(FxHashMap<Place<'tcx>, Location>);
@@ -520,11 +378,10 @@ use crate::utils::PlaceRepacker;
 use serde_json::{json, Value};
 
 use super::{
-    borrows_state::BorrowsState, deref_expansions::DerefExpansions, engine::ReborrowAction,
-    reborrowing_dag::ReborrowingDag,
+    borrows_state::BorrowsState, borrows_visitor::{extract_nested_lifetimes, get_vid}, deref_expansions::DerefExpansions, engine::ReborrowAction, path_condition::PathConditions, reborrowing_dag::ReborrowingDag
 };
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Reborrow<'tcx> {
     pub blocked_place: MaybeOldPlace<'tcx>,
     pub assigned_place: MaybeOldPlace<'tcx>,
@@ -534,6 +391,8 @@ pub struct Reborrow<'tcx> {
     pub location: Location,
 
     pub region: ty::Region<'tcx>,
+
+    pub path_conditions: PathConditions,
 }
 
 impl<'tcx> Reborrow<'tcx> {
@@ -578,7 +437,16 @@ pub struct RegionProjection<'tcx> {
 }
 
 impl<'tcx> RegionProjection<'tcx> {
+    pub fn new(region: RegionVid, place: MaybeOldPlace<'tcx>) -> Self {
+        Self { place, region }
+    }
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         self.place.make_place_old(place, latest);
+    }
+    pub fn index(&self, repacker: PlaceRepacker<'_, 'tcx>) -> usize {
+        self.place
+            .place()
+            .projection_index(self.region, repacker)
+            .unwrap()
     }
 }

@@ -68,7 +68,7 @@ fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
                     let mut map = state.borrow_mut();
                     unsafe { std::mem::transmute(map.remove(&def_id).unwrap()) }
                 });
-                run_free_pcs(&body, tcx, Some(&format!("{}/{}", dir_path, item_name)));
+                run_free_pcs(&body, tcx, Some(format!("{}/{}", dir_path, item_name)));
                 item_names.push(item_name);
             }
             unsupported_item_kind => {
@@ -223,146 +223,9 @@ fn parse_subset_base_fact(line: &str) -> SubsetBaseFact {
     }
 }
 
-fn subset_base_visualization(file_contents: String) {
-    let facts: Vec<SubsetBaseFact> = file_contents.lines().map(parse_subset_base_fact).collect();
-    // let mut facts_by_block: BTreeMap<BasicBlock, Vec<SubsetBaseFact>> = BTreeMap::new();
-    // for fact in facts {
-    //     facts_by_block
-    //         .entry(fact.location.block().clone())
-    //         .or_insert_with(Vec::new)
-    //         .push(fact);
-    // }
-    // for (block, facts) in facts_by_block.iter() {
-    let filename = format!("bc_visualization/all.dot");
-    let mut nodes: Vec<Region> = vec![];
-    let mut lookup = |region: &Region| {
-        nodes.iter().position(|n| n == region).unwrap_or_else(|| {
-            nodes.push(region.clone());
-            nodes.len() - 1
-        })
-    };
-    let mut edges: BTreeSet<DotEdge> = BTreeSet::new();
-    for fact in facts
-        .into_iter()
-        .sorted_by(|a, b| a.location.cmp(&b.location))
-        // .filter(|fact| fact.location.block().as_usize() <= 5)
-    {
-        println!("{:?}", fact);
-        let sub_node = lookup(&fact.subset);
-        let sup_node = lookup(&fact.superset);
-        edges.insert(DotEdge {
-            from: format!("n{}", sub_node),
-            to: format!("n{}", sup_node),
-            options: EdgeOptions::directed(),
-        });
-    }
-    let dot_graph = DotGraph {
-        name: "G".to_string(),
-        nodes: nodes
-            .iter()
-            .enumerate()
-            .map(|(i, n)| DotNode {
-                id: format!("n{}", i),
-                label: DotLabel::Text(n.to_string()),
-                font_color: "black".to_string(),
-                color: "blue".to_string(),
-                shape: "rect".to_string(),
-            })
-            .collect(),
-        edges: edges.into_iter().collect(),
-        subgraphs: vec![],
-    };
-
-    dot_graph.write_to_file(&filename).unwrap();
-    //    }
-}
-
-fn polonius_visualization(file_contents: String) {
-    let mut facts_by_location: BTreeMap<RichLocation, Vec<PoloniusFact>> = BTreeMap::new();
-
-    for line in file_contents.lines() {
-        if let Some(fact) = parse_polonius_line(line) {
-            match &fact {
-                PoloniusFact::OriginContainsLoanAt(location, _, _) => {
-                    facts_by_location
-                        .entry(location.clone())
-                        .or_insert_with(Vec::new)
-                        .push(fact);
-                } // Add other variants as needed
-            }
-        }
-    }
-
-    for (location, facts) in facts_by_location.iter() {
-        let filename = format!(
-            "bc_visualization/{}.dot",
-            match location {
-                RichLocation::Mid(loc) => format!("mid_{:?}_{}", loc.block, loc.statement_index),
-                RichLocation::Start(loc) =>
-                    format!("start_{:?}_{}", loc.block, loc.statement_index),
-            }
-        );
-        let mut dot_graph = DotGraph {
-            name: "G".to_string(),
-            nodes: vec![],
-            edges: vec![],
-            subgraphs: vec![],
-        };
-
-        // Group facts by their region
-        let mut facts_by_region: BTreeMap<String, Vec<&PoloniusFact>> = BTreeMap::new();
-
-        for fact in facts {
-            if let PoloniusFact::OriginContainsLoanAt(_, region, _) = fact {
-                facts_by_region
-                    .entry(region.clone())
-                    .or_default()
-                    .push(fact);
-            }
-        }
-
-        for (i, (region, region_facts)) in facts_by_region.iter().enumerate() {
-            let cluster = DotSubgraph {
-                id: format!("cluster_{}", i),
-                label: region.clone(),
-                nodes: region_facts
-                    .into_iter()
-                    .map(|fact| match fact {
-                        PoloniusFact::OriginContainsLoanAt(_, _, borrow) => DotNode {
-                            id: format!("node_{region}_{borrow}"),
-                            label: DotLabel::Text(borrow.clone()),
-                            font_color: "black".to_string(),
-                            color: "blue".to_string(),
-                            shape: "rect".to_string(),
-                        },
-                    })
-                    .collect(),
-            };
-            dot_graph.subgraphs.push(cluster);
-        }
-        // Create a file for the dot graph
-        let mut file = std::fs::File::create(&filename).expect("Failed to create file");
-
-        // Write the dot graph to the file
-        use std::io::Write;
-        write!(file, "{}", dot_graph).expect("Failed to write to file");
-
-        println!("Wrote dot graph to {}", filename);
-    }
-}
-
 fn main() {
-    // let mut rustc_args = vec!["-Zpolonius=yes".to_string()];
-    // rustc_args.extend(std::env::args().skip(1));
-    // let mut callbacks = PcsCallbacks;
-    // driver::RunCompiler::new(&rustc_args, &mut callbacks).run();
-
-    // let filename = std::env::args()
-    //     .nth(1)
-    //     .expect("Please provide a filename as the first argument");
-    // let file_contents = std::fs::read_to_string(filename).expect("Failed to read file");
-    // polonius_visualization(file_contents);
-    subset_base_visualization(std::fs::read_to_string(
-        "/Users/zgrannan/prusti-dev/local-testing/rpe/pass/nll-facts/main/subset_base.facts"
-    ).unwrap());
+    let mut rustc_args = vec!["-Zpolonius=yes".to_string()];
+    rustc_args.extend(std::env::args().skip(1));
+    let mut callbacks = PcsCallbacks;
+    driver::RunCompiler::new(&rustc_args, &mut callbacks).run();
 }

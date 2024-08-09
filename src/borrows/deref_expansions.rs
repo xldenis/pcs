@@ -14,7 +14,7 @@ use crate::{
     utils::{Place, PlaceRepacker},
 };
 
-use super::domain::{DerefExpansion, Latest, MaybeOldPlace};
+use super::{deref_expansion::DerefExpansion, domain::{Latest, MaybeOldPlace}};
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);

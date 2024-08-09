@@ -18,11 +18,17 @@ use rustc_interface::{
     ast::Mutability,
     middle::{
         mir::{Body, Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
-        ty::{Ty, TyCtxt, TyKind},
+        ty::{RegionVid, Ty, TyCtxt, TyKind},
     },
 };
 
-use crate::{borrows::domain::MaybeOldPlace, rustc_interface};
+use crate::{
+    borrows::{
+        borrows_visitor::{extract_nested_lifetimes, get_vid},
+        domain::{MaybeOldPlace, RegionProjection},
+    },
+    rustc_interface,
+};
 
 use super::{
     debug_info::{self, DebugInfo},
@@ -52,16 +58,40 @@ impl<'tcx> Place<'tcx> {
         Some(Place::new(prefix.local, &prefix.projection))
     }
 
-    // pub fn belongs_to_fpcs(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
-    //     !self.iter_projections().any(|(place, elem)| {
-    //         let place: Place<'tcx> = place.into();
-    //         place.is_ref(body, tcx)
-    //     })
-    // }
+    pub fn region_projection(
+        &self,
+        idx: usize,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> RegionProjection<'tcx> {
+        RegionProjection::new(
+            self.region_projections(repacker)[idx].region,
+            self.clone().into(),
+        )
+    }
+
+    pub fn region_projections(
+        &self,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> Vec<RegionProjection<'tcx>> {
+        extract_nested_lifetimes(self.ty(repacker).ty)
+            .iter()
+            .map(|region| RegionProjection::new(get_vid(region).unwrap(), self.clone().into()))
+            .collect()
+    }
+    pub fn projection_index(
+        &self,
+        vid: RegionVid,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> Option<usize> {
+        extract_nested_lifetimes(self.ty(repacker).ty)
+            .iter()
+            .position(|region| get_vid(region).unwrap() == vid)
+    }
+
     pub fn is_owned(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
-        !self.iter_projections().any(|(place, elem)| {
-            elem == ProjectionElem::Deref && !place.ty(body, tcx).ty.is_box()
-        })
+        !self
+            .iter_projections()
+            .any(|(place, elem)| elem == ProjectionElem::Deref && !place.ty(body, tcx).ty.is_box())
     }
 
     pub fn is_mut_ref(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
@@ -79,7 +109,9 @@ impl<'tcx> Place<'tcx> {
         assert!(self.ty(repacker).ty.is_ref() || self.ty(repacker).ty.is_box());
         Place::new(
             self.0.local,
-            self.0.project_deeper(&[PlaceElem::Deref], repacker.tcx()).projection,
+            self.0
+                .project_deeper(&[PlaceElem::Deref], repacker.tcx())
+                .projection,
         )
     }
 
@@ -91,7 +123,6 @@ impl<'tcx> Place<'tcx> {
         let right = other.projection.iter().copied();
         left.zip(right).map(|(e1, e2)| (elem_eq((e1, e2)), e1, e2))
     }
-
 
     /// Check if the place `left` is a prefix of `right` or vice versa. For example:
     ///

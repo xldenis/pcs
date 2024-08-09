@@ -1,11 +1,9 @@
 use crate::{
     borrows::{
-        borrows_state::BorrowsState,
-        domain::{
-            AbstractionTarget, AbstractionType, Borrow, MaybeOldPlace, RegionAbstraction,
+        borrows_state::BorrowsState, borrows_visitor::{extract_lifetimes, extract_nested_lifetimes, get_vid}, domain::{
+            AbstractionTarget, AbstractionType, Borrow, MaybeOldPlace,
             RegionProjection,
-        },
-        unblock_graph::UnblockGraph,
+        }, region_abstraction::RegionAbstraction, unblock_graph::UnblockGraph
     },
     combined_pcs::UnblockEdgeType,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
@@ -167,7 +165,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
             id,
             node_type: NodeType::RegionProjectionNode {
                 label: format!(
-                    "{}|{:?}",
+                    "{}↓{:?}",
                     projection.place.to_short_string(self.repacker),
                     projection.region
                 ),
@@ -244,6 +242,17 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
             assert!(capability.is_none());
             NodeType::ReborrowingDagNode { label, location }
         };
+        if place.is_owned(self.repacker.body(), self.repacker.tcx()) {
+            for lifetime in extract_nested_lifetimes(place.ty(self.repacker).ty) {
+                let region_projection = RegionProjection {
+                    place: MaybeOldPlace::Current {
+                        place: place.clone(),
+                    },
+                    region: get_vid(&lifetime).unwrap(),
+                };
+                self.insert_region_projection_node(&region_projection);
+            }
+        }
         let node = GraphNode { id, node_type };
         self.insert_node(node);
         id
@@ -453,6 +462,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                 assigned_place,
                 location: reborrow.location,
                 region: format!("{:?}", reborrow.region),
+                path_conditions: format!("{}", reborrow.path_conditions),
             });
         }
 
@@ -471,6 +481,14 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
 
         for abstraction in self.borrows_domain.region_abstractions.iter() {
             let r = self.constructor.insert_region_abstraction(abstraction);
+        }
+
+        for member in self.borrows_domain.region_projection_members.iter() {
+            let place = self.insert_maybe_old_place(member.place);
+            let region_projection = self.constructor.insert_region_projection_node(&member.projection);
+            self.constructor
+                .edges
+                .insert(GraphEdge::RegionProjectionMemberEdge { place, region_projection });
         }
 
         self.constructor.to_graph()

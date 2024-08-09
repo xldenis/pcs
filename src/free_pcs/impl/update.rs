@@ -30,7 +30,6 @@ impl<'tcx> CapabilitySummary<'tcx> {
                 }
             }
             Condition::Capability(place, cap) => {
-                eprintln!("{place:?} requires {cap:?}");
                 let cp = self[place.local].get_allocated_mut();
                 cp.repack(place, repacker);
                 if cp[&place] > cap {

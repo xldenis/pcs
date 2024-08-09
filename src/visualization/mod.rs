@@ -224,6 +224,7 @@ enum GraphEdge {
         assigned_place: NodeId,
         location: Location,
         region: String,
+        path_conditions: String,
     },
     ReferenceEdge {
         borrowed_place: NodeId,
@@ -238,6 +239,10 @@ enum GraphEdge {
         source: NodeId,
         target: NodeId,
         location: Location,
+    },
+    RegionProjectionMemberEdge {
+        place: NodeId,
+        region_projection: NodeId,
     },
 }
 
@@ -265,12 +270,13 @@ impl GraphEdge {
                 assigned_place,
                 location,
                 region,
+                path_conditions,
             } => DotEdge {
                 to: assigned_place.to_string(),
                 from: borrowed_place.to_string(),
                 options: EdgeOptions::directed(EdgeDirection::Backward)
                     .with_color("orange".to_string())
-                    .with_label(region.to_string()),
+                    .with_label(format!("{} - {}", region, path_conditions)),
             },
             GraphEdge::DerefExpansionEdge {
                 source,
@@ -328,6 +334,14 @@ impl GraphEdge {
             GraphEdge::AbstractEdge { blocked, blocking } => DotEdge {
                 from: blocked.to_string(),
                 to: blocking.to_string(),
+                options: EdgeOptions::directed(EdgeDirection::Backward),
+            },
+            GraphEdge::RegionProjectionMemberEdge {
+                place: source,
+                region_projection: target,
+            } => DotEdge {
+                from: source.to_string(),
+                to: target.to_string(),
                 options: EdgeOptions::directed(EdgeDirection::Backward),
             },
         }

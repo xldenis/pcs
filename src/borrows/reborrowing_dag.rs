@@ -14,6 +14,7 @@ use crate::{rustc_interface, utils::Place};
 use super::{
     borrows_visitor::DebugCtx,
     domain::{Latest, MaybeOldPlace, Reborrow},
+    path_condition::{PathCondition, PathConditions},
 };
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct ReborrowingDag<'tcx> {
@@ -21,6 +22,21 @@ pub struct ReborrowingDag<'tcx> {
 }
 
 impl<'tcx> ReborrowingDag<'tcx> {
+    pub fn add_path_condition(&mut self, pc: PathCondition) -> bool {
+        let mut changed = false;
+        self.reborrows = self
+            .reborrows
+            .clone()
+            .into_iter()
+            .map(|mut rb| {
+                if rb.path_conditions.insert(pc.clone()) {
+                    changed = true;
+                }
+                rb
+            })
+            .collect();
+        changed
+    }
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
         self.reborrows.retain(|r| path.contains(&r.location.block));
     }
@@ -163,6 +179,7 @@ impl<'tcx> ReborrowingDag<'tcx> {
                 place: assigned_place,
             },
             location,
+            path_conditions: PathConditions::new(location.block),
         })
     }
     pub fn kill_reborrows_blocking(&mut self, blocked_place: MaybeOldPlace<'tcx>) -> bool {

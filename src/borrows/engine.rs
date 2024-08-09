@@ -5,7 +5,8 @@ use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
-            BorrowIndex, LocationTable, PoloniusInput, RegionInferenceContext, RichLocation, PoloniusOutput
+            BorrowIndex, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext,
+            RichLocation,
         },
     },
     data_structures::fx::{FxHashMap, FxHashSet},
@@ -24,14 +25,19 @@ use rustc_interface::{
 use serde_json::{json, Value};
 
 use crate::{
-    borrows::domain::RegionAbstraction,
     rustc_interface,
     utils::{self, PlaceRepacker, PlaceSnapshot},
     ReborrowBridge,
 };
 
-use super::{borrows_state::BorrowsState, borrows_visitor::BorrowsVisitor};
-use super::domain::{Borrow, DerefExpansion, MaybeOldPlace, Reborrow};
+use super::{
+    borrows_state::BorrowsState, borrows_visitor::BorrowsVisitor, path_condition::PathCondition,
+};
+use super::{
+    deref_expansion::DerefExpansion,
+    domain::{Borrow, MaybeOldPlace, Reborrow},
+    path_condition::PathConditions,
+};
 
 pub struct BorrowsEngine<'mir, 'tcx> {
     pub tcx: TyCtxt<'tcx>,
@@ -42,7 +48,6 @@ pub struct BorrowsEngine<'mir, 'tcx> {
     pub region_inference_context: Rc<RegionInferenceContext<'tcx>>,
     pub output_facts: &'mir PoloniusOutput,
 }
-
 
 impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
     pub fn new(
@@ -61,7 +66,7 @@ impl<'mir, 'tcx> BorrowsEngine<'mir, 'tcx> {
             input_facts,
             borrow_set,
             region_inference_context,
-            output_facts
+            output_facts,
         }
     }
 }
@@ -99,7 +104,15 @@ impl<'tcx> ReborrowAction<'tcx> {
 
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsDomain<'mir, 'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        self.after.join(&other.after)
+        let mut other_after = other.after.clone();
+
+        // For edges in the other graph that actually belong to it,
+        // add the path condition that leads them to this block
+        let pc = PathCondition::new(other.block, self.block);
+        other_after.add_path_condition(pc);
+
+        // Overlay both graphs
+        self.after.join(&other_after)
     }
 }
 
@@ -180,6 +193,7 @@ pub struct BorrowsDomain<'mir, 'tcx> {
     pub before_after: BorrowsState<'mir, 'tcx>,
     pub start: BorrowsState<'mir, 'tcx>,
     pub after: BorrowsState<'mir, 'tcx>,
+    pub block: BasicBlock,
 }
 
 impl<'mir, 'tcx> BorrowsDomain<'mir, 'tcx> {
@@ -192,12 +206,13 @@ impl<'mir, 'tcx> BorrowsDomain<'mir, 'tcx> {
         })
     }
 
-    pub fn new(body: &'mir Body<'tcx>) -> Self {
+    pub fn new(body: &'mir Body<'tcx>, block: BasicBlock) -> Self {
         Self {
             before_start: BorrowsState::new(body),
             before_after: BorrowsState::new(body),
             start: BorrowsState::new(body),
             after: BorrowsState::new(body),
+            block,
         }
     }
 }
