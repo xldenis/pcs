@@ -469,6 +469,9 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                         path_conditions: format!("{:?}", reborrow.location.block),
                     });
                 }
+                BorrowsEdgeKind::RegionAbstraction(abstraction) => {
+                    let r = self.constructor.insert_region_abstraction(abstraction);
+                }
                 _ => {}
             }
         }
@@ -484,10 +487,6 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                         .insert(GraphEdge::ProjectionEdge { source, target });
                 }
             }
-        }
-
-        for abstraction in self.borrows_domain.region_abstractions().iter() {
-            let r = self.constructor.insert_region_abstraction(abstraction);
         }
 
         for member in self.borrows_domain.region_projection_members().iter() {

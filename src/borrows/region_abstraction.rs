@@ -8,7 +8,7 @@ use rustc_interface::{
         graph::dominators::Dominators,
     },
     dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, VarDebugInfo, PlaceElem},
+    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, PlaceElem, VarDebugInfo},
     middle::ty::{self, RegionVid, TyCtxt},
 };
 use serde_json::{json, Value};
@@ -25,9 +25,13 @@ use crate::{
 };
 
 use super::{
-    borrows_visitor::DebugCtx, deref_expansion::DerefExpansion, deref_expansions::{self, DerefExpansions}, domain::{
-        AbstractionBlockEdge, AbstractionTarget, AbstractionType, Borrow, Latest, MaybeOldPlace, Reborrow, RegionProjection
-    }, unblock_graph::UnblockGraph
+    borrows_visitor::DebugCtx,
+    deref_expansion::DerefExpansion,
+    domain::{
+        AbstractionBlockEdge, AbstractionTarget, AbstractionType, Borrow, Latest, MaybeOldPlace,
+        Reborrow, RegionProjection,
+    },
+    unblock_graph::UnblockGraph,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]

@@ -1,6 +1,5 @@
 pub mod domain;
 pub mod engine;
-pub mod deref_expansions;
 pub mod borrows_state;
 pub mod borrows_visitor;
 pub mod unblock_graph;

@@ -385,7 +385,6 @@ use serde_json::{json, Value};
 use super::{
     borrows_state::BorrowsState,
     borrows_visitor::{extract_nested_lifetimes, get_vid},
-    deref_expansions::DerefExpansions,
     engine::ReborrowAction,
     path_condition::PathConditions,
 };

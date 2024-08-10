@@ -27,7 +27,6 @@ use crate::{
     borrows::{
         borrows_state::BorrowsState,
         deref_expansion::DerefExpansion,
-        deref_expansions::DerefExpansions,
         domain::{MaybeOldPlace, Reborrow},
         engine::{BorrowsEngine, ReborrowAction},
     },

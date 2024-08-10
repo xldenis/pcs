@@ -27,7 +27,6 @@ use super::{
     },
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
-    deref_expansions::{self, DerefExpansions},
     domain::{Borrow, Latest, MaybeOldPlace, Reborrow, RegionProjection},
     path_condition::{PathCondition, PathConditions},
     region_abstraction::{RegionAbstraction, RegionAbstractions},
@@ -60,6 +59,18 @@ impl<'tcx> BorrowsGraph<'tcx> {
         true
     }
 
+    pub fn region_abstractions(&self) -> FxHashSet<RegionAbstraction<'tcx>> {
+        self.0
+            .iter()
+            .filter_map(|edge| match &edge.kind {
+                BorrowsEdgeKind::RegionAbstraction(abstraction) => Some(abstraction),
+                _ => None,
+            })
+            .cloned()
+            .collect()
+    }
+
+    // TODO: Delete?
     pub fn deref_expansions(&self) -> FxHashSet<DerefExpansion<'tcx>> {
         self.0
             .iter()
@@ -148,20 +159,6 @@ impl<'tcx> BorrowsGraph<'tcx> {
         let len = self.0.len();
         self.0.extend(other.0.iter().cloned());
         self.0.len() != len
-    }
-
-    // TODO: Delete?
-    pub fn region_abstractions(&self) -> RegionAbstractions<'tcx> {
-        RegionAbstractions(
-            self.0
-                .iter()
-                .filter_map(|edge| match &edge.kind {
-                    BorrowsEdgeKind::RegionAbstraction(abstraction) => Some(abstraction),
-                    _ => None,
-                })
-                .cloned()
-                .collect(),
-        )
     }
 
     // TODO: Delete?

@@ -25,7 +25,6 @@ use super::{
     borrows_graph::{BorrowsEdge, BorrowsGraph, ToBorrowsEdge},
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
-    deref_expansions::{self, DerefExpansions},
     domain::{Borrow, Latest, MaybeOldPlace, Reborrow, RegionProjection},
     path_condition::{PathCondition, PathConditions},
     region_abstraction::{RegionAbstraction, RegionAbstractions},
@@ -200,11 +199,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     ) {
         self.graph
             .move_reborrows(orig_assigned_place, new_assigned_place);
-    }
-
-    // TODO: Remove
-    pub fn region_abstractions(&self) -> RegionAbstractions<'tcx> {
-        self.graph.region_abstractions()
     }
 
     // TODO: Remove
@@ -416,6 +410,10 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
 
     pub fn has_reborrow_at_location(&self, location: Location) -> bool {
         self.graph.has_reborrow_at_location(location)
+    }
+
+    pub fn region_abstractions(&self) -> FxHashSet<RegionAbstraction<'tcx>> {
+        self.graph.region_abstractions()
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
