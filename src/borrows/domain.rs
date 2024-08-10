@@ -142,7 +142,6 @@ impl<'tcx> AbstractionType<'tcx> {
     }
 }
 
-
 fn make_places_old<'tcx>(
     places: FxHashSet<MaybeOldPlace<'tcx>>,
     place: Place<'tcx>,
@@ -312,7 +311,6 @@ impl<'tcx> Borrow<'tcx> {
     }
 }
 
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Latest<'tcx>(FxHashMap<Place<'tcx>, Location>);
 
@@ -385,7 +383,11 @@ use crate::utils::PlaceRepacker;
 use serde_json::{json, Value};
 
 use super::{
-    borrows_state::BorrowsState, borrows_visitor::{extract_nested_lifetimes, get_vid}, deref_expansions::DerefExpansions, engine::ReborrowAction, path_condition::PathConditions, reborrowing_dag::ReborrowingDag
+    borrows_state::BorrowsState,
+    borrows_visitor::{extract_nested_lifetimes, get_vid},
+    deref_expansions::DerefExpansions,
+    engine::ReborrowAction,
+    path_condition::PathConditions,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]

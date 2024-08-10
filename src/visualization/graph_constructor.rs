@@ -1,6 +1,11 @@
 use crate::{
     borrows::{
-        borrows_graph::BorrowsEdgeKind, borrows_state::BorrowsState, borrows_visitor::{extract_lifetimes, extract_nested_lifetimes, get_vid}, domain::{AbstractionTarget, AbstractionType, Borrow, MaybeOldPlace, RegionProjection}, region_abstraction::RegionAbstraction, unblock_graph::UnblockGraph
+        borrows_graph::BorrowsEdgeKind,
+        borrows_state::BorrowsState,
+        borrows_visitor::{extract_lifetimes, extract_nested_lifetimes, get_vid},
+        domain::{AbstractionTarget, AbstractionType, Borrow, MaybeOldPlace, RegionProjection},
+        region_abstraction::RegionAbstraction,
+        unblock_graph::UnblockGraph,
     },
     combined_pcs::UnblockEdgeType,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
@@ -437,22 +442,22 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                 }
             }
         }
-        for deref_expansion in self.borrows_domain.deref_expansions().iter() {
-            let base = self.insert_maybe_old_place(deref_expansion.base());
-            for place in deref_expansion.expansion(self.repacker) {
-                let place = self.insert_maybe_old_place(place);
-                self.constructor
-                    .edges
-                    .insert(GraphEdge::DerefExpansionEdge {
-                        source: base,
-                        target: place,
-                        location: deref_expansion.location(),
-                    });
-            }
-        }
 
         for edge in self.borrows_domain.graph_edges() {
             match edge.kind() {
+                BorrowsEdgeKind::DerefExpansion(deref_expansion) => {
+                    let base = self.insert_maybe_old_place(deref_expansion.base());
+                    for place in deref_expansion.expansion(self.repacker) {
+                        let place = self.insert_maybe_old_place(place);
+                        self.constructor
+                            .edges
+                            .insert(GraphEdge::DerefExpansionEdge {
+                                source: base,
+                                target: place,
+                                location: deref_expansion.location(),
+                            });
+                    }
+                }
                 BorrowsEdgeKind::Reborrow(reborrow) => {
                     let borrowed_place = self.insert_maybe_old_place(reborrow.blocked_place);
                     let assigned_place = self.insert_maybe_old_place(reborrow.assigned_place);

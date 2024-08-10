@@ -116,6 +116,7 @@ impl<'tcx> DerefExpansions<'tcx> {
         tcx: TyCtxt<'tcx>,
         location: Location,
     ) {
+        eprintln!("{:?} ensure_expansion_to_exactly {:?}", location, place);
         self.ensure_deref_expansion_to_at_least(place, body, tcx, location);
         self.delete_descendants_of(place.into(), PlaceRepacker::new(body, tcx), Some(location));
     }

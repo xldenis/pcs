@@ -56,8 +56,22 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct DebugCtx {
-    pub location: Location,
+pub enum DebugCtx {
+    Location(Location),
+    Other,
+}
+
+impl DebugCtx {
+    pub fn new(location: Location) -> DebugCtx {
+        DebugCtx::Location(location)
+    }
+
+    pub fn location(&self) -> Option<Location> {
+        match self {
+            DebugCtx::Location(location) => Some(*location),
+            DebugCtx::Other => None,
+        }
+    }
 }
 
 pub struct BorrowsVisitor<'tcx, 'mir, 'state> {
@@ -261,14 +275,15 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
             }
         }
         assert!(edges.len() > 0, "No edges for {:?}", func_def_id);
-        self.state
-            .after
-            .add_region_abstraction(RegionAbstraction::new(AbstractionType::FunctionCall {
+        self.state.after.add_region_abstraction(
+            RegionAbstraction::new(AbstractionType::FunctionCall {
                 def_id: *func_def_id,
                 location,
                 substs,
                 edges,
-            }), location.block);
+            }),
+            location.block,
+        );
     }
 
     fn matches_for_input_lifetime(
@@ -392,6 +407,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
     }
 
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
+        self.debug_ctx = Some(DebugCtx::new(location));
         self.super_statement(statement, location);
         if self.preparing {
             let mut g = UnblockGraph::new();
@@ -429,7 +445,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 }
             }
 
-            self.state.after.apply_unblock_graph(g, self.tcx);
+            self.state
+                .after
+                .apply_unblock_graph(g, self.tcx, self.debug_ctx.unwrap());
         }
 
         // Stuff in this block will be included as the middle "bridge" ops that
@@ -479,7 +497,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
         if !self.preparing && !self.before {
             match &statement.kind {
                 StatementKind::StorageDead(local) => {
-                    self.debug_ctx = Some(DebugCtx { location });
                     let place: utils::Place<'tcx> = (*local).into();
                     let repacker = PlaceRepacker::new(self.body, self.tcx);
                     if place.ty(repacker).ty.is_ref() {
@@ -544,21 +561,11 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                 MaybeOldPlace::Current { place: target },
                                 repacker,
                             );
-                            let mut ug = UnblockGraph::new();
-                            for d in self
-                                .state
-                                .after
-                                .deref_expansions()
-                                .descendants_of_place(from.into())
-                            {
-                                ug.kill_place(
-                                    d.base(),
-                                    &self.state.after,
-                                    location.block,
-                                    self.repacker(),
-                                );
-                            }
-                            self.state.after.apply_unblock_graph(ug, self.tcx);
+                            self.state.after.delete_descendants_of(
+                                MaybeOldPlace::Current { place: from },
+                                repacker,
+                                self.debug_ctx.unwrap(),
+                            );
                         }
                         Rvalue::Use(Operand::Copy(from)) => {
                             match from.ty(self.body, self.tcx).ty.kind() {

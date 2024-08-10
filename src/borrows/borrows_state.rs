@@ -28,7 +28,6 @@ use super::{
     deref_expansions::{self, DerefExpansions},
     domain::{Borrow, Latest, MaybeOldPlace, Reborrow, RegionProjection},
     path_condition::{PathCondition, PathConditions},
-    reborrowing_dag::ReborrowingDag,
     region_abstraction::{RegionAbstraction, RegionAbstractions},
     unblock_graph::UnblockGraph,
 };
@@ -104,7 +103,6 @@ impl<'tcx> RegionProjectionMembers<'tcx> {
     pub fn iter(&self) -> impl Iterator<Item = &RegionProjectionMember<'tcx>> {
         self.0.iter()
     }
-
 }
 
 #[derive(Clone, Debug)]
@@ -137,8 +135,8 @@ fn deref_expansions_should_be_considered_same<'tcx>(
 }
 
 fn subtract_deref_expansions<'tcx>(
-    from: &DerefExpansions<'tcx>,
-    to: &DerefExpansions<'tcx>,
+    from: &FxHashSet<DerefExpansion<'tcx>>,
+    to: &FxHashSet<DerefExpansion<'tcx>>,
 ) -> FxHashSet<DerefExpansion<'tcx>> {
     from.iter()
         .filter(|f1| {
@@ -158,8 +156,28 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.graph.filter_for_path(path);
     }
 
+    pub fn delete_descendants_of(
+        &mut self,
+        place: MaybeOldPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+        debug_ctx: DebugCtx,
+    ) -> bool {
+        self.graph.delete_descendants_of(place, repacker, debug_ctx)
+    }
+
+    pub fn edges_blocking(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> impl Iterator<Item = &BorrowsEdge<'tcx>> {
+        self.graph.edges_blocking(place)
+    }
+
     pub fn graph_edges(&self) -> impl Iterator<Item = &BorrowsEdge<'tcx>> {
         self.graph.edges()
+    }
+
+    pub fn deref_expansions(&self) -> FxHashSet<DerefExpansion<'tcx>> {
+        self.graph.deref_expansions()
     }
 
     pub fn move_region_projection_member_projections(
@@ -182,11 +200,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     ) {
         self.graph
             .move_reborrows(orig_assigned_place, new_assigned_place);
-    }
-
-    // TODO: Remove
-    pub fn deref_expansions(&self) -> DerefExpansions<'tcx> {
-        self.graph.deref_expansions()
     }
 
     // TODO: Remove
@@ -266,20 +279,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                                         tcx,
                                         location,
                                     );
-                                } else {
-                                    let mut ug = UnblockGraph::new();
-                                    for deref_expansion in self
-                                        .deref_expansions()
-                                        .descendants_of(MaybeOldPlace::Current { place: *place })
-                                    {
-                                        ug.kill_place(
-                                            deref_expansion.base(),
-                                            self,
-                                            location.block,
-                                            PlaceRepacker::new(body, tcx),
-                                        );
-                                    }
-                                    self.apply_unblock_graph(ug, tcx);
                                 }
                             }
                             _ => {}
@@ -316,7 +315,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             location.block,
             PlaceRepacker::new(body, tcx),
         );
-        self.apply_unblock_graph(ug, tcx);
+        self.apply_unblock_graph(ug, tcx, DebugCtx::new(location));
 
         // Originally we may not have been expanded enough
         self.graph
@@ -336,7 +335,12 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.graph.kill_reborrows(blocked_place, assigned_place)
     }
 
-    pub fn apply_unblock_graph(&mut self, graph: UnblockGraph<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    pub fn apply_unblock_graph(
+        &mut self,
+        graph: UnblockGraph<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        debug_ctx: DebugCtx,
+    ) -> bool {
         let mut changed = false;
         for action in graph.actions(tcx) {
             match action {
@@ -353,7 +357,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     if self.graph.delete_descendants_of(
                         place,
                         PlaceRepacker::new(self.body, tcx),
-                        None,
+                        debug_ctx,
                     ) {
                         changed = true;
                     }

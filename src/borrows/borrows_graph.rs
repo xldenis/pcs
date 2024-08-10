@@ -30,7 +30,6 @@ use super::{
     deref_expansions::{self, DerefExpansions},
     domain::{Borrow, Latest, MaybeOldPlace, Reborrow, RegionProjection},
     path_condition::{PathCondition, PathConditions},
-    reborrowing_dag::ReborrowingDag,
     region_abstraction::{RegionAbstraction, RegionAbstractions},
     unblock_graph::UnblockGraph,
 };
@@ -61,6 +60,18 @@ impl<'tcx> BorrowsGraph<'tcx> {
         true
     }
 
+    pub fn deref_expansions(&self) -> FxHashSet<DerefExpansion<'tcx>> {
+        self.0
+            .iter()
+            .filter_map(|edge| match &edge.kind {
+                BorrowsEdgeKind::DerefExpansion(de) => Some(de),
+                _ => None,
+            })
+            .cloned()
+            .collect()
+    }
+
+    // TODO: Delete?
     pub fn reborrows(&self) -> FxHashSet<Reborrow<'tcx>> {
         self.0
             .iter()
@@ -73,12 +84,10 @@ impl<'tcx> BorrowsGraph<'tcx> {
     }
 
     pub fn has_reborrow_at_location(&self, location: Location) -> bool {
-        self.0
-            .iter()
-            .any(|edge| match &edge.kind {
-                BorrowsEdgeKind::Reborrow(reborrow) => reborrow.location == location,
-                _ => false,
-            })
+        self.0.iter().any(|edge| match &edge.kind {
+            BorrowsEdgeKind::Reborrow(reborrow) => reborrow.location == location,
+            _ => false,
+        })
     }
 
     pub fn reborrows_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
@@ -103,7 +112,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
             .0
             .iter()
             .flat_map(|edge| {
-                edge.source_places()
+                edge.blocked_places()
                     .into_iter()
                     .flat_map(|p| p.as_current())
             })
@@ -139,20 +148,6 @@ impl<'tcx> BorrowsGraph<'tcx> {
         let len = self.0.len();
         self.0.extend(other.0.iter().cloned());
         self.0.len() != len
-    }
-
-    // TODO: Delete?
-    pub fn deref_expansions(&self) -> DerefExpansions<'tcx> {
-        DerefExpansions(
-            self.0
-                .iter()
-                .filter_map(|edge| match &edge.kind {
-                    BorrowsEdgeKind::DerefExpansion(exp) => Some(exp),
-                    _ => None,
-                })
-                .cloned()
-                .collect(),
-        )
     }
 
     // TODO: Delete?
@@ -218,17 +213,22 @@ impl<'tcx> BorrowsGraph<'tcx> {
         tcx: TyCtxt<'tcx>,
         location: Location,
     ) {
+        eprintln!("{:?} ensure_expansion_to_exactly {:?}", location, place);
         self.ensure_deref_expansion_to_at_least(place, body, tcx, location);
-        self.delete_descendants_of(place.into(), PlaceRepacker::new(body, tcx), Some(location));
+        self.delete_descendants_of(
+            place.into(),
+            PlaceRepacker::new(body, tcx),
+            DebugCtx::new(location),
+        );
     }
 
-    pub fn edges_from(
+    pub fn edges_blocking(
         &self,
         place: MaybeOldPlace<'tcx>,
     ) -> impl Iterator<Item = &BorrowsEdge<'tcx>> {
         self.0
             .iter()
-            .filter(move |edge| edge.source_places().contains(&place))
+            .filter(move |edge| edge.blocked_places().contains(&place))
     }
 
     pub fn remove_abstraction_at(&mut self, location: Location) {
@@ -245,18 +245,27 @@ impl<'tcx> BorrowsGraph<'tcx> {
         &mut self,
         place: MaybeOldPlace<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
-        location: Option<Location>,
+        debug_ctx: DebugCtx,
     ) -> bool {
         let mut changed = false;
-        let edges = self.edges_from(place).cloned().collect::<Vec<_>>();
+        let edges = self.edges_blocking(place).cloned().collect::<Vec<_>>();
         for edge in edges {
             changed = true;
-            self.remove(&edge);
+            self.remove(&edge, debug_ctx);
         }
         changed
     }
 
-    pub fn remove(&mut self, edge: &BorrowsEdge<'tcx>) -> bool {
+    pub fn remove(&mut self, edge: &BorrowsEdge<'tcx>, debug_ctx: DebugCtx) -> bool {
+        match debug_ctx.location() {
+            Some(location) if location.statement_index == 5 => {
+                eprintln!("Stack trace:");
+                let backtrace = std::backtrace::Backtrace::capture();
+                eprintln!("{}", backtrace);
+                eprintln!("{:?} remove {:?}", location, edge)
+            }
+            _ => {}
+        }
         self.0.remove(edge)
     }
 
@@ -292,6 +301,16 @@ impl<'tcx> BorrowsGraph<'tcx> {
         });
     }
 
+    pub fn contains_deref_expansion_from(&self, place: &MaybeOldPlace<'tcx>) -> bool {
+        self.0.iter().any(|edge| {
+            if let BorrowsEdgeKind::DerefExpansion(de) = &edge.kind {
+                de.base() == *place
+            } else {
+                false
+            }
+        })
+    }
+
     pub fn ensure_deref_expansion_to_at_least(
         &mut self,
         place: Place<'tcx>,
@@ -307,10 +326,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
             }
             if in_dag {
                 let origin_place = place.into();
-                if !self
-                    .deref_expansions()
-                    .contains_expansion_from(&origin_place)
-                {
+                if !self.contains_deref_expansion_from(&origin_place) {
                     let expansion = match elem {
                         mir::ProjectionElem::Downcast(_, _) | // For downcast we can't blindly expand since we don't know which instance, use this specific one
                         mir::ProjectionElem::Deref // For Box we don't want to expand fields because it's actually an ADT w/ a ptr inside
@@ -385,7 +401,6 @@ pub struct BorrowsEdge<'tcx> {
 }
 
 impl<'tcx> BorrowsEdge<'tcx> {
-
     pub fn kind(&self) -> &BorrowsEdgeKind<'tcx> {
         &self.kind
     }
@@ -396,8 +411,8 @@ impl<'tcx> BorrowsEdge<'tcx> {
             kind,
         }
     }
-    pub fn source_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        self.kind.source_places()
+    pub fn blocked_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+        self.kind.blocked_places()
     }
 
     pub fn target_places(
@@ -432,7 +447,7 @@ impl<'tcx> BorrowsEdgeKind<'tcx> {
         }
     }
 
-    pub fn source_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+    pub fn blocked_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         match &self {
             BorrowsEdgeKind::Reborrow(reborrow) => {
                 vec![reborrow.blocked_place].into_iter().collect()

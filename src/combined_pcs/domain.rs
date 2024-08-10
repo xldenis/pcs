@@ -19,7 +19,7 @@ use rustc_interface::{
 };
 
 use crate::{
-    borrows::{engine::BorrowsDomain, unblock_graph::UnblockGraph},
+    borrows::{borrows_visitor::DebugCtx, engine::BorrowsDomain, unblock_graph::UnblockGraph},
     free_pcs::{
         CapabilityLocal, CapabilityProjections, FreePlaceCapabilitySummary, HasFpcs, RepackOp,
     },
@@ -91,7 +91,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                 }
             }
         }
-        let ub = self.borrows.after.apply_unblock_graph(g, self.cgx.rp.tcx());
+        let ub = self.borrows.after.apply_unblock_graph(g, self.cgx.rp.tcx(), DebugCtx::Other);
         fpcs || borrows || ub
     }
 }

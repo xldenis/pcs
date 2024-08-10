@@ -27,7 +27,7 @@ use crate::{
 use super::{
     borrows_visitor::DebugCtx, deref_expansion::DerefExpansion, deref_expansions::{self, DerefExpansions}, domain::{
         AbstractionBlockEdge, AbstractionTarget, AbstractionType, Borrow, Latest, MaybeOldPlace, Reborrow, RegionProjection
-    }, reborrowing_dag::ReborrowingDag, unblock_graph::UnblockGraph
+    }, unblock_graph::UnblockGraph
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]

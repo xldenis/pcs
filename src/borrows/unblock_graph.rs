@@ -41,7 +41,7 @@ use crate::{
     visualization::generate_unblock_dot_graph,
 };
 
-use super::domain::AbstractionType;
+use super::{borrows_graph::BorrowsEdgeKind, domain::AbstractionType};
 #[derive(Clone, Debug)]
 pub struct UnblockGraph<'tcx>(HashSet<UnblockEdge<'tcx>>);
 
@@ -291,30 +291,29 @@ impl<'tcx> UnblockGraph<'tcx> {
         block: BasicBlock,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
-        for reborrow in borrows.reborrows_blocking(place) {
-            self.kill_reborrow(&reborrow, borrows, block, repacker)
-        }
-
-        if let Some(expansion) = borrows
-            .deref_expansions()
-            .iter()
-            .find(|de| de.base() == place)
-        {
-            self.add_dependency(
-                UnblockEdgeType::Projection(ProjectionEdge {
-                    blockers: expansion.expansion_elems(),
-                    blocked: place,
-                }),
-                block,
-            );
-            for place in &expansion.expansion(repacker) {
-                self.kill_place(place.clone(), borrows, block, repacker);
-            }
-        }
-
-        for abstraction in borrows.get_abstractions_blocking(&place) {
-            for place in abstraction.abstraction_type.blocker_places() {
-                self.kill_place(place, borrows, block, repacker);
+        for edge in borrows.edges_blocking(place) {
+            match edge.kind() {
+                BorrowsEdgeKind::Reborrow(reborrow) => {
+                    self.kill_reborrow(reborrow, borrows, block, repacker)
+                }
+                BorrowsEdgeKind::DerefExpansion(expansion) => {
+                    self.add_dependency(
+                        UnblockEdgeType::Projection(ProjectionEdge {
+                            blockers: expansion.expansion_elems(),
+                            blocked: place,
+                        }),
+                        block,
+                    );
+                    for place in &expansion.expansion(repacker) {
+                        self.kill_place(place.clone(), borrows, block, repacker);
+                    }
+                }
+                BorrowsEdgeKind::RegionAbstraction(abstraction) => {
+                    for place in abstraction.abstraction_type.blocker_places() {
+                        self.kill_place(place, borrows, block, repacker);
+                    }
+                }
+                BorrowsEdgeKind::RegionProjectionMember(_) => todo!(),
             }
         }
     }
@@ -349,9 +348,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         block: BasicBlock,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
-        for reborrow in borrows
-            .reborrows_blocked_by(MaybeOldPlace::OldPlace(place))
-        {
+        for reborrow in borrows.reborrows_blocked_by(MaybeOldPlace::OldPlace(place)) {
             self.kill_reborrow(&reborrow, borrows, block, repacker);
             match reborrow.blocked_place {
                 MaybeOldPlace::OldPlace(p) => {
