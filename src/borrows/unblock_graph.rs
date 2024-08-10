@@ -350,7 +350,6 @@ impl<'tcx> UnblockGraph<'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for reborrow in borrows
-            .reborrows()
             .reborrows_blocked_by(MaybeOldPlace::OldPlace(place))
         {
             self.kill_reborrow(&reborrow, borrows, block, repacker);

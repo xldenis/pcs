@@ -105,30 +105,6 @@ impl<'tcx> RegionProjectionMembers<'tcx> {
         self.0.iter()
     }
 
-    // pub fn move_projections(
-    //     &mut self,
-    //     old_projection_place: MaybeOldPlace<'tcx>,
-    //     new_projection_place: MaybeOldPlace<'tcx>,
-    //     repacker: PlaceRepacker<'_, 'tcx>,
-    // ) {
-    //     eprintln!(
-    //         "Moving projections from {:?} to {:?}",
-    //         old_projection_place, new_projection_place
-    //     );
-    //     let new_data = self
-    //         .0
-    //         .clone()
-    //         .into_iter()
-    //         .map(|mut member| {
-    //             if member.projection.place == old_projection_place {
-    //                 let idx = member.projection_index(repacker);
-    //                 member.projection = new_projection_place.region_projection(idx, repacker);
-    //             }
-    //             member
-    //         })
-    //         .collect();
-    //     self.0 = new_data;
-    // }
 }
 
 #[derive(Clone, Debug)]
@@ -182,6 +158,10 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.graph.filter_for_path(path);
     }
 
+    pub fn graph_edges(&self) -> impl Iterator<Item = &BorrowsEdge<'tcx>> {
+        self.graph.edges()
+    }
+
     pub fn move_region_projection_member_projections(
         &mut self,
         old_projection_place: MaybeOldPlace<'tcx>,
@@ -217,6 +197,14 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     // TODO: Remove
     pub fn region_projection_members(&self) -> RegionProjectionMembers<'tcx> {
         self.graph.region_projection_members()
+    }
+
+    pub fn reborrows_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
+        self.graph.reborrows_blocked_by(place)
+    }
+
+    pub fn reborrows(&self) -> FxHashSet<Reborrow<'tcx>> {
+        self.graph.reborrows()
     }
 
     pub fn bridge(&self, to: &Self, block: BasicBlock, tcx: TyCtxt<'tcx>) -> ReborrowBridge<'tcx> {
@@ -378,10 +366,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         changed
     }
 
-    pub fn reborrows(&self) -> ReborrowingDag<'tcx> {
-        self.graph.reborrows()
-    }
-
     pub fn set_latest(&mut self, place: Place<'tcx>, location: Location) {
         self.latest.insert(place, location);
     }
@@ -427,7 +411,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     }
 
     pub fn has_reborrow_at_location(&self, location: Location) -> bool {
-        self.reborrows().has_reborrow_at_location(location)
+        self.graph.has_reborrow_at_location(location)
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {

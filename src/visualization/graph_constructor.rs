@@ -1,9 +1,6 @@
 use crate::{
     borrows::{
-        borrows_state::BorrowsState, borrows_visitor::{extract_lifetimes, extract_nested_lifetimes, get_vid}, domain::{
-            AbstractionTarget, AbstractionType, Borrow, MaybeOldPlace,
-            RegionProjection,
-        }, region_abstraction::RegionAbstraction, unblock_graph::UnblockGraph
+        borrows_graph::BorrowsEdgeKind, borrows_state::BorrowsState, borrows_visitor::{extract_lifetimes, extract_nested_lifetimes, get_vid}, domain::{AbstractionTarget, AbstractionType, Borrow, MaybeOldPlace, RegionProjection}, region_abstraction::RegionAbstraction, unblock_graph::UnblockGraph
     },
     combined_pcs::UnblockEdgeType,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
@@ -454,16 +451,21 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
             }
         }
 
-        for reborrow in self.borrows_domain.reborrows().iter() {
-            let borrowed_place = self.insert_maybe_old_place(reborrow.blocked_place);
-            let assigned_place = self.insert_maybe_old_place(reborrow.assigned_place);
-            self.constructor.edges.insert(GraphEdge::ReborrowEdge {
-                borrowed_place,
-                assigned_place,
-                location: reborrow.location,
-                region: format!("{:?}", reborrow.region),
-                path_conditions: format!("{:?}", reborrow.location.block),
-            });
+        for edge in self.borrows_domain.graph_edges() {
+            match edge.kind() {
+                BorrowsEdgeKind::Reborrow(reborrow) => {
+                    let borrowed_place = self.insert_maybe_old_place(reborrow.blocked_place);
+                    let assigned_place = self.insert_maybe_old_place(reborrow.assigned_place);
+                    self.constructor.edges.insert(GraphEdge::ReborrowEdge {
+                        borrowed_place,
+                        assigned_place,
+                        location: reborrow.location,
+                        region: format!("{:?}", reborrow.region),
+                        path_conditions: format!("{:?}", reborrow.location.block),
+                    });
+                }
+                _ => {}
+            }
         }
 
         let mut before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
@@ -485,10 +487,15 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
 
         for member in self.borrows_domain.region_projection_members().iter() {
             let place = self.insert_maybe_old_place(member.place);
-            let region_projection = self.constructor.insert_region_projection_node(&member.projection);
+            let region_projection = self
+                .constructor
+                .insert_region_projection_node(&member.projection);
             self.constructor
                 .edges
-                .insert(GraphEdge::RegionProjectionMemberEdge { place, region_projection });
+                .insert(GraphEdge::RegionProjectionMemberEdge {
+                    place,
+                    region_projection,
+                });
         }
 
         self.constructor.to_graph()

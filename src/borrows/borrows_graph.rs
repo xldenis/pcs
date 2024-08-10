@@ -42,6 +42,10 @@ impl<'tcx> BorrowsGraph<'tcx> {
         Self(FxHashSet::default())
     }
 
+    pub fn edges(&self) -> impl Iterator<Item = &BorrowsEdge<'tcx>> {
+        self.0.iter()
+    }
+
     pub fn kill_reborrows(
         &mut self,
         blocked_place: MaybeOldPlace<'tcx>,
@@ -55,6 +59,43 @@ impl<'tcx> BorrowsGraph<'tcx> {
             }
         });
         true
+    }
+
+    pub fn reborrows(&self) -> FxHashSet<Reborrow<'tcx>> {
+        self.0
+            .iter()
+            .filter_map(|edge| match &edge.kind {
+                BorrowsEdgeKind::Reborrow(reborrow) => Some(reborrow),
+                _ => None,
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn has_reborrow_at_location(&self, location: Location) -> bool {
+        self.0
+            .iter()
+            .any(|edge| match &edge.kind {
+                BorrowsEdgeKind::Reborrow(reborrow) => reborrow.location == location,
+                _ => false,
+            })
+    }
+
+    pub fn reborrows_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
+        self.0
+            .iter()
+            .filter_map(|edge| match &edge.kind {
+                BorrowsEdgeKind::Reborrow(reborrow) => {
+                    if reborrow.assigned_place == place {
+                        Some(reborrow)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn roots(&self, repacker: PlaceRepacker<'_, 'tcx>) -> FxHashSet<Place<'tcx>> {
@@ -98,21 +139,6 @@ impl<'tcx> BorrowsGraph<'tcx> {
         let len = self.0.len();
         self.0.extend(other.0.iter().cloned());
         self.0.len() != len
-    }
-
-    // TODO: Delete?
-    pub fn reborrows(&self) -> ReborrowingDag<'tcx> {
-        ReborrowingDag {
-            reborrows: self
-                .0
-                .iter()
-                .filter_map(|edge| match &edge.kind {
-                    BorrowsEdgeKind::Reborrow(reborrow) => Some(reborrow),
-                    _ => None,
-                })
-                .cloned()
-                .collect(),
-        }
     }
 
     // TODO: Delete?
@@ -359,6 +385,11 @@ pub struct BorrowsEdge<'tcx> {
 }
 
 impl<'tcx> BorrowsEdge<'tcx> {
+
+    pub fn kind(&self) -> &BorrowsEdgeKind<'tcx> {
+        &self.kind
+    }
+
     pub fn new(kind: BorrowsEdgeKind<'tcx>, block: BasicBlock) -> Self {
         Self {
             conditions: PathConditions::new(block),
@@ -382,7 +413,7 @@ impl<'tcx> BorrowsEdge<'tcx> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-enum BorrowsEdgeKind<'tcx> {
+pub enum BorrowsEdgeKind<'tcx> {
     Reborrow(Reborrow<'tcx>),
     DerefExpansion(DerefExpansion<'tcx>),
     RegionAbstraction(RegionAbstraction<'tcx>),
