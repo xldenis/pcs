@@ -7,11 +7,11 @@
 use rustc_interface::{
     data_structures::fx::FxHashSet,
     dataflow::storage,
-    index::{bit_set::BitSet, Idx, IndexVec},
+    index::{bit_set::BitSet, Idx},
     middle::{
         mir::{
             tcx::PlaceTy, Body, HasLocalDecls, Local, Mutability, Place as MirPlace, PlaceElem,
-            ProjectionElem, Promoted,
+            ProjectionElem,
         },
         ty::{Region, RegionVid, Ty, TyCtxt, TyKind},
     },

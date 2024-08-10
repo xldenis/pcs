@@ -1,23 +1,20 @@
-use std::rc::Rc;
+
 
 use rustc_interface::{
     ast::Mutability,
-    borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
-    data_structures::fx::{FxHashMap, FxHashSet},
-    dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, PlaceElem, VarDebugInfo},
-    middle::ty::{self, RegionVid, TyCtxt},
+    data_structures::fx::{FxHashSet},
+    dataflow::{JoinSemiLattice},
+    middle::mir::{self, BasicBlock, Location},
+    middle::ty::{self, TyCtxt},
 };
 use serde_json::{json, Value};
 
 use crate::{
-    combined_pcs::PlaceCapabilitySummary,
     free_pcs::{
-        CapabilityKind, CapabilityLocal, CapabilityProjections, CapabilitySummary,
-        FreePlaceCapabilitySummary,
+        CapabilityKind, CapabilityLocal, CapabilitySummary,
     },
     rustc_interface,
-    utils::{Place, PlaceRepacker, PlaceSnapshot},
+    utils::{Place, PlaceRepacker},
     ReborrowBridge,
 };
 
@@ -25,9 +22,9 @@ use super::{
     borrows_graph::{BorrowsEdge, BorrowsGraph, ToBorrowsEdge},
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
-    domain::{Borrow, Latest, MaybeOldPlace, Reborrow, RegionProjection},
+    domain::{Latest, MaybeOldPlace, Reborrow, RegionProjection},
     path_condition::{PathCondition, PathConditions},
-    region_abstraction::{RegionAbstraction, RegionAbstractions},
+    region_abstraction::RegionAbstraction,
     unblock_graph::UnblockGraph,
 };
 
@@ -356,7 +353,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                         changed = true;
                     }
                 }
-                crate::combined_pcs::UnblockAction::TerminateAbstraction(location, call) => {
+                crate::combined_pcs::UnblockAction::TerminateAbstraction(location, _call) => {
                     self.graph.remove_abstraction_at(location);
                 }
             }
@@ -416,7 +413,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.graph.region_abstractions()
     }
 
-    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
+    pub fn to_json(&self, _repacker: PlaceRepacker<'_, 'tcx>) -> Value {
         json!({})
     }
 
@@ -440,7 +437,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn make_place_old(
         &mut self,
         place: Place<'tcx>,
-        repacker: PlaceRepacker<'_, 'tcx>,
+        _repacker: PlaceRepacker<'_, 'tcx>,
         debug_ctx: Option<DebugCtx>,
     ) {
         self.graph.make_place_old(place, &self.latest, debug_ctx);

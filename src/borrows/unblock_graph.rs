@@ -1,23 +1,15 @@
 use std::{
-    cell::Cell,
-    collections::{HashMap, HashSet},
-    rc::Rc,
+    collections::{HashSet},
 };
 
 use itertools::Itertools;
 use rustc_interface::{
     ast::Mutability,
-    borrowck::{
-        borrow_set::BorrowSet,
-        consumers::{self, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext},
-    },
-    data_structures::fx::{FxHashMap, FxHashSet},
-    dataflow::{Analysis, AnalysisDomain},
-    index::{Idx, IndexVec},
+    data_structures::fx::{FxHashSet},
+    index::{Idx},
     middle::{
         mir::{
-            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Local, Location, Promoted, Rvalue,
-            Statement, StatementKind, Terminator, TerminatorEdges, RETURN_PLACE, START_BLOCK,
+            BasicBlock,
         },
         ty::TyCtxt,
     },
@@ -26,17 +18,11 @@ use rustc_interface::{
 use crate::{
     borrows::{
         borrows_state::BorrowsState,
-        deref_expansion::DerefExpansion,
         domain::{MaybeOldPlace, Reborrow},
-        engine::{BorrowsEngine, ReborrowAction},
     },
     combined_pcs::{AbstractionEdge, ProjectionEdge, UnblockAction, UnblockEdge, UnblockEdgeType},
-    free_pcs::{
-        engine::FpcsEngine, CapabilityKind, CapabilityLocal, CapabilitySummary,
-        FreePlaceCapabilitySummary,
-    },
     rustc_interface,
-    utils::{Place, PlaceOrdering, PlaceRepacker, PlaceSnapshot},
+    utils::{Place, PlaceRepacker, PlaceSnapshot},
     visualization::generate_unblock_dot_graph,
 };
 
@@ -85,7 +71,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         for edge in edges_to_kill {
             self.remove_edge_and_trim(&edge);
         }
-        let mut blocking_places = self.blocking_places(tcx).clone();
+        let blocking_places = self.blocking_places(tcx).clone();
         for place in blocking_places {
             // TODO: This is to handle the case where reborrow assigned to
             // this place is done multiple times along the same path, there

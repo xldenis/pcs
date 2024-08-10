@@ -63,7 +63,7 @@ impl<'tcx> CapabilitySummary<'tcx> {
                     CapabilityKind::ShallowExclusive => unreachable!(),
                 }
 
-                let cp = self[place.local].get_allocated_mut();
+                let _cp = self[place.local].get_allocated_mut();
                 // assert_eq!(cp[&place], *cap); // TODO: is this too strong for shallow exclusive?
             }
         }

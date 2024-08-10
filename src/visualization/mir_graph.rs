@@ -1,35 +1,20 @@
 use crate::{
-    borrows::borrows_state::BorrowsState,
-    borrows::domain::Borrow,
-    free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker},
 };
 use serde_derive::Serialize;
 use std::{
-    collections::{HashSet, VecDeque},
     fs::File,
-    io::{self, Write},
-    rc::Rc,
+    io::{self},
 };
 
 use rustc_interface::{
-    borrowck::{
-        borrow_set::BorrowSet,
-        consumers::{
-            calculate_borrows_out_of_scope_at_location, BorrowIndex, Borrows, LocationTable,
-            PoloniusInput, PoloniusOutput, RegionInferenceContext,
-        },
-    },
-    data_structures::fx::{FxHashMap, FxIndexMap},
-    dataflow::{Analysis, ResultsCursor},
-    index::IndexVec,
     middle::{
         mir::{
-            self, BinOp, Body, Local, Location, Operand, PlaceElem, Promoted, Rvalue, Statement,
-            TerminatorKind, UnwindAction, VarDebugInfo, RETURN_PLACE,
+            self, BinOp, Body, Local, Operand, Rvalue, Statement,
+            TerminatorKind, UnwindAction,
         },
-        ty::{self, GenericArgsRef, ParamEnv, RegionVid, TyCtxt},
+        ty::{TyCtxt},
     },
 };
 
@@ -103,7 +88,7 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, repacker: PlaceRepacker<'_, 'tcx>)
     match rvalue {
         Rvalue::Use(operand) => format_operand(operand, repacker),
         Rvalue::Repeat(_, _) => todo!(),
-        Rvalue::Ref(region, kind, place) => {
+        Rvalue::Ref(_region, kind, place) => {
             let kind = match kind {
                 mir::BorrowKind::Shared => "",
                 mir::BorrowKind::Shallow => "",
@@ -151,10 +136,10 @@ fn format_terminator<'tcx>(
             func,
             args,
             destination,
-            target,
-            unwind,
-            call_source,
-            fn_span,
+            target: _,
+            unwind: _,
+            call_source: _,
+            fn_span: _,
         } => {
             format!(
                 "{} = {}({})",
@@ -183,8 +168,8 @@ fn format_stmt<'tcx>(stmt: &Statement<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) 
             format!("FakeRead({})", format_place(place, repacker))
         }
         mir::StatementKind::SetDiscriminant {
-            place,
-            variant_index,
+            place: _,
+            variant_index: _,
         } => todo!(),
         mir::StatementKind::Deinit(_) => todo!(),
         mir::StatementKind::StorageLive(local) => {
@@ -236,7 +221,7 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                     label: "goto".to_string(),
                 });
             }
-            TerminatorKind::SwitchInt { discr, targets } => {
+            TerminatorKind::SwitchInt { discr: _, targets } => {
                 for (val, target) in targets.iter() {
                     edges.push(MirEdge {
                         source: format!("{:?}", bb),
@@ -255,10 +240,10 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
             TerminatorKind::Return => {}
             TerminatorKind::Unreachable => {}
             TerminatorKind::Drop {
-                place,
+                place: _,
                 target,
-                unwind,
-                replace,
+                unwind: _,
+                replace: _,
             } => {
                 edges.push(MirEdge {
                     source: format!("{:?}", bb),
@@ -267,13 +252,13 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                 });
             }
             TerminatorKind::Call {
-                func,
-                args,
-                destination,
+                func: _,
+                args: _,
+                destination: _,
                 target,
                 unwind,
-                call_source,
-                fn_span,
+                call_source: _,
+                fn_span: _,
             } => {
                 if let Some(target) = target {
                     edges.push(MirEdge {
@@ -296,9 +281,9 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                 }
             }
             TerminatorKind::Assert {
-                cond,
-                expected,
-                msg,
+                cond: _,
+                expected: _,
+                msg: _,
                 target,
                 unwind,
             } => {
@@ -321,15 +306,15 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                 });
             }
             TerminatorKind::Yield {
-                value,
-                resume,
-                resume_arg,
-                drop,
+                value: _,
+                resume: _,
+                resume_arg: _,
+                drop: _,
             } => todo!(),
             TerminatorKind::GeneratorDrop => todo!(),
             TerminatorKind::FalseEdge {
                 real_target,
-                imaginary_target,
+                imaginary_target: _,
             } => {
                 edges.push(MirEdge {
                     source: format!("{:?}", bb),
@@ -339,7 +324,7 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
             }
             TerminatorKind::FalseUnwind {
                 real_target,
-                unwind,
+                unwind: _,
             } => {
                 edges.push(MirEdge {
                     source: format!("{:?}", bb),
@@ -348,12 +333,12 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                 });
             }
             TerminatorKind::InlineAsm {
-                template,
-                operands,
-                options,
-                line_spans,
-                destination,
-                unwind,
+                template: _,
+                operands: _,
+                options: _,
+                line_spans: _,
+                destination: _,
+                unwind: _,
             } => todo!(),
         }
     }

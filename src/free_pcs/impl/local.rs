@@ -84,7 +84,7 @@ impl<'tcx> CapabilityProjections<'tcx> {
     }
 
     pub(crate) fn update_cap(&mut self, place: Place<'tcx>, cap: CapabilityKind) {
-        let old = self.insert(place, cap);
+        let _old = self.insert(place, cap);
         // assert!(old.is_some());
     }
 
@@ -108,7 +108,7 @@ impl<'tcx> CapabilityProjections<'tcx> {
                 // } else {
                 //     Some(cap_no_read)
                 // };
-                if let Some(expected) = expected {
+                if let Some(_expected) = expected {
                     // assert_eq!(ord, expected, "({self:?}) {from:?} {to:?}");
                 } else {
                     expected = Some(ord);

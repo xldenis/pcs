@@ -58,7 +58,7 @@ impl<'tcx> Place<'tcx> {
     pub fn to_short_string(&self, repacker: PlaceRepacker<'_, 'tcx>) -> String {
         match self.to_string(repacker) {
             PlaceDisplay::Temporary(p) => format!("{:?}", p),
-            PlaceDisplay::User(p, s) => s,
+            PlaceDisplay::User(_p, s) => s,
         }
     }
 

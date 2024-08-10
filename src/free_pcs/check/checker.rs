@@ -108,7 +108,7 @@ impl<'tcx> RepackOp<'tcx> {
     pub(crate) fn update_free(
         self,
         state: &mut CapabilitySummary<'tcx>,
-        is_cleanup: bool,
+        _is_cleanup: bool,
         can_downcast: bool,
         rp: PlaceRepacker<'_, 'tcx>,
     ) {

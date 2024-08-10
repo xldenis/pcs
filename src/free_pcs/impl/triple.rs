@@ -181,7 +181,7 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
         self.super_statement(statement, location);
         use StatementKind::*;
         let t = match &statement.kind {
-            &Assign(box (place, ref rvalue)) => {
+            &Assign(box (place, ref _rvalue)) => {
                 let place: Place<'_> = place.into();
                 let place_to_expand_to = get_place_to_expand_to(place, self.repacker);
                 let cond = Condition::Capability(place_to_expand_to, CapabilityKind::Exclusive);

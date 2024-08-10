@@ -6,17 +6,17 @@
 
 use rustc_interface::{
     dataflow::ResultsCursor,
-    dataflow::{Analysis, Forward},
+    dataflow::{Analysis},
     middle::{
-        mir::{BasicBlock, Body, Local, Location},
-        ty::{RegionVid, TyCtxt},
+        mir::{BasicBlock, Body, Location},
+        ty::{TyCtxt},
     },
 };
 
 use crate::{
     combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary},
     free_pcs::{
-        engine::FpcsEngine, CapabilitySummary, FreePlaceCapabilitySummary, RepackOp,
+        CapabilitySummary, FreePlaceCapabilitySummary, RepackOp,
         RepackingBridgeSemiLattice,
     },
     rustc_interface,

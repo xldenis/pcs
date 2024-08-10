@@ -1,57 +1,48 @@
 use std::{
-    borrow::Cow,
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet},
     ops::ControlFlow,
     rc::Rc,
 };
 
-use polonius_engine::FactTypes;
+
 use rustc_interface::{
     ast::Mutability,
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
             BorrowIndex, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext,
-            RichLocation, RustcFacts,
         },
     },
-    data_structures::fx::{FxHashMap, FxHashSet},
-    dataflow::{Analysis, AnalysisDomain, Forward, JoinSemiLattice},
-    index::IndexVec,
     middle::{
         mir::{
-            self,
-            visit::{TyContext, Visitor},
-            AggregateKind, BasicBlock, Body, BorrowKind, CallReturnPlaces, ConstantKind,
-            HasLocalDecls, Local, Location, Operand, Place, ProjectionElem, Promoted, Rvalue,
-            Statement, StatementKind, Terminator, TerminatorEdges, TerminatorKind, VarDebugInfo,
-            RETURN_PLACE, START_BLOCK,
+            visit::{Visitor},
+            AggregateKind, Body, BorrowKind, ConstantKind, Location, Operand, Place, Rvalue,
+            Statement, StatementKind, Terminator, TerminatorKind,
         },
         ty::{
             self, EarlyBinder, Region, RegionKind, RegionVid, TyCtxt, TypeVisitable, TypeVisitor,
         },
     },
 };
-use serde_json::{json, Value};
+
 
 use crate::{
     borrows::{
         borrows_state::RegionProjectionMember,
-        domain::{AbstractionBlockEdge, AbstractionTarget, RegionProjection},
+        domain::{AbstractionBlockEdge, AbstractionTarget},
         region_abstraction::RegionAbstraction,
     },
     rustc_interface,
-    utils::{self, PlaceRepacker, PlaceSnapshot},
-    ReborrowBridge,
+    utils::{self, PlaceRepacker},
 };
 
 use super::{
-    borrows_state::{BorrowsState, RegionProjectionMemberDirection},
+    borrows_state::{RegionProjectionMemberDirection},
     domain::AbstractionType,
     engine::{BorrowsDomain, BorrowsEngine},
 };
 use super::{
-    domain::{Borrow, MaybeOldPlace, Reborrow},
+    domain::{Borrow, MaybeOldPlace},
     unblock_graph::UnblockGraph,
 };
 
@@ -290,7 +281,7 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         &self,
         input_lifetime: ty::Region<'tcx>,
         param_env: ty::ParamEnv<'tcx>,
-        substs: ty::GenericArgsRef<'tcx>,
+        _substs: ty::GenericArgsRef<'tcx>,
         output_ty: ty::Ty<'tcx>,
         output_place: utils::Place<'tcx>,
     ) -> Vec<AbstractionTarget<'tcx>> {
@@ -355,7 +346,7 @@ fn outlives_in_param_env<'tcx>(
 pub fn get_vid(region: &Region) -> Option<RegionVid> {
     match region.kind() {
         RegionKind::ReVar(vid) => Some(vid),
-        other => None,
+        _other => None,
     }
 }
 
@@ -467,7 +458,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
         // Will be included as start bridge ops
         if self.preparing && self.before {
             match &statement.kind {
-                StatementKind::Assign(box (target, rvalue)) => {
+                StatementKind::Assign(box (target, _rvalue)) => {
                     if target.ty(self.body, self.tcx).ty.is_ref() {
                         let target = (*target).into();
                         self.state.after.make_place_old(
@@ -509,9 +500,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     self.state.after.set_latest((*target).into(), location);
                     match rvalue {
                         Rvalue::Aggregate(box kind, fields) => match kind {
-                            AggregateKind::Adt(def_id, variant_idx, substs, _, _) => {
+                            AggregateKind::Adt(_def_id, _variant_idx, _substs, _, _) => {
                                 let target: utils::Place<'tcx> = (*target).into();
-                                for (idx, field) in fields.iter_enumerated() {
+                                for (_idx, field) in fields.iter_enumerated() {
                                     match field.ty(self.body, self.tcx).kind() {
                                         ty::TyKind::Ref(region, _, _) => {
                                             for proj in target.region_projections(self.repacker()) {

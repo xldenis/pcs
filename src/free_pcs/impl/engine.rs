@@ -6,13 +6,11 @@
 
 use rustc_interface::{
     dataflow::{Analysis, AnalysisDomain},
-    index::IndexVec,
     middle::{
         mir::{
-            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Location, Promoted,
+            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Location,
             Statement, Terminator, TerminatorEdges,
         },
-        ty::TyCtxt,
     },
 };
 

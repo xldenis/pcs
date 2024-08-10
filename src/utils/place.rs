@@ -31,7 +31,7 @@ use crate::{
 };
 
 use super::{
-    debug_info::{self, DebugInfo},
+    debug_info::{DebugInfo},
     PlaceRepacker,
 };
 #[derive(Clone, Copy, Deref, DerefMut)]
@@ -53,7 +53,7 @@ impl<'tcx> Place<'tcx> {
         Self(PlaceRef { local, projection }, DebugInfo::new_static())
     }
 
-    pub fn prefix_place(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Option<Place<'tcx>> {
+    pub fn prefix_place(&self, _repacker: PlaceRepacker<'_, 'tcx>) -> Option<Place<'tcx>> {
         let (prefix, _) = self.last_projection()?;
         Some(Place::new(prefix.local, &prefix.projection))
     }

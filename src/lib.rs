@@ -4,7 +4,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#![allow(unused)]
 #![feature(rustc_private)]
 #![feature(box_patterns, hash_extract_if, extract_if)]
 #![feature(if_let_guard, let_chains)]
@@ -17,10 +16,10 @@ pub mod rustc_interface;
 pub mod utils;
 pub mod visualization;
 
-use std::{collections::HashMap, fs::create_dir_all, rc::Rc};
+use std::fs::create_dir_all;
 
 use borrows::{
-    borrows_state::BorrowsState, deref_expansion::DerefExpansion, domain::Reborrow, engine::{BorrowsDomain, ReborrowAction}, unblock_graph::UnblockGraph
+    deref_expansion::DerefExpansion, domain::Reborrow, engine::BorrowsDomain, unblock_graph::UnblockGraph
 };
 use combined_pcs::{
     BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary,
@@ -29,9 +28,8 @@ use free_pcs::HasExtra;
 use rustc_interface::{
     data_structures::fx::FxHashSet,
     dataflow::Analysis,
-    index::IndexVec,
     middle::{
-        mir::{BasicBlock, Body, Promoted, START_BLOCK},
+        mir::BasicBlock,
         ty::TyCtxt,
     },
 };
@@ -92,10 +90,10 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
     }
 
     fn bridge_terminator(
-        lhs: &BorrowsDomain<'mir, 'tcx>,
-        rhs: BorrowsDomain<'mir, 'tcx>,
-        block: BasicBlock,
-        tcx: TyCtxt<'tcx>,
+        _lhs: &BorrowsDomain<'mir, 'tcx>,
+        _rhs: BorrowsDomain<'mir, 'tcx>,
+        _block: BasicBlock,
+        _tcx: TyCtxt<'tcx>,
     ) -> Self::ExtraBridge {
         ReborrowBridge::new()
     }
@@ -123,13 +121,13 @@ pub fn run_free_pcs<'mir, 'tcx>(
             .expect("Failed to generate JSON from MIR");
 
         let input_facts = mir.input_facts.as_ref().unwrap().clone();
-        let output_facts = mir.output_facts.as_ref().unwrap().clone();
-        let location_table = mir.location_table.as_ref().unwrap();
+        let _output_facts = mir.output_facts.as_ref().unwrap().clone();
+        let _location_table = mir.location_table.as_ref().unwrap();
 
         let rp = PcsContext::new(tcx, mir).rp;
 
         // Iterate over each statement in the MIR
-        for (block, data) in mir.body.basic_blocks.iter_enumerated() {
+        for (block, _data) in mir.body.basic_blocks.iter_enumerated() {
             let pcs_block = fpcs_analysis.get_all_for_bb(block);
             for (statement_index, statement) in pcs_block.statements.iter().enumerate() {
                 let borrows_file_path = format!(

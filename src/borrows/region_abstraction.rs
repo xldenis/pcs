@@ -1,37 +1,22 @@
-use std::rc::Rc;
+
 
 use rustc_interface::{
-    ast::Mutability,
-    borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
     data_structures::{
-        fx::{FxHashMap, FxHashSet},
-        graph::dominators::Dominators,
+        fx::{FxHashSet},
     },
-    dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, PlaceElem, VarDebugInfo},
-    middle::ty::{self, RegionVid, TyCtxt},
+    middle::mir::{Location},
 };
-use serde_json::{json, Value};
+
 
 use crate::{
-    combined_pcs::PlaceCapabilitySummary,
-    free_pcs::{
-        CapabilityKind, CapabilityLocal, CapabilityProjections, CapabilitySummary,
-        FreePlaceCapabilitySummary,
-    },
     rustc_interface,
-    utils::{Place, PlaceRepacker, PlaceSnapshot},
-    ReborrowBridge,
+    utils::{Place},
 };
 
 use super::{
-    borrows_visitor::DebugCtx,
-    deref_expansion::DerefExpansion,
     domain::{
-        AbstractionBlockEdge, AbstractionTarget, AbstractionType, Borrow, Latest, MaybeOldPlace,
-        Reborrow, RegionProjection,
+        AbstractionBlockEdge, AbstractionTarget, AbstractionType, Latest, MaybeOldPlace,
     },
-    unblock_graph::UnblockGraph,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -76,50 +61,5 @@ impl<'tcx> RegionAbstraction<'tcx> {
         match &self.abstraction_type {
             AbstractionType::FunctionCall { edges, .. } => edges.iter().map(|(_, edge)| edge),
         }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct RegionAbstractions<'tcx>(pub Vec<RegionAbstraction<'tcx>>);
-
-impl<'tcx> RegionAbstractions<'tcx> {
-    pub fn new() -> Self {
-        Self(vec![])
-    }
-
-    pub fn contains(&self, abstraction: &RegionAbstraction<'tcx>) -> bool {
-        self.0.contains(abstraction)
-    }
-
-    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
-        self.0
-            .retain(|abstraction| path.contains(&abstraction.location().block));
-    }
-
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
-        for abstraction in &mut self.0 {
-            abstraction.make_place_old(place, latest);
-        }
-    }
-
-    pub fn blocks(&self, place: &MaybeOldPlace<'tcx>) -> bool {
-        self.0.iter().any(|abstraction| abstraction.blocks(place))
-    }
-
-    pub fn insert(&mut self, abstraction: RegionAbstraction<'tcx>) -> bool {
-        if !self.0.contains(&abstraction) {
-            self.0.push(abstraction);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &RegionAbstraction<'tcx>> {
-        self.0.iter()
-    }
-    pub fn delete_region(&mut self, location: Location) {
-        self.0
-            .retain(|abstraction| abstraction.location() != location);
     }
 }

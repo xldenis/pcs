@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::rustc_interface::{
-    data_structures::graph::dominators::Dominators,
-    middle::mir::{BasicBlock, BasicBlocks},
+    middle::mir::{BasicBlock},
 };
 
 #[derive(PartialEq, Eq, Clone, Hash, PartialOrd, Ord, Debug)]

@@ -1,16 +1,11 @@
-use std::rc::Rc;
+
 
 use serde_json::json;
 
 use crate::{
     rustc_interface::{
-        ast::Mutability,
-        borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
-        data_structures::fx::{FxHashMap, FxHashSet},
-        dataflow::{AnalysisDomain, JoinSemiLattice},
         middle::{
-            mir::{self, BasicBlock, Local, Location, PlaceElem, VarDebugInfo},
-            ty::TyCtxt,
+            mir::{Location, PlaceElem},
         },
     },
     utils::{Place, PlaceRepacker, PlaceSnapshot},

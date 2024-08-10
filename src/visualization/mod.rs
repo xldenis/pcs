@@ -12,19 +12,16 @@ pub mod mir_graph;
 use crate::{
     borrows::{
         borrows_state::BorrowsState,
-        domain::{Borrow, MaybeOldPlace},
         unblock_graph::UnblockGraph,
     },
-    free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
+    free_pcs::{CapabilityKind, CapabilitySummary},
     rustc_interface,
-    utils::{place_snapshot::PlaceSnapshot, Place, PlaceRepacker},
+    utils::{Place, PlaceRepacker},
 };
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{HashSet},
     fs::File,
     io::{self, Write},
-    ops::Deref,
-    rc::Rc,
 };
 
 use dot::escape_html;
@@ -32,19 +29,15 @@ use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
-            calculate_borrows_out_of_scope_at_location, BorrowIndex, Borrows, LocationTable,
-            PoloniusInput, PoloniusOutput, RegionInferenceContext,
+            BorrowIndex,
+            PoloniusInput,
         },
     },
-    data_structures::fx::{FxHashMap, FxIndexMap},
-    dataflow::{Analysis, ResultsCursor},
-    index::IndexVec,
     middle::{
         mir::{
-            self, BasicBlock, Body, Local, Location, PlaceElem, Promoted, TerminatorKind,
-            UnwindAction, VarDebugInfo, RETURN_PLACE,
+            BasicBlock, Location,
         },
-        ty::{self, GenericArgsRef, ParamEnv, RegionVid, TyCtxt},
+        ty::{RegionVid},
     },
 };
 
@@ -268,7 +261,7 @@ impl GraphEdge {
             GraphEdge::ReborrowEdge {
                 borrowed_place,
                 assigned_place,
-                location,
+                location: _,
                 region,
                 path_conditions,
             } => DotEdge {
@@ -375,22 +368,22 @@ pub fn generate_unblock_dot_graph<'a, 'tcx: 'a>(
     let constructor = UnblockGraphConstructor::new(unblock_graph.clone(), *repacker);
     let graph = constructor.construct_graph();
     let mut buf = vec![];
-    let mut drawer = GraphDrawer::new(&mut buf);
+    let drawer = GraphDrawer::new(&mut buf);
     drawer.draw(graph)?;
     Ok(String::from_utf8(buf).unwrap())
 }
 
 pub fn generate_dot_graph<'a, 'tcx: 'a>(
-    location: Location,
+    _location: Location,
     repacker: PlaceRepacker<'a, 'tcx>,
     summary: &CapabilitySummary<'tcx>,
     borrows_domain: &BorrowsState<'a, 'tcx>,
     borrow_set: &BorrowSet<'tcx>,
-    input_facts: &PoloniusInput,
+    _input_facts: &PoloniusInput,
     file_path: &str,
 ) -> io::Result<()> {
     let constructor = PCSGraphConstructor::new(summary, repacker, borrows_domain, borrow_set);
     let graph = constructor.construct_graph();
-    let mut drawer = GraphDrawer::new(File::create(file_path).unwrap());
+    let drawer = GraphDrawer::new(File::create(file_path).unwrap());
     drawer.draw(graph)
 }

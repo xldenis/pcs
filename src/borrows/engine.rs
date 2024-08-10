@@ -1,33 +1,27 @@
-use std::{borrow::Cow, collections::HashSet, ops::ControlFlow, rc::Rc};
+use std::{rc::Rc};
 
 use rustc_interface::{
-    ast::Mutability,
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{
-            BorrowIndex, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext,
-            RichLocation,
+            LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext,
         },
     },
-    data_structures::fx::{FxHashMap, FxHashSet},
     dataflow::{Analysis, AnalysisDomain, Forward, JoinSemiLattice},
-    index::IndexVec,
     middle::{
         mir::{
-            visit::{TyContext, Visitor},
-            BasicBlock, Body, CallReturnPlaces, HasLocalDecls, Local, Location, Operand, Place,
-            ProjectionElem, Promoted, Rvalue, Statement, StatementKind, Terminator,
-            TerminatorEdges, TerminatorKind, VarDebugInfo, RETURN_PLACE, START_BLOCK,
+            visit::{Visitor},
+            BasicBlock, Body, CallReturnPlaces, Location, Statement, Terminator,
+            TerminatorEdges,
         },
-        ty::{self, Region, RegionKind, RegionVid, TyCtxt, TypeVisitor},
+        ty::{TyCtxt},
     },
 };
 use serde_json::{json, Value};
 
 use crate::{
     rustc_interface,
-    utils::{self, PlaceRepacker, PlaceSnapshot},
-    ReborrowBridge,
+    utils::{self, PlaceRepacker},
 };
 
 use super::{
@@ -35,8 +29,7 @@ use super::{
 };
 use super::{
     deref_expansion::DerefExpansion,
-    domain::{Borrow, MaybeOldPlace, Reborrow},
-    path_condition::PathConditions,
+    domain::{MaybeOldPlace, Reborrow},
 };
 
 pub struct BorrowsEngine<'mir, 'tcx> {
@@ -121,11 +114,11 @@ impl<'tcx, 'a> AnalysisDomain<'tcx> for BorrowsEngine<'a, 'tcx> {
     type Direction = Forward;
     const NAME: &'static str = "borrows";
 
-    fn bottom_value(&self, body: &Body<'tcx>) -> Self::Domain {
+    fn bottom_value(&self, _body: &Body<'tcx>) -> Self::Domain {
         todo!()
     }
 
-    fn initialize_start_block(&self, body: &Body<'tcx>, state: &mut Self::Domain) {
+    fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {
         todo!()
     }
 }
@@ -180,9 +173,9 @@ impl<'a, 'tcx> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
 
     fn apply_call_return_effect(
         &mut self,
-        state: &mut Self::Domain,
-        block: BasicBlock,
-        return_places: CallReturnPlaces<'_, 'tcx>,
+        _state: &mut Self::Domain,
+        _block: BasicBlock,
+        _return_places: CallReturnPlaces<'_, 'tcx>,
     ) {
         todo!()
     }

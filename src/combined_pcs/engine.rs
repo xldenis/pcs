@@ -6,43 +6,38 @@
 
 use std::{
     cell::Cell,
-    collections::{HashMap, HashSet},
     rc::Rc,
 };
 
 use itertools::Itertools;
 use rustc_interface::{
-    ast::Mutability,
     borrowck::{
         borrow_set::BorrowSet,
         consumers::{self, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext},
     },
-    data_structures::fx::{FxHashMap, FxHashSet},
+    data_structures::fx::{FxHashSet},
     dataflow::{Analysis, AnalysisDomain},
     index::{Idx, IndexVec},
     middle::{
         mir::{
-            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Local, Location, PlaceElem,
-            Promoted, Rvalue, Statement, StatementKind, Terminator, TerminatorEdges, RETURN_PLACE,
+            BasicBlock, Body, CallReturnPlaces, Location, PlaceElem,
+            Promoted, Statement, Terminator, TerminatorEdges,
             START_BLOCK,
         },
-        ty::{RegionVid, TyCtxt},
+        ty::{TyCtxt},
     },
 };
 
 use crate::{
     borrows::{
-        borrows_state::BorrowsState,
-        domain::{AbstractionType, MaybeOldPlace, Reborrow},
-        engine::{BorrowsEngine, ReborrowAction},
+        domain::{AbstractionType, MaybeOldPlace},
+        engine::{BorrowsEngine},
     },
     free_pcs::{
-        engine::FpcsEngine, CapabilityKind, CapabilityLocal, CapabilitySummary,
-        FreePlaceCapabilitySummary,
+        engine::FpcsEngine,
     },
     rustc_interface,
-    utils::{Place, PlaceOrdering, PlaceRepacker},
-    visualization::generate_unblock_dot_graph,
+    utils::{PlaceRepacker},
 };
 
 use super::domain::PlaceCapabilitySummary;
@@ -228,7 +223,7 @@ impl<'tcx> UnblockEdge<'tcx> {
                 blocker, blocked, ..
             } => relevant(blocker) && relevant(blocked),
             UnblockEdgeType::Projection(edge) => relevant(&edge.blocked),
-            UnblockEdgeType::Abstraction(edge) =>
+            UnblockEdgeType::Abstraction(_edge) =>
             /* TODO */
             {
                 true
@@ -240,9 +235,9 @@ impl<'tcx> UnblockEdge<'tcx> {
     pub fn blocked_by_places(&self, tcx: TyCtxt<'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
         match &self.edge_type {
             UnblockEdgeType::Reborrow {
-                is_mut,
+                is_mut: _,
                 blocker,
-                blocked,
+                blocked: _,
             } => vec![*blocker],
             UnblockEdgeType::Projection(edge) => edge.blocker_places(tcx),
             UnblockEdgeType::Abstraction(edge) => edge.blocker_places().into_iter().collect(),
@@ -253,8 +248,8 @@ impl<'tcx> UnblockEdge<'tcx> {
     pub fn blocked_places(&self) -> Vec<MaybeOldPlace<'tcx>> {
         match &self.edge_type {
             UnblockEdgeType::Reborrow {
-                is_mut,
-                blocker,
+                is_mut: _,
+                blocker: _,
                 blocked,
             } => vec![*blocked],
             UnblockEdgeType::Projection(edge) => vec![edge.blocked],

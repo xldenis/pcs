@@ -7,4 +7,4 @@
 mod checker;
 pub(crate) mod consistency;
 
-pub(crate) use checker::check;
+

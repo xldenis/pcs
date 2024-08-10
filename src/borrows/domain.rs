@@ -1,26 +1,21 @@
-use std::{collections::BTreeSet, rc::Rc};
+
 
 use rustc_interface::{
     ast::Mutability,
-    borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
     data_structures::{
         fx::{FxHashMap, FxHashSet},
         graph::dominators::Dominators,
     },
-    dataflow::{AnalysisDomain, JoinSemiLattice},
     hir::def_id::DefId,
     middle::mir::{
-        self, tcx::PlaceTy, BasicBlock, Local, Location, Operand, PlaceElem, VarDebugInfo,
+        self, tcx::PlaceTy, BasicBlock, Location, PlaceElem,
     },
     middle::ty::{self, GenericArgsRef, RegionVid, TyCtxt},
 };
 
 use crate::{
-    combined_pcs::UnblockEdge,
-    free_pcs::CapabilityProjections,
     rustc_interface,
     utils::{Place, PlaceSnapshot},
-    ReborrowBridge,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -52,7 +47,7 @@ impl<'tcx> AbstractionTarget<'tcx> {
     pub fn blocks(&self, place: &MaybeOldPlace<'tcx>) -> bool {
         match self {
             AbstractionTarget::MaybeOldPlace(p) => p == place,
-            AbstractionTarget::RegionProjection(p) => false,
+            AbstractionTarget::RegionProjection(_p) => false,
         }
     }
 
@@ -380,13 +375,10 @@ fn join_locations(loc1: Location, loc2: Location, dominators: &Dominators<BasicB
 }
 
 use crate::utils::PlaceRepacker;
-use serde_json::{json, Value};
+use serde_json::{json};
 
 use super::{
-    borrows_state::BorrowsState,
     borrows_visitor::{extract_nested_lifetimes, get_vid},
-    engine::ReborrowAction,
-    path_condition::PathConditions,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]

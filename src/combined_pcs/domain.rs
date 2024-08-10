@@ -5,30 +5,27 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use std::{
-    cell::{Cell, RefCell},
     fmt::{Debug, Formatter, Result},
     rc::Rc,
 };
 
-use derive_more::{Deref, DerefMut};
+
 use rustc_interface::{
     dataflow::fmt::DebugWithContext,
     dataflow::JoinSemiLattice,
-    index::IndexVec,
-    middle::mir::{BasicBlock, Location, START_BLOCK},
+    middle::mir::{BasicBlock},
 };
 
 use crate::{
     borrows::{borrows_visitor::DebugCtx, engine::BorrowsDomain, unblock_graph::UnblockGraph},
     free_pcs::{
-        CapabilityLocal, CapabilityProjections, FreePlaceCapabilitySummary, HasFpcs, RepackOp,
+        CapabilityLocal, FreePlaceCapabilitySummary,
     },
     rustc_interface,
-    utils::{Place, PlaceRepacker},
 };
 
 use super::{PcsContext, PcsEngine};
-use crate::borrows::borrows_state::BorrowsState;
+
 
 #[derive(Clone)]
 pub struct PlaceCapabilitySummary<'a, 'tcx> {

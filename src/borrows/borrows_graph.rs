@@ -1,24 +1,16 @@
-use std::rc::Rc;
+
 
 use rustc_interface::{
     ast::Mutability,
-    borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
-    data_structures::fx::{FxHashMap, FxHashSet},
-    dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, PlaceElem, VarDebugInfo},
-    middle::ty::{self, Region, RegionVid, TyCtxt},
+    data_structures::fx::FxHashSet,
+    middle::mir::{self, BasicBlock, Location},
+    middle::ty::{Region, TyCtxt},
 };
-use serde_json::{json, Value};
+
 
 use crate::{
-    combined_pcs::PlaceCapabilitySummary,
-    free_pcs::{
-        CapabilityKind, CapabilityLocal, CapabilityProjections, CapabilitySummary,
-        FreePlaceCapabilitySummary,
-    },
     rustc_interface,
-    utils::{Place, PlaceRepacker, PlaceSnapshot},
-    ReborrowBridge,
+    utils::{Place, PlaceRepacker},
 };
 
 use super::{
@@ -27,10 +19,9 @@ use super::{
     },
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
-    domain::{Borrow, Latest, MaybeOldPlace, Reborrow, RegionProjection},
+    domain::{Latest, MaybeOldPlace, Reborrow},
     path_condition::{PathCondition, PathConditions},
-    region_abstraction::{RegionAbstraction, RegionAbstractions},
-    unblock_graph::UnblockGraph,
+    region_abstraction::RegionAbstraction,
 };
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BorrowsGraph<'tcx>(FxHashSet<BorrowsEdge<'tcx>>);
@@ -146,7 +137,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
         &mut self,
         place: Place<'tcx>,
         latest: &Latest<'tcx>,
-        debug_ctx: Option<DebugCtx>,
+        _debug_ctx: Option<DebugCtx>,
     ) {
         self.mut_edges(|edge| {
             edge.make_place_old(place, latest);
@@ -241,7 +232,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
     pub fn delete_descendants_of(
         &mut self,
         place: MaybeOldPlace<'tcx>,
-        repacker: PlaceRepacker<'_, 'tcx>,
+        _repacker: PlaceRepacker<'_, 'tcx>,
         debug_ctx: DebugCtx,
     ) -> bool {
         let mut changed = false;

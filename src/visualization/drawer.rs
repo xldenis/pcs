@@ -1,13 +1,11 @@
 use std::{
-    fs::File,
     io::{self, Write},
 };
 
-use crate::{free_pcs::CapabilityKind, visualization::dot_graph::DotGraph};
+use crate::{visualization::dot_graph::DotGraph};
 
 use super::{
-    dot_graph::{DotLabel, DotNode},
-    Graph, GraphDrawer, GraphEdge, GraphNode, NodeId, NodeType,
+    Graph, GraphDrawer,
 };
 
 impl<T: io::Write> GraphDrawer<T> {

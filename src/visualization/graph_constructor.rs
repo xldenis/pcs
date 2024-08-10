@@ -2,8 +2,8 @@ use crate::{
     borrows::{
         borrows_graph::BorrowsEdgeKind,
         borrows_state::BorrowsState,
-        borrows_visitor::{extract_lifetimes, extract_nested_lifetimes, get_vid},
-        domain::{AbstractionTarget, AbstractionType, Borrow, MaybeOldPlace, RegionProjection},
+        borrows_visitor::{extract_nested_lifetimes, get_vid},
+        domain::{AbstractionTarget, MaybeOldPlace, RegionProjection},
         region_abstraction::RegionAbstraction,
         unblock_graph::UnblockGraph,
     },
@@ -13,37 +13,26 @@ use crate::{
     utils::{Place, PlaceRepacker, PlaceSnapshot},
     visualization::dot_graph::RankAnnotation,
 };
-use serde_derive::Serialize;
+
 use std::{
-    collections::{BTreeSet, HashMap, HashSet, VecDeque},
-    fs::File,
-    io::{self, Write},
+    collections::{BTreeSet, HashMap, HashSet},
     ops::Deref,
-    rc::Rc,
 };
 
 use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
-        consumers::{
-            calculate_borrows_out_of_scope_at_location, BorrowIndex, Borrows, LocationTable,
-            PoloniusInput, PoloniusOutput, RegionInferenceContext,
-        },
     },
-    data_structures::fx::{FxHashMap, FxIndexMap},
-    dataflow::{Analysis, ResultsCursor},
-    index::IndexVec,
     middle::{
         mir::{
-            self, BinOp, Body, Local, Location, Operand, PlaceElem, Promoted, Rvalue, Statement,
-            TerminatorKind, UnwindAction, VarDebugInfo, RETURN_PLACE,
+            Location,
         },
-        ty::{self, GenericArgsRef, ParamEnv, RegionVid, TyCtxt},
+        ty::{self, TyCtxt},
     },
 };
 
 use super::{
-    dot_graph::DotSubgraph, Graph, GraphEdge, GraphNode, NodeId, NodeType, ReferenceEdgeType,
+    dot_graph::DotSubgraph, Graph, GraphEdge, GraphNode, NodeId, NodeType,
 };
 
 #[derive(Eq, PartialEq, Hash)]
@@ -278,7 +267,7 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
         for edge in self.unblock_graph.edges() {
             match &edge.edge_type {
                 UnblockEdgeType::Reborrow {
-                    is_mut,
+                    is_mut: _,
                     blocker,
                     blocked,
                 } => {
@@ -432,7 +421,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
     }
 
     pub fn construct_graph(mut self) -> Graph {
-        for (local, capability) in self.summary.iter().enumerate() {
+        for (_local, capability) in self.summary.iter().enumerate() {
             match capability {
                 CapabilityLocal::Unallocated => {}
                 CapabilityLocal::Allocated(projections) => {
@@ -470,13 +459,13 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                     });
                 }
                 BorrowsEdgeKind::RegionAbstraction(abstraction) => {
-                    let r = self.constructor.insert_region_abstraction(abstraction);
+                    let _r = self.constructor.insert_region_abstraction(abstraction);
                 }
                 _ => {}
             }
         }
 
-        let mut before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
+        let before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
         for (place, location) in before_places.iter() {
             for (place2, location2) in before_places.iter() {
                 if location == location2 && place2.is_deref_of(*place) {

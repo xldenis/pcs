@@ -1,22 +1,18 @@
 #![feature(rustc_private)]
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
-use std::{cell::RefCell, rc::Rc};
 
-use itertools::Itertools;
-use pcs::visualization::dot_graph::{
-    DotEdge, DotGraph, DotLabel, DotNode, DotSubgraph, EdgeOptions,
-};
+use std::{cell::RefCell};
+
+
+
 use pcs::{combined_pcs::BodyWithBorrowckFacts, run_free_pcs, rustc_interface};
 use regex::Regex;
 use rustc_interface::{
     borrowck::consumers,
     data_structures::fx::FxHashMap,
-    data_structures::steal::Steal,
     driver::{self, Compilation},
-    hir::{self, def::DefKind, def_id::LocalDefId},
-    index::IndexVec,
+    hir::{self, def_id::LocalDefId},
     interface::{interface::Compiler, Config, Queries},
     middle::{
         mir::{BasicBlock, Location},
@@ -104,7 +100,7 @@ impl driver::Callbacks for PcsCallbacks {
     }
     fn after_analysis<'tcx>(
         &mut self,
-        compiler: &Compiler,
+        _compiler: &Compiler,
         queries: &'tcx Queries<'tcx>,
     ) -> Compilation {
         queries.global_ctxt().unwrap().enter(run_pcs_on_all_fns);

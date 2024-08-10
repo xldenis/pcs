@@ -9,27 +9,16 @@
 
 use rustc_interface::{
     abi::{HasDataLayout, Size, TagEncoding, TargetDataLayout, VariantIdx, Variants},
-    borrowck::{
-        borrow_set::BorrowData,
-        consumers::{BorrowIndex, OutlivesConstraint, RichLocation},
-    },
-    data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap, FxIndexSet},
-    dataflow::fmt::DebugWithContext,
-    index::{bit_set::BitSet, IndexVec},
     middle::{
         mir::{
             interpret::{
-                alloc_range, AllocId, AllocRange, Allocation, ConstAllocation, ConstValue,
+                alloc_range, AllocRange, ConstAllocation, ConstValue,
                 GlobalAlloc, Scalar,
-            },
-            visit::Visitor,
-            BasicBlock, Constant, ConstantKind, ConstraintCategory, Local, Location, Operand,
-            Place as MirPlace, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
-            RETURN_PLACE,
+            }, Constant,
         },
         ty::{
             layout::{HasParamEnv, HasTyCtxt, LayoutError, TyAndLayout},
-            FieldDef, FloatTy, GenericArgKind, Instance, ParamEnv, ParamEnvAnd, RegionVid,
+            FieldDef, FloatTy, Instance, ParamEnv, ParamEnvAnd,
             ScalarInt, Ty, TyCtxt, TyKind,
         },
     },
@@ -227,7 +216,7 @@ fn eval_range<'tcx>(
                 kind: EcKind::ZeroSized,
             }
         }
-        TyKind::Adt(adt, sub) if adt.variants().is_empty() => {
+        TyKind::Adt(adt, _sub) if adt.variants().is_empty() => {
             todo!()
         }
         TyKind::Adt(adt, sub) => {
@@ -242,10 +231,10 @@ fn eval_range<'tcx>(
             let index = match adt_layout.variants {
                 Variants::Single { index } => index,
                 Variants::Multiple {
-                    tag,
+                    tag: _,
                     ref tag_encoding,
                     tag_field,
-                    ref variants,
+                    variants: _,
                 } => {
                     let discr_type = ty.discriminant_ty(rp.tcx());
                     // TODO: compare with `tag.primitive().to_int_ty(rp.tcx())`

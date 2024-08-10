@@ -1,13 +1,5 @@
 use crate::rustc_interface::{
-    ast::Mutability,
-    borrowck::{borrow_set::BorrowSet, consumers::BorrowIndex},
-    data_structures::{
-        fx::{FxHashMap, FxHashSet},
-        graph::dominators::Dominators,
-    },
-    dataflow::{AnalysisDomain, JoinSemiLattice},
-    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, VarDebugInfo},
-    middle::ty::TyCtxt,
+    middle::mir::{Location},
 };
 
 use super::{Place, PlaceRepacker};
