@@ -115,12 +115,9 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         }
     }
     fn ensure_expansion_to_exactly(&mut self, place: utils::Place<'tcx>, location: Location) {
-        self.state.after.ensure_expansion_to_exactly(
-            self.tcx,
-            self.body,
-            place,
-            location,
-        )
+        self.state
+            .after
+            .ensure_expansion_to_exactly(self.tcx, self.body, place, location)
     }
 
     fn subsets_at(
@@ -271,7 +268,7 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
                 location,
                 substs,
                 edges,
-            }));
+            }), location.block);
     }
 
     fn matches_for_input_lifetime(
@@ -418,7 +415,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
             let live_origins = self.origins_live_at(location, self.before);
 
-            for abstraction in self.state.after.region_abstractions.iter() {
+            for abstraction in self.state.after.region_abstractions().iter() {
                 if abstraction
                     .outputs()
                     .iter()
@@ -534,7 +531,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                             let target: utils::Place<'tcx> = (*target).into();
                             if matches!(from.ty(self.repacker()).ty.kind(), ty::TyKind::Ref(_, _, r) if r.is_mut())
                             {
-                                self.state.after.reborrows.move_reborrows(
+                                self.state.after.move_reborrows(
                                     MaybeOldPlace::new(
                                         from.project_deref(self.repacker()),
                                         Some(self.state.after.get_latest(&from)),
@@ -542,7 +539,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     target.project_deref(self.repacker()).into(),
                                 );
                             }
-                            self.state.after.region_projection_members.move_projections(
+                            self.state.after.move_region_projection_member_projections(
                                 MaybeOldPlace::Current { place: from },
                                 MaybeOldPlace::Current { place: target },
                                 repacker,
@@ -551,7 +548,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                             for d in self
                                 .state
                                 .after
-                                .deref_expansions
+                                .deref_expansions()
                                 .descendants_of_place(from.into())
                             {
                                 ug.kill_place(

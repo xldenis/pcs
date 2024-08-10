@@ -8,3 +8,4 @@ pub mod unblock_graph;
 pub mod deref_expansion;
 pub mod region_abstraction;
 pub mod path_condition;
+pub mod borrows_graph;

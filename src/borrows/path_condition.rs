@@ -51,12 +51,36 @@ impl std::fmt::Display for PCGraph {
 }
 
 impl PCGraph {
+    pub fn root(&self) -> BasicBlock {
+        self.0.iter().find(|pc| !self.has_path_to_block(pc.from)).unwrap().from
+    }
+
     pub fn singleton(pc: PathCondition) -> Self {
         Self(BTreeSet::from([pc]))
     }
 
     pub fn has_path_to_block(&self, block: BasicBlock) -> bool {
         self.0.iter().any(|pc| pc.to == block)
+    }
+
+    pub fn has_suffix_of(&self, path: &[BasicBlock]) -> bool {
+        let root_idx = path.iter().position(|b| self.root() == *b);
+        match root_idx {
+            Some(root_idx) => {
+                let path = &path[root_idx..];
+                let mut i = 0;
+                while i < path.len() - 1 {
+                    let f = path[i];
+                    let t = path[i + 1];
+                    if !self.0.contains(&PathCondition::new(f, t)) {
+                        return false
+                    }
+                    i += 1
+                }
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn insert(&mut self, pc: PathCondition) -> bool {
@@ -100,6 +124,13 @@ impl PathConditions {
                 }
             }
             PathConditions::Paths(p) => p.insert(pc),
+        }
+    }
+
+    pub fn valid_for_path(&self, path: &[BasicBlock]) -> bool {
+        match self {
+            PathConditions::AtBlock(b) => path.last() == Some(b),
+            PathConditions::Paths(p) => p.has_suffix_of(path),
         }
     }
 }

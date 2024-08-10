@@ -69,7 +69,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
         let fpcs = self.fpcs.join(&other.fpcs);
         let borrows = self.borrows.join(&other.borrows);
         let mut g = UnblockGraph::new();
-        for root in self.borrows.after.reborrow_roots(self.cgx.rp) {
+        for root in self.borrows.after.roots(self.cgx.rp) {
             match &self.fpcs.after[root.local] {
                 CapabilityLocal::Unallocated => {
                     g.unblock_place(

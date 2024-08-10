@@ -22,6 +22,7 @@ use crate::{
 };
 
 use super::{
+    borrows_graph::{BorrowsEdge, BorrowsGraph, ToBorrowsEdge},
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
     deref_expansions::{self, DerefExpansions},
@@ -35,26 +36,10 @@ use super::{
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
     fn join(&mut self, other: &Self) -> bool {
         let mut changed = false;
-        for region_abstraction in other.region_abstractions.iter() {
-            if self.region_abstractions.insert(region_abstraction.clone()) {
-                changed = true;
-            }
-        }
-        for reborrow in other.reborrows.iter() {
-            if self.reborrows.insert(reborrow.clone()) {
-                changed = true;
-            }
-        }
-        if self.deref_expansions.join(&other.deref_expansions) {
+        if self.graph.join(&other.graph) {
             changed = true;
         }
         if self.latest.join(&other.latest, self.body) {
-            changed = true;
-        }
-        if self
-            .region_projection_members
-            .join(&other.region_projection_members)
-        {
             changed = true;
         }
         changed
@@ -76,9 +61,14 @@ pub struct RegionProjectionMember<'tcx> {
 }
 
 impl<'tcx> RegionProjectionMember<'tcx> {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+        self.place.make_place_old(place, latest);
+    }
+
     pub fn projection_index(&self, repacker: PlaceRepacker<'_, 'tcx>) -> usize {
         self.projection.index(repacker)
     }
+
     pub fn new(
         place: MaybeOldPlace<'tcx>,
         projection: RegionProjection<'tcx>,
@@ -95,7 +85,7 @@ impl<'tcx> RegionProjectionMember<'tcx> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RegionProjectionMembers<'tcx>(FxHashSet<RegionProjectionMember<'tcx>>);
+pub struct RegionProjectionMembers<'tcx>(pub FxHashSet<RegionProjectionMember<'tcx>>);
 
 impl<'tcx> RegionProjectionMembers<'tcx> {
     pub fn join(&mut self, other: &Self) -> bool {
@@ -115,48 +105,42 @@ impl<'tcx> RegionProjectionMembers<'tcx> {
         self.0.iter()
     }
 
-    pub fn move_projections(
-        &mut self,
-        old_projection_place: MaybeOldPlace<'tcx>,
-        new_projection_place: MaybeOldPlace<'tcx>,
-        repacker: PlaceRepacker<'_, 'tcx>,
-    ) {
-        eprintln!(
-            "Moving projections from {:?} to {:?}",
-            old_projection_place, new_projection_place
-        );
-        let new_data = self
-            .0
-            .clone()
-            .into_iter()
-            .map(|mut member| {
-                if member.projection.place == old_projection_place {
-                    let idx = member.projection_index(repacker);
-                    member.projection = new_projection_place.region_projection(idx, repacker);
-                }
-                member
-            })
-            .collect();
-        self.0 = new_data;
-    }
+    // pub fn move_projections(
+    //     &mut self,
+    //     old_projection_place: MaybeOldPlace<'tcx>,
+    //     new_projection_place: MaybeOldPlace<'tcx>,
+    //     repacker: PlaceRepacker<'_, 'tcx>,
+    // ) {
+    //     eprintln!(
+    //         "Moving projections from {:?} to {:?}",
+    //         old_projection_place, new_projection_place
+    //     );
+    //     let new_data = self
+    //         .0
+    //         .clone()
+    //         .into_iter()
+    //         .map(|mut member| {
+    //             if member.projection.place == old_projection_place {
+    //                 let idx = member.projection_index(repacker);
+    //                 member.projection = new_projection_place.region_projection(idx, repacker);
+    //             }
+    //             member
+    //         })
+    //         .collect();
+    //     self.0 = new_data;
+    // }
 }
 
 #[derive(Clone, Debug)]
 pub struct BorrowsState<'mir, 'tcx> {
     body: &'mir mir::Body<'tcx>,
     latest: Latest<'tcx>,
-    pub reborrows: ReborrowingDag<'tcx>,
-    pub region_abstractions: RegionAbstractions<'tcx>,
-    pub deref_expansions: DerefExpansions<'tcx>,
-    pub region_projection_members: RegionProjectionMembers<'tcx>,
+    graph: BorrowsGraph<'tcx>,
 }
 
 impl<'mir, 'tcx> PartialEq for BorrowsState<'mir, 'tcx> {
     fn eq(&self, other: &Self) -> bool {
-        self.reborrows == other.reborrows
-            && self.deref_expansions == other.deref_expansions
-            && self.latest == other.latest
-            && self.region_projection_members == other.region_projection_members
+        self.graph == other.graph && self.latest == other.latest
     }
 }
 
@@ -191,13 +175,50 @@ fn subtract_deref_expansions<'tcx>(
 
 impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn add_path_condition(&mut self, pc: PathCondition) -> bool {
-        self.reborrows.add_path_condition(pc)
+        self.graph.add_path_condition(pc)
     }
+
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
-        self.reborrows.filter_for_path(path);
-        self.deref_expansions.filter_for_path(path);
-        self.region_abstractions.filter_for_path(path);
+        self.graph.filter_for_path(path);
     }
+
+    pub fn move_region_projection_member_projections(
+        &mut self,
+        old_projection_place: MaybeOldPlace<'tcx>,
+        new_projection_place: MaybeOldPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) {
+        self.graph.move_region_projection_member_projections(
+            old_projection_place,
+            new_projection_place,
+            repacker,
+        );
+    }
+
+    pub fn move_reborrows(
+        &mut self,
+        orig_assigned_place: MaybeOldPlace<'tcx>,
+        new_assigned_place: MaybeOldPlace<'tcx>,
+    ) {
+        self.graph
+            .move_reborrows(orig_assigned_place, new_assigned_place);
+    }
+
+    // TODO: Remove
+    pub fn deref_expansions(&self) -> DerefExpansions<'tcx> {
+        self.graph.deref_expansions()
+    }
+
+    // TODO: Remove
+    pub fn region_abstractions(&self) -> RegionAbstractions<'tcx> {
+        self.graph.region_abstractions()
+    }
+
+    // TODO: Remove
+    pub fn region_projection_members(&self) -> RegionProjectionMembers<'tcx> {
+        self.graph.region_projection_members()
+    }
+
     pub fn bridge(&self, to: &Self, block: BasicBlock, tcx: TyCtxt<'tcx>) -> ReborrowBridge<'tcx> {
         let repacker = PlaceRepacker::new(self.body, tcx);
         let added_reborrows: FxHashSet<Reborrow<'tcx>> = to
@@ -206,7 +227,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             .filter(|rb| !self.has_reborrow_at_location(rb.location))
             .cloned()
             .collect();
-        let expands = subtract_deref_expansions(&to.deref_expansions, &self.deref_expansions);
+        let expands = subtract_deref_expansions(&to.deref_expansions(), &self.deref_expansions());
 
         let mut ug = UnblockGraph::new();
 
@@ -216,12 +237,12 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             }
         }
 
-        for exp in subtract_deref_expansions(&self.deref_expansions, &to.deref_expansions) {
+        for exp in subtract_deref_expansions(&self.deref_expansions(), &to.deref_expansions()) {
             ug.unblock_place(exp.base(), self, block, repacker);
         }
 
-        for abstraction in self.region_abstractions.iter() {
-            if !to.region_abstractions.contains(&abstraction) {
+        for abstraction in self.region_abstractions().iter() {
+            if !to.region_abstractions().contains(&abstraction) {
                 ug.kill_abstraction(
                     self,
                     &abstraction.abstraction_type,
@@ -251,7 +272,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                         match kind {
                             CapabilityKind::Exclusive => {
                                 if place.is_ref(body, tcx) {
-                                    self.deref_expansions.ensure_deref_expansion_to_at_least(
+                                    self.graph.ensure_deref_expansion_to_at_least(
                                         place.project_deref(PlaceRepacker::new(body, tcx)),
                                         body,
                                         tcx,
@@ -260,7 +281,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                                 } else {
                                     let mut ug = UnblockGraph::new();
                                     for deref_expansion in self
-                                        .deref_expansions
+                                        .deref_expansions()
                                         .descendants_of(MaybeOldPlace::Current { place: *place })
                                     {
                                         ug.kill_place(
@@ -285,10 +306,11 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn get_abstractions_blocking(
         &self,
         place: &MaybeOldPlace<'tcx>,
-    ) -> Vec<&RegionAbstraction<'tcx>> {
-        self.region_abstractions
+    ) -> Vec<RegionAbstraction<'tcx>> {
+        self.region_abstractions()
             .iter()
             .filter(|abstraction| abstraction.blocks(place))
+            .cloned()
             .collect()
     }
 
@@ -309,45 +331,21 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.apply_unblock_graph(ug, tcx);
 
         // Originally we may not have been expanded enough
-        self.deref_expansions
+        self.graph
             .ensure_expansion_to_exactly(place.into(), body, tcx, location);
     }
 
-    pub fn roots_of(
-        &self,
-        place: &MaybeOldPlace<'tcx>,
-        repacker: PlaceRepacker<'_, 'tcx>,
-    ) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        let mut result = FxHashSet::default();
-        for place in self.reborrows.get_places_blocking(place) {
-            result.extend(self.roots_of(&place, repacker));
-        }
-        for place in self.deref_expansions.get_parents(place, repacker) {
-            result.extend(self.roots_of(&place, repacker));
-        }
-        if result.is_empty() {
-            result.insert(place.clone());
-        }
-        result
-    }
-
-    pub fn is_leaf(&self, place: &MaybeOldPlace<'tcx>) -> bool {
-        !self.region_abstractions.blocks(place)
-            && self.reborrows.get_places_blocking(place).is_empty()
-            && !self.deref_expansions.contains_expansion_from(place)
-    }
-
     /// Returns places in the PCS that are reborrowed
-    pub fn reborrow_roots(&self, repacker: PlaceRepacker<'_, 'tcx>) -> FxHashSet<Place<'tcx>> {
-        self.reborrows
-            .roots()
-            .into_iter()
-            .flat_map(|place| self.roots_of(&place, repacker))
-            .flat_map(|place| match place {
-                MaybeOldPlace::Current { place } => Some(place),
-                MaybeOldPlace::OldPlace(_) => None,
-            })
-            .collect()
+    pub fn roots(&self, repacker: PlaceRepacker<'_, 'tcx>) -> FxHashSet<Place<'tcx>> {
+        self.graph.roots(repacker)
+    }
+
+    pub fn kill_reborrows(
+        &mut self,
+        blocked_place: MaybeOldPlace<'tcx>,
+        assigned_place: MaybeOldPlace<'tcx>,
+    ) -> bool {
+        self.graph.kill_reborrows(blocked_place, assigned_place)
     }
 
     pub fn apply_unblock_graph(&mut self, graph: UnblockGraph<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
@@ -359,12 +357,12 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     assigned_place,
                     ..
                 } => {
-                    if self.reborrows.kill_reborrows(blocked_place, assigned_place) {
+                    if self.kill_reborrows(blocked_place, assigned_place) {
                         changed = true;
                     }
                 }
                 crate::combined_pcs::UnblockAction::Collapse(place, _) => {
-                    if self.deref_expansions.delete_descendants_of(
+                    if self.graph.delete_descendants_of(
                         place,
                         PlaceRepacker::new(self.body, tcx),
                         None,
@@ -373,15 +371,15 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
                     }
                 }
                 crate::combined_pcs::UnblockAction::TerminateAbstraction(location, call) => {
-                    self.region_abstractions.delete_region(location);
+                    self.graph.remove_abstraction_at(location);
                 }
             }
         }
         changed
     }
 
-    pub fn reborrows(&self) -> &ReborrowingDag<'tcx> {
-        &self.reborrows
+    pub fn reborrows(&self) -> ReborrowingDag<'tcx> {
+        self.graph.reborrows()
     }
 
     pub fn set_latest(&mut self, place: Place<'tcx>, location: Location) {
@@ -392,22 +390,28 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.latest.get(place)
     }
 
-    pub fn reborrows_blocking(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<&Reborrow<'tcx>> {
-        self.reborrows
+    pub fn reborrows_blocking(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
+        self.reborrows()
             .iter()
             .filter(|rb| rb.blocked_place == place)
+            .cloned()
             .collect()
     }
 
-    pub fn reborrows_assigned_to(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<&Reborrow<'tcx>> {
-        self.reborrows
+    pub fn reborrows_assigned_to(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
+        self.reborrows()
             .iter()
             .filter(|rb| rb.assigned_place == place)
+            .cloned()
             .collect()
     }
 
     pub fn add_region_projection_member(&mut self, member: RegionProjectionMember<'tcx>) {
-        self.region_projection_members.insert(member);
+        self.graph.insert(
+            member
+                .clone()
+                .to_borrows_edge(PathConditions::new(member.location.block)),
+        );
     }
 
     pub fn add_reborrow(
@@ -418,12 +422,12 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         location: Location,
         region: ty::Region<'tcx>,
     ) {
-        self.reborrows
+        self.graph
             .add_reborrow(blocked_place, assigned_place, mutability, location, region);
     }
 
     pub fn has_reborrow_at_location(&self, location: Location) -> bool {
-        self.reborrows.has_reborrow_at_location(location)
+        self.reborrows().has_reborrow_at_location(location)
     }
 
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Value {
@@ -433,16 +437,18 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn new(body: &'mir mir::Body<'tcx>) -> Self {
         Self {
             body,
-            region_projection_members: RegionProjectionMembers::new(),
-            deref_expansions: DerefExpansions::new(),
             latest: Latest::new(),
-            reborrows: ReborrowingDag::new(),
-            region_abstractions: RegionAbstractions::new(),
+            graph: BorrowsGraph::new(),
         }
     }
 
-    pub fn add_region_abstraction(&mut self, abstraction: RegionAbstraction<'tcx>) {
-        self.region_abstractions.insert(abstraction);
+    pub fn add_region_abstraction(
+        &mut self,
+        abstraction: RegionAbstraction<'tcx>,
+        block: BasicBlock,
+    ) {
+        self.graph
+            .insert(abstraction.to_borrows_edge(PathConditions::new(block)));
     }
 
     pub fn make_place_old(
@@ -451,9 +457,6 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
         debug_ctx: Option<DebugCtx>,
     ) {
-        self.reborrows
-            .make_place_old(place, &self.latest, debug_ctx);
-        self.deref_expansions.make_place_old(place, &self.latest);
-        self.region_abstractions.make_place_old(place, &self.latest);
+        self.graph.make_place_old(place, &self.latest, debug_ctx);
     }
 }

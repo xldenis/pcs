@@ -30,12 +30,16 @@ use super::{
     }, reborrowing_dag::ReborrowingDag, unblock_graph::UnblockGraph
 };
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct RegionAbstraction<'tcx> {
     pub abstraction_type: AbstractionType<'tcx>,
 }
 
 impl<'tcx> RegionAbstraction<'tcx> {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+        self.abstraction_type.make_place_old(place, latest);
+    }
+
     pub fn new(abstraction_type: AbstractionType<'tcx>) -> Self {
         Self { abstraction_type }
     }
@@ -64,10 +68,6 @@ impl<'tcx> RegionAbstraction<'tcx> {
         self.abstraction_type.blocker_places()
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
-        self.abstraction_type.make_place_old(place, latest);
-    }
-
     pub fn edges(&self) -> impl Iterator<Item = &AbstractionBlockEdge<'tcx>> {
         match &self.abstraction_type {
             AbstractionType::FunctionCall { edges, .. } => edges.iter().map(|(_, edge)| edge),
@@ -76,7 +76,7 @@ impl<'tcx> RegionAbstraction<'tcx> {
 }
 
 #[derive(Clone, Debug)]
-pub struct RegionAbstractions<'tcx>(Vec<RegionAbstraction<'tcx>>);
+pub struct RegionAbstractions<'tcx>(pub Vec<RegionAbstraction<'tcx>>);
 
 impl<'tcx> RegionAbstractions<'tcx> {
     pub fn new() -> Self {

@@ -18,25 +18,10 @@ use super::{
 };
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct ReborrowingDag<'tcx> {
-    reborrows: FxHashSet<Reborrow<'tcx>>,
+    pub reborrows: FxHashSet<Reborrow<'tcx>>,
 }
 
 impl<'tcx> ReborrowingDag<'tcx> {
-    pub fn add_path_condition(&mut self, pc: PathCondition) -> bool {
-        let mut changed = false;
-        self.reborrows = self
-            .reborrows
-            .clone()
-            .into_iter()
-            .map(|mut rb| {
-                if rb.path_conditions.insert(pc.clone()) {
-                    changed = true;
-                }
-                rb
-            })
-            .collect();
-        changed
-    }
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
         self.reborrows.retain(|r| path.contains(&r.location.block));
     }
@@ -179,7 +164,6 @@ impl<'tcx> ReborrowingDag<'tcx> {
                 place: assigned_place,
             },
             location,
-            path_conditions: PathConditions::new(location.block),
         })
     }
     pub fn kill_reborrows_blocking(&mut self, blocked_place: MaybeOldPlace<'tcx>) -> bool {
@@ -224,18 +208,18 @@ impl<'tcx> ReborrowingDag<'tcx> {
         changed
     }
 
-    pub fn move_reborrows(
-        &mut self,
-        orig_assigned_place: MaybeOldPlace<'tcx>,
-        new_assigned_place: MaybeOldPlace<'tcx>,
-    ) {
-        let mut new = FxHashSet::default();
-        for mut reborrow in self.reborrows.clone() {
-            if reborrow.assigned_place == orig_assigned_place {
-                reborrow.assigned_place = new_assigned_place;
-            }
-            new.insert(reborrow);
-        }
-        self.reborrows = new;
-    }
+    // pub fn move_reborrows(
+    //     &mut self,
+    //     orig_assigned_place: MaybeOldPlace<'tcx>,
+    //     new_assigned_place: MaybeOldPlace<'tcx>,
+    // ) {
+    //     let mut new = FxHashSet::default();
+    //     for mut reborrow in self.reborrows.clone() {
+    //         if reborrow.assigned_place == orig_assigned_place {
+    //             reborrow.assigned_place = new_assigned_place;
+    //         }
+    //         new.insert(reborrow);
+    //     }
+    //     self.reborrows = new;
+    // }
 }

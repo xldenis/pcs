@@ -248,7 +248,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for reborrow in borrows.reborrows_assigned_to(place) {
-            self.kill_reborrow(reborrow, borrows, block, repacker)
+            self.kill_reborrow(&reborrow, borrows, block, repacker)
         }
     }
 
@@ -292,11 +292,11 @@ impl<'tcx> UnblockGraph<'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for reborrow in borrows.reborrows_blocking(place) {
-            self.kill_reborrow(reborrow, borrows, block, repacker)
+            self.kill_reborrow(&reborrow, borrows, block, repacker)
         }
 
         if let Some(expansion) = borrows
-            .deref_expansions
+            .deref_expansions()
             .iter()
             .find(|de| de.base() == place)
         {
@@ -350,7 +350,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for reborrow in borrows
-            .reborrows
+            .reborrows()
             .reborrows_blocked_by(MaybeOldPlace::OldPlace(place))
         {
             self.kill_reborrow(&reborrow, borrows, block, repacker);

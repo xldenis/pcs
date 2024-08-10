@@ -204,6 +204,13 @@ impl<'tcx> MaybeOldPlace<'tcx> {
         }
     }
 
+    pub fn as_current(&self) -> Option<Place<'tcx>> {
+        match self {
+            MaybeOldPlace::Current { place } => Some(*place),
+            MaybeOldPlace::OldPlace(_) => None,
+        }
+    }
+
     pub fn old_place(&self) -> Option<PlaceSnapshot<'tcx>> {
         match self {
             MaybeOldPlace::Current { .. } => None,
@@ -391,11 +398,14 @@ pub struct Reborrow<'tcx> {
     pub location: Location,
 
     pub region: ty::Region<'tcx>,
-
-    pub path_conditions: PathConditions,
 }
 
 impl<'tcx> Reborrow<'tcx> {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+        self.blocked_place.make_place_old(place, latest);
+        self.assigned_place.make_place_old(place, latest);
+    }
+
     pub fn assiged_place_region_vid(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Option<RegionVid> {
         match self
             .assigned_place

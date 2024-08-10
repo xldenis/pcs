@@ -20,7 +20,7 @@ use super::{
 };
 
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub struct DerefExpansions<'tcx>(FxHashSet<DerefExpansion<'tcx>>);
+pub struct DerefExpansions<'tcx>(pub FxHashSet<DerefExpansion<'tcx>>);
 
 impl<'tcx> DerefExpansions<'tcx> {
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {

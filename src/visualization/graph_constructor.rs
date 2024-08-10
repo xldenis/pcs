@@ -440,7 +440,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                 }
             }
         }
-        for deref_expansion in self.borrows_domain.deref_expansions.iter() {
+        for deref_expansion in self.borrows_domain.deref_expansions().iter() {
             let base = self.insert_maybe_old_place(deref_expansion.base());
             for place in deref_expansion.expansion(self.repacker) {
                 let place = self.insert_maybe_old_place(place);
@@ -462,7 +462,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                 assigned_place,
                 location: reborrow.location,
                 region: format!("{:?}", reborrow.region),
-                path_conditions: format!("{}", reborrow.path_conditions),
+                path_conditions: format!("{:?}", reborrow.location.block),
             });
         }
 
@@ -479,11 +479,11 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
             }
         }
 
-        for abstraction in self.borrows_domain.region_abstractions.iter() {
+        for abstraction in self.borrows_domain.region_abstractions().iter() {
             let r = self.constructor.insert_region_abstraction(abstraction);
         }
 
-        for member in self.borrows_domain.region_projection_members.iter() {
+        for member in self.borrows_domain.region_projection_members().iter() {
             let place = self.insert_maybe_old_place(member.place);
             let region_projection = self.constructor.insert_region_projection_node(&member.projection);
             self.constructor
