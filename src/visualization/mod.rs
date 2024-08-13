@@ -58,7 +58,7 @@ impl std::fmt::Display for NodeId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct GraphNode {
+pub struct GraphNode {
     id: NodeId,
     node_type: NodeType,
 }
@@ -180,29 +180,12 @@ enum GraphEdge {
         blocked: NodeId,
         blocking: NodeId,
     },
-    RegionBlockedByPlaceEdge {
-        region: NodeId,
-        place: NodeId,
-    },
-    RegionBlocksPlaceEdge {
-        region: NodeId,
-        place: NodeId,
-    },
-    BlocksAbstractionEdge {
-        blocked_region: NodeId,
-        blocking_region: NodeId,
-    },
     ReborrowEdge {
         borrowed_place: NodeId,
         assigned_place: NodeId,
         location: Location,
         region: String,
         path_conditions: String,
-    },
-    ReferenceEdge {
-        borrowed_place: NodeId,
-        assigned_place: NodeId,
-        edge_type: ReferenceEdgeType,
     },
     ProjectionEdge {
         source: NodeId,
@@ -222,17 +205,6 @@ enum GraphEdge {
 impl GraphEdge {
     fn to_dot_edge(&self) -> DotEdge {
         match self {
-            GraphEdge::ReferenceEdge {
-                borrowed_place,
-                assigned_place,
-                edge_type,
-            } => DotEdge {
-                from: borrowed_place.to_string(),
-                to: assigned_place.to_string(),
-                options: EdgeOptions::directed(EdgeDirection::Backward)
-                    .with_label(format!("{}", edge_type))
-                    .with_style("dashed".to_string()),
-            },
             GraphEdge::ProjectionEdge { source, target } => DotEdge {
                 from: source.to_string(),
                 to: target.to_string(),
@@ -261,24 +233,6 @@ impl GraphEdge {
                 options: EdgeOptions::undirected()
                     .with_color("green".to_string())
                     .with_label(format!("{:?}", location)),
-            },
-            GraphEdge::BlocksAbstractionEdge {
-                blocked_region,
-                blocking_region,
-            } => DotEdge {
-                from: blocked_region.to_string(),
-                to: blocking_region.to_string(),
-                options: EdgeOptions::directed(EdgeDirection::Backward),
-            },
-            GraphEdge::RegionBlockedByPlaceEdge { region, place } => DotEdge {
-                from: region.to_string(),
-                to: place.to_string(),
-                options: EdgeOptions::directed(EdgeDirection::Backward),
-            },
-            GraphEdge::RegionBlocksPlaceEdge { region, place } => DotEdge {
-                from: place.to_string(),
-                to: region.to_string(),
-                options: EdgeOptions::directed(EdgeDirection::Backward),
             },
             GraphEdge::AbstractEdge { blocked, blocking } => DotEdge {
                 from: blocked.to_string(),

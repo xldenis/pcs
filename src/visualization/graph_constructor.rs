@@ -305,9 +305,9 @@ trait PlaceGrapher<'mir, 'tcx: 'mir> {
                 self.constructor().edges.insert(GraphEdge::ReborrowEdge {
                     borrowed_place,
                     assigned_place,
-                    location: reborrow.location,
+                    location: reborrow.reservation_location(),
                     region: format!("{:?}", reborrow.region),
-                    path_conditions: format!("{:?}", reborrow.location.block),
+                    path_conditions: format!("{:?}", reborrow.reservation_location().block),
                 });
             }
             BorrowsEdgeKind::RegionAbstraction(abstraction) => {

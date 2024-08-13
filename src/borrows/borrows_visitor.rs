@@ -39,7 +39,7 @@ use super::{
     engine::{BorrowsDomain, BorrowsEngine},
 };
 use super::{
-    domain::{Borrow, MaybeOldPlace},
+    domain::{MaybeOldPlace},
     unblock_graph::UnblockGraph,
 };
 
@@ -192,7 +192,10 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         let mut edges = vec![];
 
         for (idx, ty) in sig.inputs().iter().enumerate() {
-            let input_place: utils::Place<'tcx> = args[idx].place().unwrap().into();
+            let input_place: utils::Place<'tcx> = match args[idx].place() {
+                Some(place) => place.into(),
+                None => continue,
+            };
             let input_place = MaybeOldPlace::OldPlace(PlaceSnapshot::new(
                 input_place,
                 self.state.after.get_latest(&input_place),
@@ -383,15 +386,12 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
             for loan in self.loans_invalidated_at(location, self.before) {
                 let borrow = &self.borrow_set[loan];
-                let borrow = Borrow::new(
-                    borrow.borrowed_place.into(),
-                    borrow.assigned_place.into(),
-                    matches!(borrow.kind, BorrowKind::Mut { .. }),
+                eprintln!(
+                    "{:?} Invalidating loan ({:?}): {:?} {:?}",
+                    location, self.before, loan, borrow.reserve_location
                 );
-                g.unblock_place(
-                    MaybeOldPlace::Current {
-                        place: borrow.borrowed_place.into(),
-                    },
+                g.kill_reborrows_reserved_at(
+                    borrow.reserve_location,
                     &self.state.after,
                     self.repacker(),
                 );

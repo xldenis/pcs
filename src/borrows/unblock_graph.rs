@@ -2,9 +2,10 @@ use std::collections::HashSet;
 
 use rustc_interface::{
     ast::Mutability,
-    data_structures::fx::FxHashSet,
-    index::Idx,
-    middle::{mir::BasicBlock, ty::TyCtxt},
+    middle::{
+        mir::{BasicBlock, Location},
+        ty::TyCtxt,
+    },
 };
 
 use crate::{
@@ -189,6 +190,18 @@ impl<'tcx> UnblockGraph<'tcx> {
         }
     }
 
+    pub fn kill_reborrows_reserved_at(
+        &mut self,
+        location: Location,
+        borrows: &BorrowsState<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) {
+        for edge in borrows.reborrow_edges_reserved_at(location) {
+            self.unblock_place(edge.value.assigned_place, borrows, repacker);
+            self.add_dependency(edge.to_borrows_edge());
+        }
+    }
+
     pub fn kill_reborrow(
         &mut self,
         reborrow: Conditioned<Reborrow<'tcx>>,
@@ -207,7 +220,9 @@ impl<'tcx> UnblockGraph<'tcx> {
     ) {
         for reborrow in borrows.reborrows_blocked_by(MaybeOldPlace::OldPlace(place)) {
             match reborrow.value.blocked_place {
-                MaybeOldPlace::OldPlace(p) => self.trim_old_leaves_from(borrows, p.clone(), repacker),
+                MaybeOldPlace::OldPlace(p) => {
+                    self.trim_old_leaves_from(borrows, p.clone(), repacker)
+                }
                 _ => {}
             }
             self.kill_reborrow(reborrow, borrows, repacker);

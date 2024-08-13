@@ -3,6 +3,7 @@ use rustc_interface::{
     data_structures::fx::FxHashSet,
     middle::mir::{self, BasicBlock, Location},
     middle::ty::{Region, TyCtxt},
+    borrowck::consumers::BorrowIndex,
 };
 use serde_json::json;
 
@@ -78,7 +79,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
 
     pub fn has_reborrow_at_location(&self, location: Location) -> bool {
         self.0.iter().any(|edge| match &edge.kind {
-            BorrowsEdgeKind::Reborrow(reborrow) => reborrow.location == location,
+            BorrowsEdgeKind::Reborrow(reborrow) => reborrow.reservation_location() == location,
             _ => false,
         })
     }
@@ -177,19 +178,13 @@ impl<'tcx> BorrowsGraph<'tcx> {
         region: Region<'tcx>,
     ) -> bool {
         self.insert(
-            Reborrow {
-                region,
+            Reborrow::new(
+                blocked_place.into(),
+                assigned_place.into(),
                 mutability,
-                blocked_place: MaybeOldPlace::Current {
-                    place: blocked_place,
-                },
-                assigned_place: MaybeOldPlace::Current {
-                    place: assigned_place,
-                },
                 location,
-            }
-            .to_borrows_edge(PathConditions::new(location.block)),
-        )
+                region,
+            ).to_borrows_edge(PathConditions::new(location.block)))
     }
 
     pub fn insert(&mut self, edge: BorrowsEdge<'tcx>) -> bool {
@@ -314,6 +309,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
         } else {
             DerefExpansion::borrowed(place, expansion, location, repacker)
         };
+        eprintln!("{:?} Inserting deref expansion: {:?}", location, de);
         self.insert(BorrowsEdge {
             conditions: PathConditions::new(location.block),
             kind: BorrowsEdgeKind::DerefExpansion(de),
@@ -356,16 +352,13 @@ pub struct Conditioned<T> {
     pub value: T,
 }
 
-impl <T> Conditioned<T> {
+impl<T> Conditioned<T> {
     pub fn new(value: T, conditions: PathConditions) -> Self {
-        Self {
-            conditions,
-            value,
-        }
+        Self { conditions, value }
     }
 }
 
-impl <'tcx, T: ToJsonWithRepacker<'tcx>> ToJsonWithRepacker<'tcx> for Conditioned<T> {
+impl<'tcx, T: ToJsonWithRepacker<'tcx>> ToJsonWithRepacker<'tcx> for Conditioned<T> {
     fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         json!({
             "conditions": self.conditions.to_json(repacker),

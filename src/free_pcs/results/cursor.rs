@@ -57,8 +57,6 @@ pub trait HasExtra<T> {
     fn bridge_between_stmts(
         lhs: T,
         rhs: T,
-        block: BasicBlock,
-        tcx: Self::BridgeCtx,
     ) -> (Self::ExtraBridge, Self::ExtraBridge);
     fn bridge_terminator(
         lhs: &T,
@@ -145,8 +143,6 @@ impl<
         let (extra_start, extra_middle) = D::bridge_between_stmts(
             extra_after,
             state.get_extra(),
-            location.block,
-            self.repacker().tcx(),
         );
 
         let result = FreePcsLocation {

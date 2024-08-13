@@ -1,5 +1,6 @@
 use rustc_interface::{
     ast::Mutability,
+    borrowck::consumers::BorrowIndex,
     data_structures::fx::FxHashSet,
     dataflow::JoinSemiLattice,
     middle::mir::{self, BasicBlock, Location},
@@ -137,13 +138,31 @@ impl<'tcx> BorrowsState<'tcx> {
     ) -> bool {
         for place in edge.blocked_places() {
             match place {
-                MaybeOldPlace::Current { place } => {
-                    self.set_latest(place, location)
-                }
+                MaybeOldPlace::Current { place } => self.set_latest(place, location),
                 _ => {}
             }
         }
         self.graph.remove(edge, DebugCtx::new(location))
+    }
+
+    pub fn reborrow_edges_reserved_at(
+        &self,
+        location: Location,
+    ) -> FxHashSet<Conditioned<Reborrow<'tcx>>> {
+        self.graph
+            .edges()
+            .filter_map(|edge| match &edge.kind() {
+                BorrowsEdgeKind::Reborrow(reborrow)
+                    if reborrow.reservation_location() == location =>
+                {
+                    Some(Conditioned {
+                        conditions: edge.conditions().clone(),
+                        value: reborrow.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn minimize(&mut self, repacker: PlaceRepacker<'_, 'tcx>, location: Location) {
@@ -174,7 +193,6 @@ impl<'tcx> BorrowsState<'tcx> {
                 break;
             }
             for edge in to_remove {
-                eprintln!("{:?} Removing edge for minimize {:?}", location, edge);
                 self.remove_edge_and_set_latest(&edge, repacker, location);
             }
         }
@@ -251,23 +269,18 @@ impl<'tcx> BorrowsState<'tcx> {
         self.graph.reborrows()
     }
 
-    pub fn bridge(
-        &self,
-        to: &Self,
-        block: BasicBlock,
-        repacker: PlaceRepacker<'_, 'tcx>,
-    ) -> ReborrowBridge<'tcx> {
+    pub fn bridge(&self, to: &Self, repacker: PlaceRepacker<'_, 'tcx>) -> ReborrowBridge<'tcx> {
         let added_reborrows: FxHashSet<Conditioned<Reborrow<'tcx>>> = to
             .reborrows()
             .into_iter()
-            .filter(|rb| !self.has_reborrow_at_location(rb.value.location))
+            .filter(|rb| !self.has_reborrow_at_location(rb.value.reservation_location()))
             .collect();
         let expands = subtract_deref_expansions(&to.deref_expansions(), &self.deref_expansions());
 
         let mut ug = UnblockGraph::new();
 
         for reborrow in self.reborrows() {
-            if !to.has_reborrow_at_location(reborrow.value.location) {
+            if !to.has_reborrow_at_location(reborrow.value.reservation_location()) {
                 ug.kill_reborrow(reborrow, self, repacker);
             }
         }

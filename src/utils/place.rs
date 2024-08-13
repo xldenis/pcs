@@ -30,10 +30,7 @@ use crate::{
     rustc_interface,
 };
 
-use super::{
-    debug_info::{DebugInfo},
-    PlaceRepacker,
-};
+use super::{debug_info::DebugInfo, PlaceRepacker};
 #[derive(Clone, Copy, Deref, DerefMut)]
 pub struct Place<'tcx>(
     #[deref]
@@ -106,7 +103,11 @@ impl<'tcx> Place<'tcx> {
     }
 
     pub fn project_deref(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Self {
-        assert!(self.ty(repacker).ty.is_ref() || self.ty(repacker).ty.is_box());
+        assert!(
+            self.ty(repacker).ty.is_ref() || self.ty(repacker).ty.is_box(),
+            "Expected ref or box, got {:?}",
+            self.ty(repacker).ty
+        );
         Place::new(
             self.0.local,
             self.0

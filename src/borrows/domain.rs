@@ -1,5 +1,6 @@
 use rustc_interface::{
     ast::Mutability,
+    borrowck::consumers::BorrowIndex,
     data_structures::{
         fx::{FxHashMap, FxHashSet},
         graph::dominators::Dominators,
@@ -281,31 +282,6 @@ impl<'tcx> MaybeOldPlace<'tcx> {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub struct Borrow<'tcx> {
-    pub borrowed_place: Place<'tcx>,
-    pub assigned_place: Place<'tcx>,
-    pub is_mut: bool,
-}
-
-impl<'tcx> Borrow<'tcx> {
-    pub fn new(borrowed_place: Place<'tcx>, assigned_place: Place<'tcx>, is_mut: bool) -> Self {
-        Self {
-            borrowed_place,
-            assigned_place,
-            is_mut,
-        }
-    }
-
-    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
-        json!({
-            "borrowed_place": self.borrowed_place.to_json(repacker),
-            "assigned_place": self.assigned_place.to_json(repacker),
-            "is_mut": self.is_mut,
-        })
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Latest<'tcx>(FxHashMap<Place<'tcx>, Location>);
 
@@ -386,12 +362,32 @@ pub struct Reborrow<'tcx> {
     pub mutability: Mutability,
 
     /// The location when the reborrow was created
-    pub location: Location,
+    reservation_location: Location,
 
     pub region: ty::Region<'tcx>,
 }
 
 impl<'tcx> Reborrow<'tcx> {
+    pub fn new(
+        blocked_place: MaybeOldPlace<'tcx>,
+        assigned_place: MaybeOldPlace<'tcx>,
+        mutability: Mutability,
+        reservation_location: Location,
+        region: ty::Region<'tcx>,
+    ) -> Self {
+        Self {
+            blocked_place,
+            assigned_place,
+            mutability,
+            reservation_location,
+            region,
+        }
+    }
+
+    pub fn reservation_location(&self) -> Location {
+        self.reservation_location
+    }
+
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         self.blocked_place.make_place_old(place, latest);
         self.assigned_place.make_place_old(place, latest);
@@ -427,7 +423,7 @@ pub trait ToJsonWithRepacker<'tcx> {
     fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value;
 }
 
-impl <'tcx> ToJsonWithRepacker<'tcx> for Reborrow<'tcx> {
+impl<'tcx> ToJsonWithRepacker<'tcx> for Reborrow<'tcx> {
     fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         json!({
             "blocked_place": self.blocked_place.to_json(repacker),

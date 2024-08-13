@@ -76,11 +76,9 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
     fn bridge_between_stmts(
         lhs: BorrowsDomain<'mir, 'tcx>,
         rhs: BorrowsDomain<'mir, 'tcx>,
-        block: BasicBlock,
-        tcx: TyCtxt<'tcx>,
     ) -> (Self::ExtraBridge, Self::ExtraBridge) {
-        let start = lhs.after.bridge(&rhs.before_start, block, lhs.repacker);
-        let middle = rhs.before_after.bridge(&rhs.start, block, rhs.repacker);
+        let start = lhs.after.bridge(&rhs.before_start, lhs.repacker);
+        let middle = rhs.before_after.bridge(&rhs.start, rhs.repacker);
         (start, middle)
     }
 
