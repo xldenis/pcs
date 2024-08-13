@@ -1,6 +1,5 @@
 use rustc_interface::{
     ast::Mutability,
-    borrowck::consumers::BorrowIndex,
     data_structures::{
         fx::{FxHashMap, FxHashSet},
         graph::dominators::Dominators,
@@ -16,16 +15,50 @@ use crate::{
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum AbstractionType<'tcx> {
-    FunctionCall {
+pub struct FunctionCallAbstraction<'tcx> {
+    location: Location,
+
+    def_id: DefId,
+
+    substs: GenericArgsRef<'tcx>,
+
+    edges: Vec<(usize, AbstractionBlockEdge<'tcx>)>,
+}
+
+impl<'tcx> FunctionCallAbstraction<'tcx> {
+
+    pub fn def_id(&self) -> DefId {
+        self.def_id
+    }
+    pub fn substs(&self) -> GenericArgsRef<'tcx> {
+        self.substs
+    }
+
+    pub fn location(&self) -> Location {
+        self.location
+    }
+    pub fn edges(&self) -> &Vec<(usize, AbstractionBlockEdge<'tcx>)> {
+        &self.edges
+    }
+    pub fn new(
         location: Location,
-
         def_id: DefId,
-
         substs: GenericArgsRef<'tcx>,
-
         edges: Vec<(usize, AbstractionBlockEdge<'tcx>)>,
-    },
+    ) -> Self {
+        assert!(edges.len() > 0);
+        Self {
+            location,
+            def_id,
+            substs,
+            edges,
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum AbstractionType<'tcx> {
+    FunctionCall(FunctionCallAbstraction<'tcx>),
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -75,28 +108,28 @@ impl<'tcx> AbstractionTarget<'tcx> {
 impl<'tcx> AbstractionType<'tcx> {
     pub fn location(&self) -> Location {
         match self {
-            AbstractionType::FunctionCall { location, .. } => *location,
+            AbstractionType::FunctionCall(c) => c.location,
         }
     }
 
     pub fn inputs(&self) -> Vec<&AbstractionTarget<'tcx>> {
         match self {
-            AbstractionType::FunctionCall { edges, .. } => {
-                edges.iter().map(|(_, edge)| &edge.input).collect()
+            AbstractionType::FunctionCall(c) => {
+                c.edges.iter().map(|(_, edge)| &edge.input).collect()
             }
         }
     }
     pub fn outputs(&self) -> Vec<&AbstractionTarget<'tcx>> {
         match self {
-            AbstractionType::FunctionCall { edges, .. } => {
-                edges.iter().map(|(_, edge)| &edge.output).collect()
+            AbstractionType::FunctionCall(c) => {
+                c.edges.iter().map(|(_, edge)| &edge.output).collect()
             }
         }
     }
 
     pub fn blocks_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         match self {
-            AbstractionType::FunctionCall { edges, .. } => edges
+            AbstractionType::FunctionCall(c) => c.edges
                 .iter()
                 .flat_map(|(_, edge)| match edge.input {
                     AbstractionTarget::MaybeOldPlace(p) => Some(p),
@@ -106,9 +139,16 @@ impl<'tcx> AbstractionType<'tcx> {
         }
     }
 
+    pub fn edges(&self) -> impl Iterator<Item = &AbstractionBlockEdge<'tcx>> {
+        match self {
+            AbstractionType::FunctionCall(c) => c.edges.iter().map(|(_, edge)| edge),
+        }
+    }
+
     pub fn blocker_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         match self {
-            AbstractionType::FunctionCall { edges, .. } => edges
+            AbstractionType::FunctionCall(c) => c
+                .edges
                 .iter()
                 .flat_map(|(_, edge)| match edge.output {
                     AbstractionTarget::MaybeOldPlace(p) => Some(p),
@@ -124,34 +164,14 @@ impl<'tcx> AbstractionType<'tcx> {
 
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         match self {
-            AbstractionType::FunctionCall { edges, .. } => {
-                for (_, edge) in edges {
+            AbstractionType::FunctionCall(c) => {
+                for (_, edge) in &mut c.edges {
                     edge.input.make_place_old(place, latest);
                     edge.output.make_place_old(place, latest);
                 }
             }
         }
     }
-}
-
-fn make_places_old<'tcx>(
-    places: FxHashSet<MaybeOldPlace<'tcx>>,
-    place: Place<'tcx>,
-    location: Location,
-) -> FxHashSet<MaybeOldPlace<'tcx>> {
-    places
-        .into_iter()
-        .map(|p| {
-            if p.is_current() && place.is_prefix(p.place()) {
-                MaybeOldPlace::OldPlace(PlaceSnapshot {
-                    place: p.place(),
-                    at: location,
-                })
-            } else {
-                p
-            }
-        })
-        .collect()
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
@@ -362,7 +382,7 @@ pub struct Reborrow<'tcx> {
     pub mutability: Mutability,
 
     /// The location when the reborrow was created
-    reservation_location: Location,
+    reserve_location: Location,
 
     pub region: ty::Region<'tcx>,
 }
@@ -379,13 +399,13 @@ impl<'tcx> Reborrow<'tcx> {
             blocked_place,
             assigned_place,
             mutability,
-            reservation_location,
+            reserve_location: reservation_location,
             region,
         }
     }
 
-    pub fn reservation_location(&self) -> Location {
-        self.reservation_location
+    pub fn reserve_location(&self) -> Location {
+        self.reserve_location
     }
 
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {

@@ -35,13 +35,10 @@ use crate::{
 
 use super::{
     borrows_state::RegionProjectionMemberDirection,
-    domain::AbstractionType,
+    domain::{AbstractionType, FunctionCallAbstraction},
     engine::{BorrowsDomain, BorrowsEngine},
 };
-use super::{
-    domain::{MaybeOldPlace},
-    unblock_graph::UnblockGraph,
-};
+use super::{domain::MaybeOldPlace, unblock_graph::UnblockGraph};
 
 #[derive(Debug, Clone, Copy)]
 pub enum DebugCtx {
@@ -249,12 +246,9 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         // nested) mutable references
         if !edges.is_empty() {
             self.state.after.add_region_abstraction(
-                RegionAbstraction::new(AbstractionType::FunctionCall {
-                    def_id: *func_def_id,
-                    location,
-                    substs,
-                    edges,
-                }),
+                RegionAbstraction::new(AbstractionType::FunctionCall(
+                    FunctionCallAbstraction::new(location, *func_def_id, substs, edges),
+                )),
                 location.block,
             );
         }
@@ -386,10 +380,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
             for loan in self.loans_invalidated_at(location, self.before) {
                 let borrow = &self.borrow_set[loan];
-                eprintln!(
-                    "{:?} Invalidating loan ({:?}): {:?} {:?}",
-                    location, self.before, loan, borrow.reserve_location
-                );
                 g.kill_reborrows_reserved_at(
                     borrow.reserve_location,
                     &self.state.after,
@@ -399,16 +389,16 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
             let live_origins = self.origins_live_at(location, self.before);
 
-            for abstraction in self.state.after.region_abstractions().iter() {
-                if abstraction
-                    .value
-                    .outputs()
-                    .iter()
-                    .all(|i| !live_origins.contains(&i.region(self.repacker())))
-                {
-                    g.kill_abstraction(&self.state.after, abstraction.clone(), self.repacker());
-                }
-            }
+            // for abstraction in self.state.after.region_abstractions().iter() {
+            //     if abstraction.value.outputs().iter().all(|i| {
+            //         !live_origins
+            //             .iter()
+            //             .any(|lo| self.outlives(i.region(self.repacker()), *lo))
+            //     }) {
+            //         eprintln!("Live origins {:?} dont contain anything", live_origins);
+            //         g.kill_abstraction(&self.state.after, abstraction.clone(), self.repacker());
+            //     }
+            // }
 
             let repacker = PlaceRepacker::new(self.body, self.tcx);
             self.state.after.apply_unblock_graph(g, repacker, location);

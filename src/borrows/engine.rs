@@ -98,6 +98,7 @@ impl<'mir, 'tcx> JoinSemiLattice for BorrowsDomain<'mir, 'tcx> {
         // For edges in the other graph that actually belong to it,
         // add the path condition that leads them to this block
         let pc = PathCondition::new(other.block, self.block);
+        eprintln!("Extend {:?} with {:?}", other.block, self.block);
         other_after.add_path_condition(pc);
 
         // Overlay both graphs

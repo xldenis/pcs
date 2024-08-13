@@ -89,7 +89,7 @@ impl PCGraph {
     }
 
     pub fn insert(&mut self, pc: PathCondition) -> bool {
-        if self.has_path_to_block(pc.to) {
+        if self.has_path_to_block(pc.from) {
             self.0.insert(pc)
         } else {
             false

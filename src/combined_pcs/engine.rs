@@ -146,6 +146,7 @@ impl<'tcx> ProjectionEdge<'tcx> {
 pub enum UnblockAction<'tcx> {
     TerminateAbstraction(Location, AbstractionType<'tcx>),
     TerminateReborrow {
+        reserve_location: Location,
         blocked_place: MaybeOldPlace<'tcx>,
         assigned_place: MaybeOldPlace<'tcx>,
         is_mut: bool,

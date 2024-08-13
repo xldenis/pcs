@@ -64,45 +64,9 @@ impl<'tcx> RegionProjectionMember<'tcx> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RegionProjectionMembers<'tcx>(pub FxHashSet<RegionProjectionMember<'tcx>>);
-
-impl<'tcx> RegionProjectionMembers<'tcx> {
-    pub fn join(&mut self, other: &Self) -> bool {
-        let old_size = self.0.len();
-        self.0.extend(other.0.iter().cloned());
-        self.0.len() != old_size
-    }
-    pub fn new() -> Self {
-        Self(FxHashSet::default())
-    }
-
-    pub fn insert(&mut self, member: RegionProjectionMember<'tcx>) -> bool {
-        self.0.insert(member)
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &RegionProjectionMember<'tcx>> {
-        self.0.iter()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorrowsState<'tcx> {
     latest: Latest<'tcx>,
     graph: BorrowsGraph<'tcx>,
-}
-
-fn deref_expansions_should_be_considered_same<'tcx>(
-    exp1: &Conditioned<DerefExpansion<'tcx>>,
-    exp2: &Conditioned<DerefExpansion<'tcx>>,
-) -> bool {
-    match (&exp1.value, &exp2.value) {
-        (
-            DerefExpansion::OwnedExpansion { base: b1, .. },
-            DerefExpansion::OwnedExpansion { base: b2, .. },
-        ) => b1 == b2,
-        (DerefExpansion::BorrowExpansion(b1), DerefExpansion::BorrowExpansion(b2)) => b1 == b2,
-        _ => false,
-    }
 }
 
 fn subtract_deref_expansions<'tcx>(
@@ -110,10 +74,7 @@ fn subtract_deref_expansions<'tcx>(
     to: &FxHashSet<Conditioned<DerefExpansion<'tcx>>>,
 ) -> FxHashSet<Conditioned<DerefExpansion<'tcx>>> {
     from.iter()
-        .filter(|f1| {
-            to.iter()
-                .all(|f2| !deref_expansions_should_be_considered_same(f1, f2))
-        })
+        .filter(|f1| to.iter().all(|f2| *f1 != f2))
         .cloned()
         .collect()
 }
@@ -152,9 +113,7 @@ impl<'tcx> BorrowsState<'tcx> {
         self.graph
             .edges()
             .filter_map(|edge| match &edge.kind() {
-                BorrowsEdgeKind::Reborrow(reborrow)
-                    if reborrow.reservation_location() == location =>
-                {
+                BorrowsEdgeKind::Reborrow(reborrow) if reborrow.reserve_location() == location => {
                     Some(Conditioned {
                         conditions: edge.conditions().clone(),
                         value: reborrow.clone(),
@@ -269,18 +228,23 @@ impl<'tcx> BorrowsState<'tcx> {
         self.graph.reborrows()
     }
 
-    pub fn bridge(&self, to: &Self, repacker: PlaceRepacker<'_, 'tcx>) -> ReborrowBridge<'tcx> {
+    pub fn bridge(
+        &self,
+        to: &Self,
+        _debug_ctx: DebugCtx,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> ReborrowBridge<'tcx> {
         let added_reborrows: FxHashSet<Conditioned<Reborrow<'tcx>>> = to
             .reborrows()
             .into_iter()
-            .filter(|rb| !self.has_reborrow_at_location(rb.value.reservation_location()))
+            .filter(|rb| !self.has_reborrow_at_location(rb.value.reserve_location()))
             .collect();
         let expands = subtract_deref_expansions(&to.deref_expansions(), &self.deref_expansions());
 
         let mut ug = UnblockGraph::new();
 
         for reborrow in self.reborrows() {
-            if !to.has_reborrow_at_location(reborrow.value.reservation_location()) {
+            if !to.has_reborrow_at_location(reborrow.value.reserve_location()) {
                 ug.kill_reborrow(reborrow, self, repacker);
             }
         }
@@ -366,32 +330,18 @@ impl<'tcx> BorrowsState<'tcx> {
         self.graph.roots(repacker)
     }
 
-    // TODO: THIS SHOULD BE PATH SENSITIVE!
     pub fn kill_reborrows(
         &mut self,
-        blocked_place: MaybeOldPlace<'tcx>,
-        assigned_place: MaybeOldPlace<'tcx>,
+        reserve_location: Location,
+        kill_location: Location,
         repacker: PlaceRepacker<'_, 'tcx>,
-        location: Location,
     ) -> bool {
-        let edges_to_remove = self
-            .graph
-            .edges()
-            .filter(|edge| {
-                if let BorrowsEdgeKind::Reborrow(reborrow) = &edge.kind() {
-                    reborrow.blocked_place == blocked_place
-                        && reborrow.assigned_place == assigned_place
-                } else {
-                    false
-                }
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        let edges_to_remove = self.reborrow_edges_reserved_at(reserve_location);
         if edges_to_remove.is_empty() {
             return false;
         }
         for edge in edges_to_remove {
-            self.remove_edge_and_set_latest(&edge, repacker, location);
+            self.remove_edge_and_set_latest(&edge.to_borrows_edge(), repacker, kill_location);
         }
         true
     }
@@ -405,12 +355,8 @@ impl<'tcx> BorrowsState<'tcx> {
         let mut changed = false;
         for action in graph.actions(repacker) {
             match action {
-                crate::combined_pcs::UnblockAction::TerminateReborrow {
-                    blocked_place,
-                    assigned_place,
-                    ..
-                } => {
-                    if self.kill_reborrows(blocked_place, assigned_place, repacker, location) {
+                crate::combined_pcs::UnblockAction::TerminateReborrow { reserve_location, .. } => {
+                    if self.kill_reborrows(reserve_location, location, repacker) {
                         changed = true;
                     }
                 }

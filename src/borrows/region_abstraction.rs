@@ -58,8 +58,6 @@ impl<'tcx> RegionAbstraction<'tcx> {
     }
 
     pub fn edges(&self) -> impl Iterator<Item = &AbstractionBlockEdge<'tcx>> {
-        match &self.abstraction_type {
-            AbstractionType::FunctionCall { edges, .. } => edges.iter().map(|(_, edge)| edge),
-        }
+        self.abstraction_type.edges()
     }
 }

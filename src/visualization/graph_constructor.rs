@@ -262,7 +262,6 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
         }
         self.constructor.to_graph()
     }
-
 }
 
 impl<'mir, 'tcx> PlaceGrapher<'mir, 'tcx> for UnblockGraphConstructor<'mir, 'tcx> {
@@ -305,9 +304,9 @@ trait PlaceGrapher<'mir, 'tcx: 'mir> {
                 self.constructor().edges.insert(GraphEdge::ReborrowEdge {
                     borrowed_place,
                     assigned_place,
-                    location: reborrow.reservation_location(),
+                    location: reborrow.reserve_location(),
                     region: format!("{:?}", reborrow.region),
-                    path_conditions: format!("{:?}", reborrow.reservation_location().block),
+                    path_conditions: format!("{:?}", reborrow.reserve_location().block),
                 });
             }
             BorrowsEdgeKind::RegionAbstraction(abstraction) => {

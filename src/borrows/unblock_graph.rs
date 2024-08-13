@@ -60,8 +60,10 @@ impl<'tcx> UnblockGraph<'tcx> {
         self.0.is_empty()
     }
 
-    pub fn filter_for_path(&mut self, path: &[BasicBlock], tcx: TyCtxt<'tcx>) {
-        self.0.retain(|edge| edge.valid_for_path(path));
+    pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
+        self.0.retain(|edge| {
+            edge.valid_for_path(path)
+        });
     }
 
     pub fn actions(self, repacker: PlaceRepacker<'_, 'tcx>) -> Vec<UnblockAction<'tcx>> {
@@ -106,6 +108,7 @@ impl<'tcx> UnblockGraph<'tcx> {
                             push_action(UnblockAction::TerminateReborrow {
                                 blocked_place: reborrow.blocked_place,
                                 assigned_place: reborrow.assigned_place,
+                                reserve_location: reborrow.reserve_location(),
                                 is_mut: reborrow.mutability == Mutability::Mut,
                             });
                             to_keep.remove(edge);
@@ -184,6 +187,7 @@ impl<'tcx> UnblockGraph<'tcx> {
                     for place in abstraction.abstraction_type.blocker_places() {
                         self.unblock_place(place, borrows, repacker);
                     }
+                    self.add_dependency(edge.clone());
                 }
                 BorrowsEdgeKind::RegionProjectionMember(_) => todo!(),
             }

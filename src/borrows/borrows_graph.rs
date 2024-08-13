@@ -1,9 +1,9 @@
 use rustc_interface::{
     ast::Mutability,
+    borrowck::consumers::BorrowIndex,
     data_structures::fx::FxHashSet,
     middle::mir::{self, BasicBlock, Location},
     middle::ty::{Region, TyCtxt},
-    borrowck::consumers::BorrowIndex,
 };
 use serde_json::json;
 
@@ -13,9 +13,7 @@ use crate::{
 };
 
 use super::{
-    borrows_state::{
-        RegionProjectionMember, RegionProjectionMemberDirection, RegionProjectionMembers,
-    },
+    borrows_state::{RegionProjectionMember, RegionProjectionMemberDirection},
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
     domain::{Latest, MaybeOldPlace, Reborrow, ToJsonWithRepacker},
@@ -79,7 +77,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
 
     pub fn has_reborrow_at_location(&self, location: Location) -> bool {
         self.0.iter().any(|edge| match &edge.kind {
-            BorrowsEdgeKind::Reborrow(reborrow) => reborrow.reservation_location() == location,
+            BorrowsEdgeKind::Reborrow(reborrow) => reborrow.reserve_location() == location,
             _ => false,
         })
     }
@@ -155,20 +153,6 @@ impl<'tcx> BorrowsGraph<'tcx> {
         self.0.len() != len
     }
 
-    // TODO: Delete?
-    pub fn region_projection_members(&self) -> RegionProjectionMembers<'tcx> {
-        RegionProjectionMembers(
-            self.0
-                .iter()
-                .filter_map(|edge| match &edge.kind {
-                    BorrowsEdgeKind::RegionProjectionMember(member) => Some(member),
-                    _ => None,
-                })
-                .cloned()
-                .collect(),
-        )
-    }
-
     pub fn add_reborrow(
         &mut self,
         blocked_place: Place<'tcx>,
@@ -184,7 +168,9 @@ impl<'tcx> BorrowsGraph<'tcx> {
                 mutability,
                 location,
                 region,
-            ).to_borrows_edge(PathConditions::new(location.block)))
+            )
+            .to_borrows_edge(PathConditions::new(location.block)),
+        )
     }
 
     pub fn insert(&mut self, edge: BorrowsEdge<'tcx>) -> bool {
@@ -210,7 +196,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
         });
     }
 
-    pub fn remove(&mut self, edge: &BorrowsEdge<'tcx>, debug_ctx: DebugCtx) -> bool {
+    pub fn remove(&mut self, edge: &BorrowsEdge<'tcx>, _debug_ctx: DebugCtx) -> bool {
         self.0.remove(edge)
     }
 
@@ -309,7 +295,6 @@ impl<'tcx> BorrowsGraph<'tcx> {
         } else {
             DerefExpansion::borrowed(place, expansion, location, repacker)
         };
-        eprintln!("{:?} Inserting deref expansion: {:?}", location, de);
         self.insert(BorrowsEdge {
             conditions: PathConditions::new(location.block),
             kind: BorrowsEdgeKind::DerefExpansion(de),

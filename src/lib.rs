@@ -19,7 +19,7 @@ pub mod visualization;
 use std::fs::create_dir_all;
 
 use borrows::{
-    borrows_graph::Conditioned, deref_expansion::DerefExpansion, domain::Reborrow, engine::BorrowsDomain, unblock_graph::UnblockGraph
+    borrows_graph::Conditioned, borrows_visitor::DebugCtx, deref_expansion::DerefExpansion, domain::Reborrow, engine::BorrowsDomain, unblock_graph::UnblockGraph
 };
 use combined_pcs::{BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary};
 use free_pcs::HasExtra;
@@ -76,9 +76,10 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
     fn bridge_between_stmts(
         lhs: BorrowsDomain<'mir, 'tcx>,
         rhs: BorrowsDomain<'mir, 'tcx>,
+        ctx: DebugCtx,
     ) -> (Self::ExtraBridge, Self::ExtraBridge) {
-        let start = lhs.after.bridge(&rhs.before_start, lhs.repacker);
-        let middle = rhs.before_after.bridge(&rhs.start, rhs.repacker);
+        let start = lhs.after.bridge(&rhs.before_start, ctx, lhs.repacker);
+        let middle = rhs.before_after.bridge(&rhs.start, ctx, rhs.repacker);
         (start, middle)
     }
 

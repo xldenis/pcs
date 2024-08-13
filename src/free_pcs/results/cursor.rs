@@ -14,13 +14,10 @@ use rustc_interface::{
 };
 
 use crate::{
-    combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary},
-    free_pcs::{
+    borrows::borrows_visitor::DebugCtx, combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary}, free_pcs::{
         CapabilitySummary, FreePlaceCapabilitySummary, RepackOp,
         RepackingBridgeSemiLattice,
-    },
-    rustc_interface,
-    utils::PlaceRepacker,
+    }, rustc_interface, utils::PlaceRepacker
 };
 
 pub trait HasFpcs<'mir, 'tcx> {
@@ -57,6 +54,7 @@ pub trait HasExtra<T> {
     fn bridge_between_stmts(
         lhs: T,
         rhs: T,
+        debug_ctx: DebugCtx,
     ) -> (Self::ExtraBridge, Self::ExtraBridge);
     fn bridge_terminator(
         lhs: &T,
@@ -143,6 +141,7 @@ impl<
         let (extra_start, extra_middle) = D::bridge_between_stmts(
             extra_after,
             state.get_extra(),
+            DebugCtx::new(location),
         );
 
         let result = FreePcsLocation {
