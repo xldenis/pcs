@@ -68,7 +68,7 @@ function ReborrowBridgeDisplay({ bridge }: { bridge: ReborrowBridge }) {
       {bridge.expands.length > 0 && (
         <div>
           Expands
-          <BridgeExpands expands={bridge.expands} />
+          <BridgeExpands expands={bridge.expands.map((e) => e.value)} />
         </div>
       )}
       {bridge.added_reborrows.length > 0 && (
@@ -77,7 +77,7 @@ function ReborrowBridgeDisplay({ bridge }: { bridge: ReborrowBridge }) {
           <ul>
             {bridge.added_reborrows.map((reborrow, index) => (
               <li key={`reborrow-${index}`}>
-                <ReborrowDisplay reborrow={reborrow} />
+                <ReborrowDisplay reborrow={reborrow.value} />
               </li>
             ))}
           </ul>

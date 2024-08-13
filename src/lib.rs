@@ -19,25 +19,20 @@ pub mod visualization;
 use std::fs::create_dir_all;
 
 use borrows::{
-    deref_expansion::DerefExpansion, domain::Reborrow, engine::BorrowsDomain, unblock_graph::UnblockGraph
+    borrows_graph::Conditioned, deref_expansion::DerefExpansion, domain::Reborrow, engine::BorrowsDomain, unblock_graph::UnblockGraph
 };
-use combined_pcs::{
-    BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary,
-};
+use combined_pcs::{BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary};
 use free_pcs::HasExtra;
 use rustc_interface::{
     data_structures::fx::FxHashSet,
     dataflow::Analysis,
-    middle::{
-        mir::BasicBlock,
-        ty::TyCtxt,
-    },
+    middle::{mir::BasicBlock, ty::TyCtxt},
 };
 use serde_json::json;
 use utils::PlaceRepacker;
 use visualization::mir_graph::generate_json_from_mir;
 
-use crate::visualization::generate_dot_graph;
+use crate::{borrows::domain::ToJsonWithRepacker, visualization::generate_dot_graph};
 
 pub type FpcsOutput<'mir, 'tcx> = free_pcs::FreePcsAnalysis<
     'mir,
@@ -49,8 +44,8 @@ pub type FpcsOutput<'mir, 'tcx> = free_pcs::FreePcsAnalysis<
 
 #[derive(Clone)]
 pub struct ReborrowBridge<'tcx> {
-    pub expands: FxHashSet<DerefExpansion<'tcx>>,
-    pub added_reborrows: FxHashSet<Reborrow<'tcx>>,
+    pub expands: FxHashSet<Conditioned<DerefExpansion<'tcx>>>,
+    pub added_reborrows: FxHashSet<Conditioned<Reborrow<'tcx>>>,
     pub ug: UnblockGraph<'tcx>,
 }
 
@@ -84,8 +79,8 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
         block: BasicBlock,
         tcx: TyCtxt<'tcx>,
     ) -> (Self::ExtraBridge, Self::ExtraBridge) {
-        let start = lhs.after.bridge(&rhs.before_start, block, tcx);
-        let middle = rhs.before_after.bridge(&rhs.start, block, tcx);
+        let start = lhs.after.bridge(&rhs.before_start, block, lhs.repacker);
+        let middle = rhs.before_after.bridge(&rhs.start, block, rhs.repacker);
         (start, middle)
     }
 

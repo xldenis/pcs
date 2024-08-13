@@ -70,14 +70,19 @@ export type ReborrowAction =
       place: MaybeOldPlace;
     };
 
+export type Conditioned<T> = {
+  value: T;
+  conditions: any
+};
+
 export type PlaceExpand = {
   base: MaybeOldPlace,
   expansion: string[]
 }
 
 export type ReborrowBridge = {
-  expands: PlaceExpand[];
-  added_reborrows: Reborrow[];
+  expands: Conditioned<PlaceExpand>[];
+  added_reborrows: Conditioned<Reborrow>[];
   ug: {
     dot_graph: string,
     empty: boolean

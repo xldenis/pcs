@@ -1,13 +1,12 @@
 use crate::{
     borrows::{
-        borrows_graph::BorrowsEdgeKind,
+        borrows_graph::{BorrowsEdge, BorrowsEdgeKind},
         borrows_state::BorrowsState,
         borrows_visitor::{extract_nested_lifetimes, get_vid},
         domain::{AbstractionTarget, MaybeOldPlace, RegionProjection},
         region_abstraction::RegionAbstraction,
         unblock_graph::UnblockGraph,
     },
-    combined_pcs::UnblockEdgeType,
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker, PlaceSnapshot},
@@ -20,20 +19,14 @@ use std::{
 };
 
 use rustc_interface::{
-    borrowck::{
-        borrow_set::BorrowSet,
-    },
+    borrowck::borrow_set::BorrowSet,
     middle::{
-        mir::{
-            Location,
-        },
+        mir::Location,
         ty::{self, TyCtxt},
     },
 };
 
-use super::{
-    dot_graph::DotSubgraph, Graph, GraphEdge, GraphNode, NodeId, NodeType,
-};
+use super::{dot_graph::DotSubgraph, Graph, GraphEdge, GraphNode, NodeId, NodeType};
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct GraphCluster {
@@ -264,93 +257,111 @@ impl<'a, 'tcx> UnblockGraphConstructor<'a, 'tcx> {
     }
 
     pub fn construct_graph(mut self) -> Graph {
-        for edge in self.unblock_graph.edges() {
-            match &edge.edge_type {
-                UnblockEdgeType::Reborrow {
-                    is_mut: _,
-                    blocker,
-                    blocked,
-                } => {
-                    let blocked_place = self.constructor.insert_place_node(
-                        blocked.place(),
-                        blocked.location(),
-                        None,
-                    );
-                    let blocking_place = self.constructor.insert_place_node(
-                        blocker.place(),
-                        blocker.location(),
-                        None,
-                    );
-                    self.constructor
-                        .edges
-                        .insert(GraphEdge::UnblockReborrowEdge {
-                            blocked_place,
-                            blocking_place,
-                            block: edge.block,
-                            reason: "".to_string(),
-                        });
-                }
-                UnblockEdgeType::Projection(proj_edge) => {
-                    let blocked_place = self.constructor.insert_place_node(
-                        proj_edge.blocked.place(),
-                        proj_edge.blocked.location(),
-                        None,
-                    );
-                    for blocker in proj_edge.blocker_places(self.constructor.repacker.tcx()) {
-                        let blocking_place = self.constructor.insert_place_node(
-                            blocker.place(),
-                            blocker.location(),
-                            None,
-                        );
-                        self.constructor
-                            .edges
-                            .insert(GraphEdge::UnblockProjectionEdge {
-                                blocked_place,
-                                blocking_place,
-                                block: edge.block,
-                                reason: "".to_string(),
-                            });
-                    }
-                }
-                UnblockEdgeType::Abstraction(region_edge) => {
-                    for place in region_edge.blocked_places() {
-                        let blocked_node = self.constructor.insert_place_node(
-                            place.place(),
-                            place.location(),
-                            None,
-                        );
-                        for place in &region_edge.blocker_places() {
-                            let blocking_node = self.constructor.insert_place_node(
-                                place.place(),
-                                place.location(),
-                                None,
-                            );
-                            self.constructor.edges.insert(GraphEdge::AbstractEdge {
-                                blocked: blocked_node,
-                                blocking: blocking_node,
-                            });
-                        }
-                    }
-                }
-            }
+        for edge in self.unblock_graph.edges().cloned().collect::<Vec<_>>() {
+            self.draw_borrows_edge(&edge);
         }
         self.constructor.to_graph()
+    }
+
+}
+
+impl<'mir, 'tcx> PlaceGrapher<'mir, 'tcx> for UnblockGraphConstructor<'mir, 'tcx> {
+    fn insert_maybe_old_place(&mut self, place: MaybeOldPlace<'tcx>) -> NodeId {
+        self.constructor
+            .insert_place_node(place.place(), place.location(), None)
+    }
+
+    fn constructor(&mut self) -> &mut GraphConstructor<'mir, 'tcx> {
+        &mut self.constructor
+    }
+
+    fn repacker(&self) -> PlaceRepacker<'mir, 'tcx> {
+        self.constructor.repacker
+    }
+}
+
+trait PlaceGrapher<'mir, 'tcx: 'mir> {
+    fn insert_maybe_old_place(&mut self, place: MaybeOldPlace<'tcx>) -> NodeId;
+    fn constructor(&mut self) -> &mut GraphConstructor<'mir, 'tcx>;
+    fn repacker(&self) -> PlaceRepacker<'mir, 'tcx>;
+    fn draw_borrows_edge(&mut self, edge: &BorrowsEdge<'tcx>) {
+        match edge.kind() {
+            BorrowsEdgeKind::DerefExpansion(deref_expansion) => {
+                let base = self.insert_maybe_old_place(deref_expansion.base());
+                for place in deref_expansion.expansion(self.repacker()) {
+                    let place = self.insert_maybe_old_place(place);
+                    self.constructor()
+                        .edges
+                        .insert(GraphEdge::DerefExpansionEdge {
+                            source: base,
+                            target: place,
+                            location: deref_expansion.location(),
+                        });
+                }
+            }
+            BorrowsEdgeKind::Reborrow(reborrow) => {
+                let borrowed_place = self.insert_maybe_old_place(reborrow.blocked_place);
+                let assigned_place = self.insert_maybe_old_place(reborrow.assigned_place);
+                self.constructor().edges.insert(GraphEdge::ReborrowEdge {
+                    borrowed_place,
+                    assigned_place,
+                    location: reborrow.location,
+                    region: format!("{:?}", reborrow.region),
+                    path_conditions: format!("{:?}", reborrow.location.block),
+                });
+            }
+            BorrowsEdgeKind::RegionAbstraction(abstraction) => {
+                let _r = self.constructor().insert_region_abstraction(abstraction);
+            }
+            BorrowsEdgeKind::RegionProjectionMember(member) => {
+                let place = self.insert_maybe_old_place(member.place);
+                let region_projection = self
+                    .constructor()
+                    .insert_region_projection_node(&member.projection);
+                self.constructor()
+                    .edges
+                    .insert(GraphEdge::RegionProjectionMemberEdge {
+                        place,
+                        region_projection,
+                    });
+            }
+        }
     }
 }
 
 pub struct PCSGraphConstructor<'a, 'tcx> {
     summary: &'a CapabilitySummary<'tcx>,
-    borrows_domain: &'a BorrowsState<'a, 'tcx>,
+    borrows_domain: &'a BorrowsState<'tcx>,
     borrow_set: &'a BorrowSet<'tcx>,
     constructor: GraphConstructor<'a, 'tcx>,
     repacker: PlaceRepacker<'a, 'tcx>,
+}
+
+impl<'a, 'tcx> PlaceGrapher<'a, 'tcx> for PCSGraphConstructor<'a, 'tcx> {
+    fn repacker(&self) -> PlaceRepacker<'a, 'tcx> {
+        self.repacker
+    }
+
+    fn insert_maybe_old_place(&mut self, place: MaybeOldPlace<'tcx>) -> NodeId {
+        match place {
+            MaybeOldPlace::Current { place } => {
+                self.constructor
+                    .insert_place_node(place, None, self.capability_for_place(place))
+            }
+            MaybeOldPlace::OldPlace(snapshot_place) => self.insert_snapshot_place(snapshot_place),
+        }
+    }
+
+    fn constructor(&mut self) -> &mut GraphConstructor<'a, 'tcx> {
+        &mut self.constructor
+    }
 }
 
 impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
     pub fn new(
         summary: &'a CapabilitySummary<'tcx>,
         repacker: PlaceRepacker<'a, 'tcx>,
-        borrows_domain: &'a BorrowsState<'a, 'tcx>,
+        borrows_domain: &'a BorrowsState<'tcx>,
         borrow_set: &'a BorrowSet<'tcx>,
     ) -> Self {
         Self {
@@ -387,16 +398,6 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
         node
     }
 
-    fn insert_maybe_old_place(&mut self, place: MaybeOldPlace<'tcx>) -> NodeId {
-        match place {
-            MaybeOldPlace::Current { place } => {
-                self.constructor
-                    .insert_place_node(place, None, self.capability_for_place(place))
-            }
-            MaybeOldPlace::OldPlace(snapshot_place) => self.insert_snapshot_place(snapshot_place),
-        }
-    }
-
     fn insert_place(&mut self, place: Place<'tcx>) -> NodeId {
         self.constructor
             .insert_place_node(place, None, self.capability_for_place(place))
@@ -431,64 +432,8 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
                 }
             }
         }
-
         for edge in self.borrows_domain.graph_edges() {
-            match edge.kind() {
-                BorrowsEdgeKind::DerefExpansion(deref_expansion) => {
-                    let base = self.insert_maybe_old_place(deref_expansion.base());
-                    for place in deref_expansion.expansion(self.repacker) {
-                        let place = self.insert_maybe_old_place(place);
-                        self.constructor
-                            .edges
-                            .insert(GraphEdge::DerefExpansionEdge {
-                                source: base,
-                                target: place,
-                                location: deref_expansion.location(),
-                            });
-                    }
-                }
-                BorrowsEdgeKind::Reborrow(reborrow) => {
-                    let borrowed_place = self.insert_maybe_old_place(reborrow.blocked_place);
-                    let assigned_place = self.insert_maybe_old_place(reborrow.assigned_place);
-                    self.constructor.edges.insert(GraphEdge::ReborrowEdge {
-                        borrowed_place,
-                        assigned_place,
-                        location: reborrow.location,
-                        region: format!("{:?}", reborrow.region),
-                        path_conditions: format!("{:?}", reborrow.location.block),
-                    });
-                }
-                BorrowsEdgeKind::RegionAbstraction(abstraction) => {
-                    let _r = self.constructor.insert_region_abstraction(abstraction);
-                }
-                _ => {}
-            }
-        }
-
-        let before_places: HashSet<(Place<'tcx>, Location)> = HashSet::new();
-        for (place, location) in before_places.iter() {
-            for (place2, location2) in before_places.iter() {
-                if location == location2 && place2.is_deref_of(*place) {
-                    let source = self.constructor.place_node_id(*place, Some(*location));
-                    let target = self.constructor.place_node_id(*place2, Some(*location));
-                    self.constructor
-                        .edges
-                        .insert(GraphEdge::ProjectionEdge { source, target });
-                }
-            }
-        }
-
-        for member in self.borrows_domain.region_projection_members().iter() {
-            let place = self.insert_maybe_old_place(member.place);
-            let region_projection = self
-                .constructor
-                .insert_region_projection_node(&member.projection);
-            self.constructor
-                .edges
-                .insert(GraphEdge::RegionProjectionMemberEdge {
-                    place,
-                    region_projection,
-                });
+            self.draw_borrows_edge(edge);
         }
 
         self.constructor.to_graph()

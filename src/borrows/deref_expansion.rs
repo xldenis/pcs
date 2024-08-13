@@ -1,17 +1,11 @@
-
-
 use serde_json::json;
 
 use crate::{
-    rustc_interface::{
-        middle::{
-            mir::{Location, PlaceElem},
-        },
-    },
+    rustc_interface::middle::mir::{Location, PlaceElem},
     utils::{Place, PlaceRepacker, PlaceSnapshot},
 };
 
-use super::domain::{Latest, MaybeOldPlace};
+use super::domain::{Latest, MaybeOldPlace, ToJsonWithRepacker};
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct BorrowDerefExpansion<'tcx> {
     base: MaybeOldPlace<'tcx>,
@@ -46,6 +40,10 @@ pub enum DerefExpansion<'tcx> {
 }
 
 impl<'tcx> DerefExpansion<'tcx> {
+    pub fn is_owned_expansion(&self) -> bool {
+        matches!(self, DerefExpansion::OwnedExpansion { .. })
+    }
+
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         match self {
             DerefExpansion::OwnedExpansion { base, .. } => base.make_place_old(place, latest),
@@ -114,13 +112,6 @@ impl<'tcx> DerefExpansion<'tcx> {
         }));
     }
 
-    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
-        json!({
-            "base": self.base().to_json(repacker),
-            "expansion": self.expansion(repacker).iter().map(|p| p.to_json(repacker)).collect::<Vec<_>>(),
-        })
-    }
-
     pub fn expansion_elems(&self) -> Vec<PlaceElem<'tcx>> {
         match self {
             DerefExpansion::OwnedExpansion { .. } => vec![PlaceElem::Deref],
@@ -133,5 +124,14 @@ impl<'tcx> DerefExpansion<'tcx> {
             DerefExpansion::OwnedExpansion { base, .. } => vec![base.project_deref(repacker)],
             DerefExpansion::BorrowExpansion(e) => e.expansion(repacker),
         }
+    }
+}
+
+impl<'tcx> ToJsonWithRepacker<'tcx> for DerefExpansion<'tcx> {
+    fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        json!({
+            "base": self.base().to_json(repacker),
+            "expansion": self.expansion(repacker).iter().map(|p| p.to_json(repacker)).collect::<Vec<_>>(),
+        })
     }
 }

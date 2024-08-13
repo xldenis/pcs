@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
 
-use crate::rustc_interface::{
-    middle::mir::{BasicBlock},
-};
+use serde_json::json;
+
+use crate::{rustc_interface::middle::mir::BasicBlock, utils::PlaceRepacker};
+
+use super::domain::ToJsonWithRepacker;
 
 #[derive(PartialEq, Eq, Clone, Hash, PartialOrd, Ord, Debug)]
 pub struct PathCondition {
@@ -51,7 +53,11 @@ impl std::fmt::Display for PCGraph {
 
 impl PCGraph {
     pub fn root(&self) -> BasicBlock {
-        self.0.iter().find(|pc| !self.has_path_to_block(pc.from)).unwrap().from
+        self.0
+            .iter()
+            .find(|pc| !self.has_path_to_block(pc.from))
+            .unwrap()
+            .from
     }
 
     pub fn singleton(pc: PathCondition) -> Self {
@@ -72,7 +78,7 @@ impl PCGraph {
                     let f = path[i];
                     let t = path[i + 1];
                     if !self.0.contains(&PathCondition::new(f, t)) {
-                        return false
+                        return false;
                     }
                     i += 1
                 }
@@ -95,6 +101,21 @@ impl PCGraph {
 pub enum PathConditions {
     AtBlock(BasicBlock),
     Paths(PCGraph),
+}
+
+impl<'tcx> ToJsonWithRepacker<'tcx> for PathConditions {
+    fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        match self {
+            PathConditions::AtBlock(b) => json!({
+                "type": "AtBlock",
+                "block": format!("{:?}", b)
+            }),
+            PathConditions::Paths(p) => json!({
+                "type": "Paths",
+                "paths": p.0.iter().map(|pc| format!("{:?} -> {:?}", pc.from, pc.to)).collect::<Vec<_>>()
+            }),
+        }
+    }
 }
 
 impl std::fmt::Display for PathConditions {

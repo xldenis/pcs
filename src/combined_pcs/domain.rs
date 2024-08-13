@@ -9,23 +9,18 @@ use std::{
     rc::Rc,
 };
 
-
 use rustc_interface::{
-    dataflow::fmt::DebugWithContext,
-    dataflow::JoinSemiLattice,
-    middle::mir::{BasicBlock},
+    dataflow::fmt::DebugWithContext, dataflow::JoinSemiLattice, middle::mir::BasicBlock,
+    middle::mir,
 };
 
 use crate::{
     borrows::{borrows_visitor::DebugCtx, engine::BorrowsDomain, unblock_graph::UnblockGraph},
-    free_pcs::{
-        CapabilityLocal, FreePlaceCapabilitySummary,
-    },
+    free_pcs::{CapabilityLocal, FreePlaceCapabilitySummary},
     rustc_interface,
 };
 
 use super::{PcsContext, PcsEngine};
-
 
 #[derive(Clone)]
 pub struct PlaceCapabilitySummary<'a, 'tcx> {
@@ -39,7 +34,7 @@ pub struct PlaceCapabilitySummary<'a, 'tcx> {
 impl<'a, 'tcx> PlaceCapabilitySummary<'a, 'tcx> {
     pub fn new(cgx: Rc<PcsContext<'a, 'tcx>>, block: BasicBlock) -> Self {
         let fpcs = FreePlaceCapabilitySummary::new(cgx.rp);
-        let borrows = BorrowsDomain::new(&cgx.mir.body, block);
+        let borrows = BorrowsDomain::new(cgx.rp, block);
         Self {
             cgx,
             block,
@@ -72,7 +67,6 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                     g.unblock_place(
                         crate::borrows::domain::MaybeOldPlace::Current { place: root },
                         &self.borrows.after,
-                        self.block, // TODO: Check
                         self.cgx.rp,
                     );
                 }
@@ -81,14 +75,16 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
                         g.unblock_place(
                             crate::borrows::domain::MaybeOldPlace::Current { place: root },
                             &self.borrows.after,
-                            self.block, // TODO: Check
                             self.cgx.rp,
                         );
                     }
                 }
             }
         }
-        let ub = self.borrows.after.apply_unblock_graph(g, self.cgx.rp.tcx(), DebugCtx::Other);
+        let ub = self
+            .borrows
+            .after
+            .apply_unblock_graph(g, self.cgx.rp, mir::Location { block: self.block, statement_index: 0 });
         fpcs || borrows || ub
     }
 }

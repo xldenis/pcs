@@ -1,27 +1,23 @@
-use std::{rc::Rc};
+use std::rc::Rc;
 
 use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
-        consumers::{
-            LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext,
-        },
+        consumers::{LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext},
     },
     dataflow::{Analysis, AnalysisDomain, Forward, JoinSemiLattice},
     middle::{
         mir::{
-            visit::{Visitor},
-            BasicBlock, Body, CallReturnPlaces, Location, Statement, Terminator,
+            visit::Visitor, BasicBlock, Body, CallReturnPlaces, Location, Statement, Terminator,
             TerminatorEdges,
         },
-        ty::{TyCtxt},
+        ty::TyCtxt,
     },
 };
 use serde_json::{json, Value};
 
 use crate::{
-    rustc_interface,
-    utils::{self, PlaceRepacker},
+    borrows::domain::ToJsonWithRepacker, rustc_interface, utils::{self, PlaceRepacker}
 };
 
 use super::{
@@ -105,7 +101,7 @@ impl<'mir, 'tcx> JoinSemiLattice for BorrowsDomain<'mir, 'tcx> {
         other_after.add_path_condition(pc);
 
         // Overlay both graphs
-        self.after.join(&other_after)
+        self.after.join(&other_after, self.body())
     }
 }
 
@@ -180,13 +176,38 @@ impl<'a, 'tcx> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         todo!()
     }
 }
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(Clone)]
 pub struct BorrowsDomain<'mir, 'tcx> {
-    pub before_start: BorrowsState<'mir, 'tcx>,
-    pub before_after: BorrowsState<'mir, 'tcx>,
-    pub start: BorrowsState<'mir, 'tcx>,
-    pub after: BorrowsState<'mir, 'tcx>,
+    pub before_start: BorrowsState<'tcx>,
+    pub before_after: BorrowsState<'tcx>,
+    pub start: BorrowsState<'tcx>,
+    pub after: BorrowsState<'tcx>,
     pub block: BasicBlock,
+    pub repacker: PlaceRepacker<'mir, 'tcx>,
+}
+
+impl<'mir, 'tcx> PartialEq for BorrowsDomain<'mir, 'tcx> {
+    fn eq(&self, other: &Self) -> bool {
+        self.before_start == other.before_start
+            && self.before_after == other.before_after
+            && self.start == other.start
+            && self.after == other.after
+            && self.block == other.block
+    }
+}
+
+impl<'mir, 'tcx> Eq for BorrowsDomain<'mir, 'tcx> {}
+
+impl<'mir, 'tcx> std::fmt::Debug for BorrowsDomain<'mir, 'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BorrowsDomain")
+            .field("before_start", &self.before_start)
+            .field("before_after", &self.before_after)
+            .field("start", &self.start)
+            .field("after", &self.after)
+            .field("block", &self.block)
+            .finish()
+    }
 }
 
 impl<'mir, 'tcx> BorrowsDomain<'mir, 'tcx> {
@@ -199,13 +220,18 @@ impl<'mir, 'tcx> BorrowsDomain<'mir, 'tcx> {
         })
     }
 
-    pub fn new(body: &'mir Body<'tcx>, block: BasicBlock) -> Self {
+    pub fn new(repacker: PlaceRepacker<'mir, 'tcx>, block: BasicBlock) -> Self {
         Self {
-            before_start: BorrowsState::new(body),
-            before_after: BorrowsState::new(body),
-            start: BorrowsState::new(body),
-            after: BorrowsState::new(body),
+            before_start: BorrowsState::new(),
+            before_after: BorrowsState::new(),
+            start: BorrowsState::new(),
+            after: BorrowsState::new(),
             block,
+            repacker,
         }
+    }
+
+    pub fn body(&self) -> &'mir Body<'tcx> {
+        self.repacker.body()
     }
 }

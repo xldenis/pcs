@@ -1,25 +1,21 @@
-
-
 use rustc_interface::{
     ast::Mutability,
-    data_structures::fx::{FxHashSet},
-    dataflow::{JoinSemiLattice},
+    data_structures::fx::FxHashSet,
+    dataflow::JoinSemiLattice,
     middle::mir::{self, BasicBlock, Location},
     middle::ty::{self, TyCtxt},
 };
 use serde_json::{json, Value};
 
 use crate::{
-    free_pcs::{
-        CapabilityKind, CapabilityLocal, CapabilitySummary,
-    },
+    free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker},
     ReborrowBridge,
 };
 
 use super::{
-    borrows_graph::{BorrowsEdge, BorrowsGraph, ToBorrowsEdge},
+    borrows_graph::{BorrowsEdge, BorrowsEdgeKind, BorrowsGraph, Conditioned, ToBorrowsEdge},
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
     domain::{Latest, MaybeOldPlace, Reborrow, RegionProjection},
@@ -27,19 +23,6 @@ use super::{
     region_abstraction::RegionAbstraction,
     unblock_graph::UnblockGraph,
 };
-
-impl<'mir, 'tcx> JoinSemiLattice for BorrowsState<'mir, 'tcx> {
-    fn join(&mut self, other: &Self) -> bool {
-        let mut changed = false;
-        if self.graph.join(&other.graph) {
-            changed = true;
-        }
-        if self.latest.join(&other.latest, self.body) {
-            changed = true;
-        }
-        changed
-    }
-}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum RegionProjectionMemberDirection {
@@ -101,26 +84,17 @@ impl<'tcx> RegionProjectionMembers<'tcx> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct BorrowsState<'mir, 'tcx> {
-    body: &'mir mir::Body<'tcx>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BorrowsState<'tcx> {
     latest: Latest<'tcx>,
     graph: BorrowsGraph<'tcx>,
 }
 
-impl<'mir, 'tcx> PartialEq for BorrowsState<'mir, 'tcx> {
-    fn eq(&self, other: &Self) -> bool {
-        self.graph == other.graph && self.latest == other.latest
-    }
-}
-
-impl<'mir, 'tcx> Eq for BorrowsState<'mir, 'tcx> {}
-
 fn deref_expansions_should_be_considered_same<'tcx>(
-    exp1: &DerefExpansion<'tcx>,
-    exp2: &DerefExpansion<'tcx>,
+    exp1: &Conditioned<DerefExpansion<'tcx>>,
+    exp2: &Conditioned<DerefExpansion<'tcx>>,
 ) -> bool {
-    match (exp1, exp2) {
+    match (&exp1.value, &exp2.value) {
         (
             DerefExpansion::OwnedExpansion { base: b1, .. },
             DerefExpansion::OwnedExpansion { base: b2, .. },
@@ -131,9 +105,9 @@ fn deref_expansions_should_be_considered_same<'tcx>(
 }
 
 fn subtract_deref_expansions<'tcx>(
-    from: &FxHashSet<DerefExpansion<'tcx>>,
-    to: &FxHashSet<DerefExpansion<'tcx>>,
-) -> FxHashSet<DerefExpansion<'tcx>> {
+    from: &FxHashSet<Conditioned<DerefExpansion<'tcx>>>,
+    to: &FxHashSet<Conditioned<DerefExpansion<'tcx>>>,
+) -> FxHashSet<Conditioned<DerefExpansion<'tcx>>> {
     from.iter()
         .filter(|f1| {
             to.iter()
@@ -143,7 +117,69 @@ fn subtract_deref_expansions<'tcx>(
         .collect()
 }
 
-impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
+impl<'tcx> BorrowsState<'tcx> {
+    pub fn join<'mir>(&mut self, other: &Self, body: &'mir mir::Body<'tcx>) -> bool {
+        let mut changed = false;
+        if self.graph.join(&other.graph) {
+            changed = true;
+        }
+        if self.latest.join(&other.latest, body) {
+            changed = true;
+        }
+        changed
+    }
+
+    pub fn remove_edge_and_set_latest(
+        &mut self,
+        edge: &BorrowsEdge<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+        location: Location,
+    ) -> bool {
+        for place in edge.blocked_places() {
+            match place {
+                MaybeOldPlace::Current { place } => {
+                    self.set_latest(place, location)
+                }
+                _ => {}
+            }
+        }
+        self.graph.remove(edge, DebugCtx::new(location))
+    }
+
+    pub fn minimize(&mut self, repacker: PlaceRepacker<'_, 'tcx>, location: Location) {
+        loop {
+            let to_remove = self
+                .graph
+                .edges()
+                .filter(|edge| {
+                    let is_old_unblocked = edge
+                        .blocked_by_places(repacker)
+                        .iter()
+                        .all(|p| p.is_old() && !self.graph.has_edge_blocking(p));
+                    is_old_unblocked
+                        || match &edge.kind() {
+                            BorrowsEdgeKind::DerefExpansion(de) => {
+                                !de.is_owned_expansion()
+                                    && de
+                                        .expansion(repacker)
+                                        .into_iter()
+                                        .all(|p| !self.graph.has_edge_blocking(&p.into()))
+                            }
+                            _ => false,
+                        }
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if to_remove.is_empty() {
+                break;
+            }
+            for edge in to_remove {
+                eprintln!("{:?} Removing edge for minimize {:?}", location, edge);
+                self.remove_edge_and_set_latest(&edge, repacker, location);
+            }
+        }
+    }
+
     pub fn add_path_condition(&mut self, pc: PathCondition) -> bool {
         self.graph.add_path_condition(pc)
     }
@@ -156,9 +192,15 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         &mut self,
         place: MaybeOldPlace<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
-        debug_ctx: DebugCtx,
+        location: Location,
     ) -> bool {
-        self.graph.delete_descendants_of(place, repacker, debug_ctx)
+        let mut changed = false;
+        let edges = self.edges_blocking(place).cloned().collect::<Vec<_>>();
+        for edge in edges {
+            changed = true;
+            self.remove_edge_and_set_latest(&edge, repacker, location);
+        }
+        changed
     }
 
     pub fn edges_blocking(
@@ -172,7 +214,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.graph.edges()
     }
 
-    pub fn deref_expansions(&self) -> FxHashSet<DerefExpansion<'tcx>> {
+    pub fn deref_expansions(&self) -> FxHashSet<Conditioned<DerefExpansion<'tcx>>> {
         self.graph.deref_expansions()
     }
 
@@ -198,48 +240,45 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
             .move_reborrows(orig_assigned_place, new_assigned_place);
     }
 
-    // TODO: Remove
-    pub fn region_projection_members(&self) -> RegionProjectionMembers<'tcx> {
-        self.graph.region_projection_members()
-    }
-
-    pub fn reborrows_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
+    pub fn reborrows_blocked_by(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> FxHashSet<Conditioned<Reborrow<'tcx>>> {
         self.graph.reborrows_blocked_by(place)
     }
 
-    pub fn reborrows(&self) -> FxHashSet<Reborrow<'tcx>> {
+    pub fn reborrows(&self) -> FxHashSet<Conditioned<Reborrow<'tcx>>> {
         self.graph.reborrows()
     }
 
-    pub fn bridge(&self, to: &Self, block: BasicBlock, tcx: TyCtxt<'tcx>) -> ReborrowBridge<'tcx> {
-        let repacker = PlaceRepacker::new(self.body, tcx);
-        let added_reborrows: FxHashSet<Reborrow<'tcx>> = to
+    pub fn bridge(
+        &self,
+        to: &Self,
+        block: BasicBlock,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> ReborrowBridge<'tcx> {
+        let added_reborrows: FxHashSet<Conditioned<Reborrow<'tcx>>> = to
             .reborrows()
-            .iter()
-            .filter(|rb| !self.has_reborrow_at_location(rb.location))
-            .cloned()
+            .into_iter()
+            .filter(|rb| !self.has_reborrow_at_location(rb.value.location))
             .collect();
         let expands = subtract_deref_expansions(&to.deref_expansions(), &self.deref_expansions());
 
         let mut ug = UnblockGraph::new();
 
-        for reborrow in self.reborrows().iter() {
-            if !to.has_reborrow_at_location(reborrow.location) {
-                ug.kill_reborrow(reborrow, self, block, repacker);
+        for reborrow in self.reborrows() {
+            if !to.has_reborrow_at_location(reborrow.value.location) {
+                ug.kill_reborrow(reborrow, self, repacker);
             }
         }
 
         for exp in subtract_deref_expansions(&self.deref_expansions(), &to.deref_expansions()) {
-            ug.unblock_place(exp.base(), self, block, repacker);
+            ug.unblock_place(exp.value.base(), self, repacker);
         }
 
-        for abstraction in self.region_abstractions().iter() {
+        for abstraction in self.region_abstractions() {
             if !to.region_abstractions().contains(&abstraction) {
-                ug.kill_abstraction(
-                    self,
-                    &abstraction.abstraction_type,
-                    PlaceRepacker::new(self.body, tcx),
-                );
+                ug.kill_abstraction(self, abstraction, repacker);
             }
         }
 
@@ -284,10 +323,10 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
     pub fn get_abstractions_blocking(
         &self,
         place: &MaybeOldPlace<'tcx>,
-    ) -> Vec<RegionAbstraction<'tcx>> {
+    ) -> Vec<Conditioned<RegionAbstraction<'tcx>>> {
         self.region_abstractions()
             .iter()
-            .filter(|abstraction| abstraction.blocks(place))
+            .filter(|abstraction| abstraction.value.blocks(place))
             .cloned()
             .collect()
     }
@@ -300,17 +339,13 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         location: Location,
     ) {
         let mut ug = UnblockGraph::new();
-        ug.unblock_place(
-            place.into(),
-            self,
-            location.block,
-            PlaceRepacker::new(body, tcx),
-        );
-        self.apply_unblock_graph(ug, tcx, DebugCtx::new(location));
+        let repacker = PlaceRepacker::new(body, tcx);
+        ug.unblock_place(place.into(), self, repacker);
+        self.apply_unblock_graph(ug, repacker, location);
 
         // Originally we may not have been expanded enough
         self.graph
-            .ensure_expansion_to_exactly(place.into(), body, tcx, location);
+            .ensure_deref_expansion_to_at_least(place.into(), body, tcx, location);
     }
 
     /// Returns places in the PCS that are reborrowed
@@ -318,38 +353,56 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.graph.roots(repacker)
     }
 
+    // TODO: THIS SHOULD BE PATH SENSITIVE!
     pub fn kill_reborrows(
         &mut self,
         blocked_place: MaybeOldPlace<'tcx>,
         assigned_place: MaybeOldPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+        location: Location,
     ) -> bool {
-        self.graph.kill_reborrows(blocked_place, assigned_place)
+        let edges_to_remove = self
+            .graph
+            .edges()
+            .filter(|edge| {
+                if let BorrowsEdgeKind::Reborrow(reborrow) = &edge.kind() {
+                    reborrow.blocked_place == blocked_place
+                        && reborrow.assigned_place == assigned_place
+                } else {
+                    false
+                }
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if edges_to_remove.is_empty() {
+            return false;
+        }
+        for edge in edges_to_remove {
+            self.remove_edge_and_set_latest(&edge, repacker, location);
+        }
+        true
     }
 
     pub fn apply_unblock_graph(
         &mut self,
         graph: UnblockGraph<'tcx>,
-        tcx: TyCtxt<'tcx>,
-        debug_ctx: DebugCtx,
+        repacker: PlaceRepacker<'_, 'tcx>,
+        location: Location,
     ) -> bool {
         let mut changed = false;
-        for action in graph.actions(tcx) {
+        for action in graph.actions(repacker) {
             match action {
                 crate::combined_pcs::UnblockAction::TerminateReborrow {
                     blocked_place,
                     assigned_place,
                     ..
                 } => {
-                    if self.kill_reborrows(blocked_place, assigned_place) {
+                    if self.kill_reborrows(blocked_place, assigned_place, repacker, location) {
                         changed = true;
                     }
                 }
                 crate::combined_pcs::UnblockAction::Collapse(place, _) => {
-                    if self.graph.delete_descendants_of(
-                        place,
-                        PlaceRepacker::new(self.body, tcx),
-                        debug_ctx,
-                    ) {
+                    if self.delete_descendants_of(place, repacker, location) {
                         changed = true;
                     }
                 }
@@ -369,19 +422,23 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.latest.get(place)
     }
 
-    pub fn reborrows_blocking(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
+    pub fn reborrows_blocking(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> FxHashSet<Conditioned<Reborrow<'tcx>>> {
         self.reborrows()
-            .iter()
-            .filter(|rb| rb.blocked_place == place)
-            .cloned()
+            .into_iter()
+            .filter(|rb| rb.value.blocked_place == place)
             .collect()
     }
 
-    pub fn reborrows_assigned_to(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
+    pub fn reborrows_assigned_to(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> FxHashSet<Conditioned<Reborrow<'tcx>>> {
         self.reborrows()
-            .iter()
-            .filter(|rb| rb.assigned_place == place)
-            .cloned()
+            .into_iter()
+            .filter(|rb| rb.value.assigned_place == place)
             .collect()
     }
 
@@ -409,7 +466,7 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         self.graph.has_reborrow_at_location(location)
     }
 
-    pub fn region_abstractions(&self) -> FxHashSet<RegionAbstraction<'tcx>> {
+    pub fn region_abstractions(&self) -> FxHashSet<Conditioned<RegionAbstraction<'tcx>>> {
         self.graph.region_abstractions()
     }
 
@@ -417,9 +474,8 @@ impl<'mir, 'tcx> BorrowsState<'mir, 'tcx> {
         json!({})
     }
 
-    pub fn new(body: &'mir mir::Body<'tcx>) -> Self {
+    pub fn new() -> Self {
         Self {
-            body,
             latest: Latest::new(),
             graph: BorrowsGraph::new(),
         }

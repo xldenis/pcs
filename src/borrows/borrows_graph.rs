@@ -1,12 +1,10 @@
-
-
 use rustc_interface::{
     ast::Mutability,
     data_structures::fx::FxHashSet,
     middle::mir::{self, BasicBlock, Location},
     middle::ty::{Region, TyCtxt},
 };
-
+use serde_json::json;
 
 use crate::{
     rustc_interface,
@@ -19,7 +17,7 @@ use super::{
     },
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
-    domain::{Latest, MaybeOldPlace, Reborrow},
+    domain::{Latest, MaybeOldPlace, Reborrow, ToJsonWithRepacker},
     path_condition::{PathCondition, PathConditions},
     region_abstraction::RegionAbstraction,
 };
@@ -31,57 +29,50 @@ impl<'tcx> BorrowsGraph<'tcx> {
         Self(FxHashSet::default())
     }
 
+    pub fn edge_count(&self) -> usize {
+        self.0.len()
+    }
+
     pub fn edges(&self) -> impl Iterator<Item = &BorrowsEdge<'tcx>> {
         self.0.iter()
     }
 
-    pub fn kill_reborrows(
-        &mut self,
-        blocked_place: MaybeOldPlace<'tcx>,
-        assigned_place: MaybeOldPlace<'tcx>,
-    ) -> bool {
-        self.0.retain(|edge| {
-            if let BorrowsEdgeKind::Reborrow(reborrow) = &edge.kind {
-                reborrow.blocked_place != blocked_place || reborrow.assigned_place != assigned_place
-            } else {
-                true
-            }
-        });
-        true
-    }
-
-    pub fn region_abstractions(&self) -> FxHashSet<RegionAbstraction<'tcx>> {
+    pub fn region_abstractions(&self) -> FxHashSet<Conditioned<RegionAbstraction<'tcx>>> {
         self.0
             .iter()
             .filter_map(|edge| match &edge.kind {
-                BorrowsEdgeKind::RegionAbstraction(abstraction) => Some(abstraction),
+                BorrowsEdgeKind::RegionAbstraction(abstraction) => Some(Conditioned {
+                    conditions: edge.conditions.clone(),
+                    value: abstraction.clone(),
+                }),
                 _ => None,
             })
-            .cloned()
             .collect()
     }
 
-    // TODO: Delete?
-    pub fn deref_expansions(&self) -> FxHashSet<DerefExpansion<'tcx>> {
+    pub fn deref_expansions(&self) -> FxHashSet<Conditioned<DerefExpansion<'tcx>>> {
         self.0
             .iter()
             .filter_map(|edge| match &edge.kind {
-                BorrowsEdgeKind::DerefExpansion(de) => Some(de),
+                BorrowsEdgeKind::DerefExpansion(de) => Some(Conditioned {
+                    conditions: edge.conditions.clone(),
+                    value: de.clone(),
+                }),
                 _ => None,
             })
-            .cloned()
             .collect()
     }
 
-    // TODO: Delete?
-    pub fn reborrows(&self) -> FxHashSet<Reborrow<'tcx>> {
+    pub fn reborrows(&self) -> FxHashSet<Conditioned<Reborrow<'tcx>>> {
         self.0
             .iter()
             .filter_map(|edge| match &edge.kind {
-                BorrowsEdgeKind::Reborrow(reborrow) => Some(reborrow),
+                BorrowsEdgeKind::Reborrow(reborrow) => Some(Conditioned {
+                    conditions: edge.conditions.clone(),
+                    value: reborrow.clone(),
+                }),
                 _ => None,
             })
-            .cloned()
             .collect()
     }
 
@@ -92,20 +83,25 @@ impl<'tcx> BorrowsGraph<'tcx> {
         })
     }
 
-    pub fn reborrows_blocked_by(&self, place: MaybeOldPlace<'tcx>) -> FxHashSet<Reborrow<'tcx>> {
+    pub fn reborrows_blocked_by(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+    ) -> FxHashSet<Conditioned<Reborrow<'tcx>>> {
         self.0
             .iter()
             .filter_map(|edge| match &edge.kind {
                 BorrowsEdgeKind::Reborrow(reborrow) => {
                     if reborrow.assigned_place == place {
-                        Some(reborrow)
+                        Some(Conditioned {
+                            conditions: edge.conditions.clone(),
+                            value: reborrow.clone(),
+                        })
                     } else {
                         None
                     }
                 }
                 _ => None,
             })
-            .cloned()
             .collect()
     }
 
@@ -119,18 +115,24 @@ impl<'tcx> BorrowsGraph<'tcx> {
                     .flat_map(|p| p.as_current())
             })
             .collect::<FxHashSet<_>>();
-        candidates.retain(|p| !self.has_edge_to((*p).into(), repacker));
+        candidates.retain(|p| !self.has_edge_blocked_by((*p).into(), repacker));
         candidates
     }
 
-    pub fn has_edge_to(
+    pub fn has_edge_blocking(&self, place: &MaybeOldPlace<'tcx>) -> bool {
+        self.0
+            .iter()
+            .any(|edge| edge.blocked_places().contains(&place))
+    }
+
+    pub fn has_edge_blocked_by(
         &self,
         place: MaybeOldPlace<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> bool {
         self.0
             .iter()
-            .any(|edge| edge.target_places(repacker).contains(&place))
+            .any(|edge| edge.blocked_by_places(repacker).contains(&place))
     }
 
     pub fn make_place_old(
@@ -194,22 +196,6 @@ impl<'tcx> BorrowsGraph<'tcx> {
         self.0.insert(edge)
     }
 
-    pub fn ensure_expansion_to_exactly(
-        &mut self,
-        place: Place<'tcx>,
-        body: &mir::Body<'tcx>,
-        tcx: TyCtxt<'tcx>,
-        location: Location,
-    ) {
-        eprintln!("{:?} ensure_expansion_to_exactly {:?}", location, place);
-        self.ensure_deref_expansion_to_at_least(place, body, tcx, location);
-        self.delete_descendants_of(
-            place.into(),
-            PlaceRepacker::new(body, tcx),
-            DebugCtx::new(location),
-        );
-    }
-
     pub fn edges_blocking(
         &self,
         place: MaybeOldPlace<'tcx>,
@@ -229,31 +215,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
         });
     }
 
-    pub fn delete_descendants_of(
-        &mut self,
-        place: MaybeOldPlace<'tcx>,
-        _repacker: PlaceRepacker<'_, 'tcx>,
-        debug_ctx: DebugCtx,
-    ) -> bool {
-        let mut changed = false;
-        let edges = self.edges_blocking(place).cloned().collect::<Vec<_>>();
-        for edge in edges {
-            changed = true;
-            self.remove(&edge, debug_ctx);
-        }
-        changed
-    }
-
     pub fn remove(&mut self, edge: &BorrowsEdge<'tcx>, debug_ctx: DebugCtx) -> bool {
-        match debug_ctx.location() {
-            Some(location) if location.statement_index == 5 => {
-                eprintln!("Stack trace:");
-                let backtrace = std::backtrace::Backtrace::capture();
-                eprintln!("{}", backtrace);
-                eprintln!("{:?} remove {:?}", location, edge)
-            }
-            _ => {}
-        }
         self.0.remove(edge)
     }
 
@@ -388,7 +350,38 @@ pub struct BorrowsEdge<'tcx> {
     kind: BorrowsEdgeKind<'tcx>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct Conditioned<T> {
+    pub conditions: PathConditions,
+    pub value: T,
+}
+
+impl <T> Conditioned<T> {
+    pub fn new(value: T, conditions: PathConditions) -> Self {
+        Self {
+            conditions,
+            value,
+        }
+    }
+}
+
+impl <'tcx, T: ToJsonWithRepacker<'tcx>> ToJsonWithRepacker<'tcx> for Conditioned<T> {
+    fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        json!({
+            "conditions": self.conditions.to_json(repacker),
+            "value": self.value.to_json(repacker)
+        })
+    }
+}
+
 impl<'tcx> BorrowsEdge<'tcx> {
+    pub fn conditions(&self) -> &PathConditions {
+        &self.conditions
+    }
+    pub fn valid_for_path(&self, path: &[BasicBlock]) -> bool {
+        self.conditions.valid_for_path(path)
+    }
+
     pub fn kind(&self) -> &BorrowsEdgeKind<'tcx> {
         &self.kind
     }
@@ -399,15 +392,28 @@ impl<'tcx> BorrowsEdge<'tcx> {
             kind,
         }
     }
+
     pub fn blocked_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         self.kind.blocked_places()
     }
 
-    pub fn target_places(
+    pub fn blocks_place(&self, place: MaybeOldPlace<'tcx>) -> bool {
+        self.kind.blocked_places().contains(&place)
+    }
+
+    pub fn is_blocked_by_place(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> bool {
+        self.kind.blocked_by_places(repacker).contains(&place)
+    }
+
+    pub fn blocked_by_places(
         &self,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        self.kind.target_places(repacker)
+        self.kind.blocked_by_places(repacker)
     }
 
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
@@ -451,7 +457,7 @@ impl<'tcx> BorrowsEdgeKind<'tcx> {
         }
     }
 
-    pub fn target_places(
+    pub fn blocked_by_places(
         &self,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> FxHashSet<MaybeOldPlace<'tcx>> {
@@ -509,11 +515,6 @@ impl<'tcx> ToBorrowsEdge<'tcx> for RegionProjectionMember<'tcx> {
             kind: BorrowsEdgeKind::RegionProjectionMember(self),
         }
     }
-}
-
-pub struct Conditioned<T> {
-    pub conditions: PathConditions,
-    pub value: T,
 }
 
 impl<'tcx, T: ToBorrowsEdge<'tcx>> Conditioned<T> {

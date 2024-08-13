@@ -142,49 +142,6 @@ impl<'tcx> ProjectionEdge<'tcx> {
     }
 }
 
-#[derive(Eq, PartialEq, Hash, Clone, Debug)]
-pub struct AbstractionEdge<'tcx> {
-    abstraction_type: AbstractionType<'tcx>,
-}
-
-impl<'tcx> AbstractionEdge<'tcx> {
-    /// Terminating the region makes these places accessible
-    pub fn blocked_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        self.abstraction_type.blocks_places()
-    }
-
-    pub fn abstraction_type(&self) -> &AbstractionType<'tcx> {
-        &self.abstraction_type
-    }
-
-    pub fn location(&self) -> Location {
-        self.abstraction_type.location()
-    }
-
-    /// Capabilities to these places must be given up to make the blocked places
-    /// accessible
-    pub fn blocker_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
-        self.abstraction_type.blocker_places()
-    }
-
-    pub fn new(abstraction_type: AbstractionType<'tcx>) -> Self {
-        Self { abstraction_type }
-    }
-}
-
-#[derive(Eq, PartialEq, Hash, Clone, Debug)]
-pub enum UnblockEdgeType<'tcx> {
-    Reborrow {
-        is_mut: bool,
-        /// Terminating the reborrow requires this place to expire
-        blocker: MaybeOldPlace<'tcx>,
-        /// Terminating the reborrow makes this place available
-        blocked: MaybeOldPlace<'tcx>,
-    },
-    Projection(ProjectionEdge<'tcx>),
-    Abstraction(AbstractionEdge<'tcx>),
-}
-
 #[derive(Debug, Eq, PartialEq)]
 pub enum UnblockAction<'tcx> {
     TerminateAbstraction(Location, AbstractionType<'tcx>),
@@ -194,78 +151,6 @@ pub enum UnblockAction<'tcx> {
         is_mut: bool,
     },
     Collapse(MaybeOldPlace<'tcx>, Vec<MaybeOldPlace<'tcx>>),
-}
-
-#[derive(Debug, Eq, PartialEq, Hash, Clone)]
-pub struct UnblockEdge<'tcx> {
-    pub block: BasicBlock,
-    pub edge_type: UnblockEdgeType<'tcx>,
-}
-
-impl<'tcx> UnblockEdge<'tcx> {
-    pub fn is_mut_reborrow(&self) -> bool {
-        match &self.edge_type {
-            UnblockEdgeType::Reborrow { is_mut, .. } => *is_mut,
-            _ => false,
-        }
-    }
-    pub fn relevant_for_path(&self, path: &[BasicBlock]) -> bool {
-        if !path.contains(&self.block) {
-            return false;
-        }
-        let relevant = |place: &MaybeOldPlace<'tcx>| {
-            place
-                .location()
-                .map_or(true, |loc| path.contains(&loc.block))
-        };
-        match &self.edge_type {
-            UnblockEdgeType::Reborrow {
-                blocker, blocked, ..
-            } => relevant(blocker) && relevant(blocked),
-            UnblockEdgeType::Projection(edge) => relevant(&edge.blocked),
-            UnblockEdgeType::Abstraction(_edge) =>
-            /* TODO */
-            {
-                true
-            }
-        }
-    }
-
-    /// These places must expire to make this edge accessible
-    pub fn blocked_by_places(&self, tcx: TyCtxt<'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
-        match &self.edge_type {
-            UnblockEdgeType::Reborrow {
-                is_mut: _,
-                blocker,
-                blocked: _,
-            } => vec![*blocker],
-            UnblockEdgeType::Projection(edge) => edge.blocker_places(tcx),
-            UnblockEdgeType::Abstraction(edge) => edge.blocker_places().into_iter().collect(),
-        }
-    }
-
-    /// This edge must expire for these places to become accessible
-    pub fn blocked_places(&self) -> Vec<MaybeOldPlace<'tcx>> {
-        match &self.edge_type {
-            UnblockEdgeType::Reborrow {
-                is_mut: _,
-                blocker: _,
-                blocked,
-            } => vec![*blocked],
-            UnblockEdgeType::Projection(edge) => vec![edge.blocked],
-            UnblockEdgeType::Abstraction(edge) => edge.blocked_places().into_iter().collect(),
-        }
-    }
-
-    /// This edge must expire to make `place` accessible
-    pub fn blocks_place(&self, place: MaybeOldPlace<'tcx>) -> bool {
-        self.blocked_places().contains(&place)
-    }
-
-    /// `place` must expire to make this edge accessible
-    pub fn blocked_by_place(&self, tcx: TyCtxt<'tcx>, place: MaybeOldPlace<'tcx>) -> bool {
-        self.blocked_by_places(tcx).contains(&place)
-    }
 }
 
 impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {

@@ -1,5 +1,3 @@
-
-
 use rustc_interface::{
     ast::Mutability,
     data_structures::{
@@ -7,9 +5,7 @@ use rustc_interface::{
         graph::dominators::Dominators,
     },
     hir::def_id::DefId,
-    middle::mir::{
-        self, tcx::PlaceTy, BasicBlock, Location, PlaceElem,
-    },
+    middle::mir::{self, tcx::PlaceTy, BasicBlock, Location, PlaceElem},
     middle::ty::{self, GenericArgsRef, RegionVid, TyCtxt},
 };
 
@@ -238,6 +234,10 @@ impl<'tcx> MaybeOldPlace<'tcx> {
         matches!(self, MaybeOldPlace::Current { .. })
     }
 
+    pub fn is_old(&self) -> bool {
+        matches!(self, MaybeOldPlace::OldPlace(_))
+    }
+
     pub fn place(&self) -> Place<'tcx> {
         match self {
             MaybeOldPlace::Current { place } => *place,
@@ -375,11 +375,9 @@ fn join_locations(loc1: Location, loc2: Location, dominators: &Dominators<BasicB
 }
 
 use crate::utils::PlaceRepacker;
-use serde_json::{json};
+use serde_json::json;
 
-use super::{
-    borrows_visitor::{extract_nested_lifetimes, get_vid},
-};
+use super::borrows_visitor::{extract_nested_lifetimes, get_vid};
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Reborrow<'tcx> {
@@ -423,8 +421,14 @@ impl<'tcx> Reborrow<'tcx> {
             _ => None,
         }
     }
+}
 
-    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+pub trait ToJsonWithRepacker<'tcx> {
+    fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value;
+}
+
+impl <'tcx> ToJsonWithRepacker<'tcx> for Reborrow<'tcx> {
+    fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         json!({
             "blocked_place": self.blocked_place.to_json(repacker),
             "assigned_place": self.assigned_place.to_json(repacker),

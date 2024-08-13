@@ -4,7 +4,6 @@ use std::{
     rc::Rc,
 };
 
-
 use rustc_interface::{
     ast::Mutability,
     borrowck::{
@@ -15,16 +14,14 @@ use rustc_interface::{
     },
     middle::{
         mir::{
-            visit::{Visitor},
-            AggregateKind, Body, BorrowKind, ConstantKind, Location, Operand, Place, Rvalue,
-            Statement, StatementKind, Terminator, TerminatorKind,
+            visit::Visitor, AggregateKind, Body, BorrowKind, ConstantKind, Location, Operand,
+            Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
         },
         ty::{
             self, EarlyBinder, Region, RegionKind, RegionVid, TyCtxt, TypeVisitable, TypeVisitor,
         },
     },
 };
-
 
 use crate::{
     borrows::{
@@ -33,11 +30,11 @@ use crate::{
         region_abstraction::RegionAbstraction,
     },
     rustc_interface,
-    utils::{self, PlaceRepacker},
+    utils::{self, PlaceRepacker, PlaceSnapshot},
 };
 
 use super::{
-    borrows_state::{RegionProjectionMemberDirection},
+    borrows_state::RegionProjectionMemberDirection,
     domain::AbstractionType,
     engine::{BorrowsDomain, BorrowsEngine},
 };
@@ -125,33 +122,6 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
             .ensure_expansion_to_exactly(self.tcx, self.body, place, location)
     }
 
-    fn subsets_at(
-        &self,
-        location: Location,
-        start: bool,
-    ) -> BTreeMap<RegionVid, BTreeSet<RegionVid>> {
-        let location = if start {
-            self.location_table.start_index(location)
-        } else {
-            self.location_table.mid_index(location)
-        };
-        self.output_facts.subsets_at(location).into_owned()
-    }
-
-    fn origins_containing_loans_at(&self, location: Location, start: bool) -> Vec<RegionVid> {
-        let location = if start {
-            self.location_table.start_index(location)
-        } else {
-            self.location_table.mid_index(location)
-        };
-        self.output_facts
-            .origin_contains_loan_at(location)
-            .iter()
-            .filter(|(_, loans)| !loans.is_empty())
-            .map(|(origin, _)| origin.to_owned())
-            .collect()
-    }
-
     fn origins_live_at(&self, location: Location, start: bool) -> &[RegionVid] {
         let location = if start {
             self.location_table.start_index(location)
@@ -223,6 +193,10 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
 
         for (idx, ty) in sig.inputs().iter().enumerate() {
             let input_place: utils::Place<'tcx> = args[idx].place().unwrap().into();
+            let input_place = MaybeOldPlace::OldPlace(PlaceSnapshot::new(
+                input_place,
+                self.state.after.get_latest(&input_place),
+            ));
             let ty = match ty.kind() {
                 ty::TyKind::Ref(region, ty, Mutability::Mut) => {
                     for output in self.matches_for_input_lifetime(
@@ -308,16 +282,10 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         }
         result
     }
-}
-fn get_vid_from_substs<'tcx>(
-    region: ty::Region<'tcx>,
-    substs: ty::GenericArgsRef<'tcx>,
-) -> RegionVid {
-    match region.kind() {
-        ty::RegionKind::ReEarlyBound(early_bound) => {
-            get_vid(&substs[early_bound.index as usize].expect_region()).unwrap()
-        }
-        _ => todo!(),
+
+    fn minimize(&mut self, location: Location) {
+        let repacker = PlaceRepacker::new(self.body, self.tcx);
+        self.state.after.minimize(repacker, location);
     }
 }
 
@@ -385,6 +353,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     destination,
                     ..
                 } => {
+                    self.state.after.set_latest((*destination).into(), location);
                     self.construct_region_abstraction_if_necessary(
                         func,
                         args,
@@ -399,6 +368,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
     fn visit_statement(&mut self, statement: &Statement<'tcx>, location: Location) {
         self.debug_ctx = Some(DebugCtx::new(location));
+        if self.preparing && self.before {
+            self.minimize(location);
+        }
         self.super_statement(statement, location);
         if self.preparing {
             let mut g = UnblockGraph::new();
@@ -415,7 +387,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                         place: borrow.borrowed_place.into(),
                     },
                     &self.state.after,
-                    location.block,
                     self.repacker(),
                 );
             }
@@ -424,21 +395,17 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
 
             for abstraction in self.state.after.region_abstractions().iter() {
                 if abstraction
+                    .value
                     .outputs()
                     .iter()
                     .all(|i| !live_origins.contains(&i.region(self.repacker())))
                 {
-                    g.kill_abstraction(
-                        &self.state.after,
-                        &abstraction.abstraction_type,
-                        self.repacker(),
-                    );
+                    g.kill_abstraction(&self.state.after, abstraction.clone(), self.repacker());
                 }
             }
 
-            self.state
-                .after
-                .apply_unblock_graph(g, self.tcx, self.debug_ctx.unwrap());
+            let repacker = PlaceRepacker::new(self.body, self.tcx);
+            self.state.after.apply_unblock_graph(g, repacker, location);
         }
 
         // Stuff in this block will be included as the middle "bridge" ops that
@@ -555,7 +522,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                             self.state.after.delete_descendants_of(
                                 MaybeOldPlace::Current { place: from },
                                 repacker,
-                                self.debug_ctx.unwrap(),
+                                location,
                             );
                         }
                         Rvalue::Use(Operand::Copy(from)) => {

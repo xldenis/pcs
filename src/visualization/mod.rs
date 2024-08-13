@@ -10,16 +10,13 @@ pub mod graph_constructor;
 pub mod mir_graph;
 
 use crate::{
-    borrows::{
-        borrows_state::BorrowsState,
-        unblock_graph::UnblockGraph,
-    },
+    borrows::{borrows_state::BorrowsState, unblock_graph::UnblockGraph},
     free_pcs::{CapabilityKind, CapabilitySummary},
     rustc_interface,
     utils::{Place, PlaceRepacker},
 };
 use std::{
-    collections::{HashSet},
+    collections::HashSet,
     fs::File,
     io::{self, Write},
 };
@@ -28,16 +25,11 @@ use dot::escape_html;
 use rustc_interface::{
     borrowck::{
         borrow_set::BorrowSet,
-        consumers::{
-            BorrowIndex,
-            PoloniusInput,
-        },
+        consumers::{BorrowIndex, PoloniusInput},
     },
     middle::{
-        mir::{
-            BasicBlock, Location,
-        },
-        ty::{RegionVid},
+        mir::{BasicBlock, Location},
+        ty::RegionVid,
     },
 };
 
@@ -200,18 +192,6 @@ enum GraphEdge {
         blocked_region: NodeId,
         blocking_region: NodeId,
     },
-    UnblockReborrowEdge {
-        blocked_place: NodeId,
-        blocking_place: NodeId,
-        block: BasicBlock,
-        reason: String,
-    },
-    UnblockProjectionEdge {
-        blocked_place: NodeId,
-        blocking_place: NodeId,
-        block: BasicBlock,
-        reason: String,
-    },
     ReborrowEdge {
         borrowed_place: NodeId,
         assigned_place: NodeId,
@@ -281,30 +261,6 @@ impl GraphEdge {
                 options: EdgeOptions::undirected()
                     .with_color("green".to_string())
                     .with_label(format!("{:?}", location)),
-            },
-            GraphEdge::UnblockReborrowEdge {
-                blocked_place,
-                blocking_place,
-                block,
-                reason,
-            } => DotEdge {
-                from: blocked_place.to_string(),
-                to: blocking_place.to_string(),
-                options: EdgeOptions::directed(EdgeDirection::Backward)
-                    .with_color("red".to_string())
-                    .with_label(format!("{:?}({})", block, reason)),
-            },
-            GraphEdge::UnblockProjectionEdge {
-                blocked_place,
-                blocking_place,
-                block,
-                reason,
-            } => DotEdge {
-                from: blocked_place.to_string(),
-                to: blocking_place.to_string(),
-                options: EdgeOptions::directed(EdgeDirection::Forward)
-                    .with_color("darkred".to_string())
-                    .with_label(format!("{:?}({})", block, reason)),
             },
             GraphEdge::BlocksAbstractionEdge {
                 blocked_region,
@@ -377,7 +333,7 @@ pub fn generate_dot_graph<'a, 'tcx: 'a>(
     _location: Location,
     repacker: PlaceRepacker<'a, 'tcx>,
     summary: &CapabilitySummary<'tcx>,
-    borrows_domain: &BorrowsState<'a, 'tcx>,
+    borrows_domain: &BorrowsState<'tcx>,
     borrow_set: &BorrowSet<'tcx>,
     _input_facts: &PoloniusInput,
     file_path: &str,
