@@ -198,22 +198,24 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
                 self.state.after.get_latest(&input_place),
             ));
             let ty = match ty.kind() {
-                ty::TyKind::Ref(region, ty, Mutability::Mut) => {
-                    for output in self.matches_for_input_lifetime(
-                        *region,
-                        param_env,
-                        substs,
-                        sig.output(),
-                        destination.into(),
-                    ) {
-                        let input_place = input_place.project_deref(self.repacker());
-                        edges.push((
-                            idx,
-                            AbstractionBlockEdge {
-                                input: AbstractionTarget::MaybeOldPlace(input_place.into()),
-                                output,
-                            },
-                        ));
+                ty::TyKind::Ref(region, ty, m) => {
+                    if m.is_mut() {
+                        for output in self.matches_for_input_lifetime(
+                            *region,
+                            param_env,
+                            substs,
+                            sig.output(),
+                            destination.into(),
+                        ) {
+                            let input_place = input_place.project_deref(self.repacker());
+                            edges.push((
+                                idx,
+                                AbstractionBlockEdge {
+                                    input: AbstractionTarget::MaybeOldPlace(input_place.into()),
+                                    output,
+                                },
+                            ));
+                        }
                     }
                     *ty
                 }
@@ -239,16 +241,20 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
                 }
             }
         }
-        assert!(edges.len() > 0, "No edges for {:?}", func_def_id);
-        self.state.after.add_region_abstraction(
-            RegionAbstraction::new(AbstractionType::FunctionCall {
-                def_id: *func_def_id,
-                location,
-                substs,
-                edges,
-            }),
-            location.block,
-        );
+
+        // No edges may be added e.g. if the inputs do not contain any (possibly
+        // nested) mutable references
+        if !edges.is_empty() {
+            self.state.after.add_region_abstraction(
+                RegionAbstraction::new(AbstractionType::FunctionCall {
+                    def_id: *func_def_id,
+                    location,
+                    substs,
+                    edges,
+                }),
+                location.block,
+            );
+        }
     }
 
     fn matches_for_input_lifetime(
