@@ -63,10 +63,6 @@ impl<'tcx> UnblockGraph<'tcx> {
         self.0.retain(|edge| edge.valid_for_path(path));
     }
 
-    fn remove_edge_and_trim(&mut self, edge: &UnblockEdge<'tcx>) {
-        self.0.remove(edge);
-    }
-
     pub fn actions(self, repacker: PlaceRepacker<'_, 'tcx>) -> Vec<UnblockAction<'tcx>> {
         let mut edges = self.0;
         let mut actions = vec![];
@@ -147,17 +143,6 @@ impl<'tcx> UnblockGraph<'tcx> {
         self.0.insert(unblock_edge);
     }
 
-    pub fn kill_reborrows_assigned_to(
-        &mut self,
-        place: MaybeOldPlace<'tcx>,
-        borrows: &BorrowsState<'tcx>,
-        repacker: PlaceRepacker<'_, 'tcx>,
-    ) {
-        for reborrow in borrows.reborrows_assigned_to(place) {
-            self.kill_reborrow(reborrow, borrows, repacker);
-        }
-    }
-
     pub fn kill_abstraction(
         &mut self,
         borrows: &BorrowsState<'tcx>,
@@ -175,16 +160,6 @@ impl<'tcx> UnblockGraph<'tcx> {
         self.add_dependency(abstraction.to_borrows_edge());
     }
 
-    pub fn kill_place(
-        &mut self,
-        place: MaybeOldPlace<'tcx>,
-        borrows: &BorrowsState<'tcx>,
-        repacker: PlaceRepacker<'_, 'tcx>,
-    ) {
-        self.unblock_place(place, borrows, repacker);
-        self.kill_reborrows_assigned_to(place, borrows, repacker);
-    }
-
     pub fn unblock_place(
         &mut self,
         place: MaybeOldPlace<'tcx>,
@@ -200,13 +175,13 @@ impl<'tcx> UnblockGraph<'tcx> {
                 ),
                 BorrowsEdgeKind::DerefExpansion(expansion) => {
                     self.add_dependency(edge.clone());
-                    for place in &expansion.expansion(repacker) {
-                        self.kill_place(place.clone(), borrows, repacker);
+                    for place in expansion.expansion(repacker) {
+                        self.unblock_place(place, borrows, repacker);
                     }
                 }
                 BorrowsEdgeKind::RegionAbstraction(abstraction) => {
                     for place in abstraction.abstraction_type.blocker_places() {
-                        self.kill_place(place, borrows, repacker);
+                        self.unblock_place(place, borrows, repacker);
                     }
                 }
                 BorrowsEdgeKind::RegionProjectionMember(_) => todo!(),
