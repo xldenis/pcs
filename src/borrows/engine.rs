@@ -98,11 +98,10 @@ impl<'mir, 'tcx> JoinSemiLattice for BorrowsDomain<'mir, 'tcx> {
         // For edges in the other graph that actually belong to it,
         // add the path condition that leads them to this block
         let pc = PathCondition::new(other.block, self.block);
-        eprintln!("Extend {:?} with {:?}", other.block, self.block);
         other_after.add_path_condition(pc);
 
         // Overlay both graphs
-        self.after.join(&other_after, self.body())
+        self.after.join(&other_after, self.block)
     }
 }
 
@@ -139,8 +138,10 @@ impl<'a, 'tcx> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
+        eprintln!("apply_statement_effect prepare: {:?}", location);
         BorrowsVisitor::preparing(self, state, false).visit_statement(statement, location);
         state.start = state.after.clone();
+        eprintln!("apply_statement_effect apply: {:?}", location);
         BorrowsVisitor::applying(self, state, false).visit_statement(statement, location);
     }
 

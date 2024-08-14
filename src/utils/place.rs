@@ -102,6 +102,10 @@ impl<'tcx> Place<'tcx> {
         self.0.ty(body, tcx).ty.is_ref()
     }
 
+    pub fn ref_mutability(&self, body: &Body<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Mutability> {
+        self.0.ty(body, tcx).ty.ref_mutability()
+    }
+
     pub fn project_deref(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Self {
         assert!(
             self.ty(repacker).ty.is_ref() || self.ty(repacker).ty.is_box(),

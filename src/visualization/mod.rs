@@ -13,7 +13,7 @@ use crate::{
     borrows::{borrows_state::BorrowsState, unblock_graph::UnblockGraph},
     free_pcs::{CapabilityKind, CapabilitySummary},
     rustc_interface,
-    utils::{Place, PlaceRepacker},
+    utils::{Place, PlaceRepacker, SnapshotLocation},
 };
 use std::{
     collections::HashSet,
@@ -145,7 +145,7 @@ enum NodeType {
     FPCSNode {
         label: String,
         capability: Option<CapabilityKind>,
-        location: Option<Location>,
+        location: Option<SnapshotLocation>,
         region: Option<String>,
     },
     RegionProjectionNode {
@@ -153,7 +153,7 @@ enum NodeType {
     },
     ReborrowingDagNode {
         label: String,
-        location: Option<Location>,
+        location: Option<SnapshotLocation>,
     },
 }
 

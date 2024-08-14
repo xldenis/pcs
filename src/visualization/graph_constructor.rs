@@ -9,7 +9,7 @@ use crate::{
     },
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
-    utils::{Place, PlaceRepacker, PlaceSnapshot},
+    utils::{Place, PlaceRepacker, PlaceSnapshot, SnapshotLocation},
     visualization::dot_graph::RankAnnotation,
 };
 
@@ -67,7 +67,7 @@ impl GraphCluster {
 }
 
 struct GraphConstructor<'mir, 'tcx> {
-    place_nodes: IdLookup<(Place<'tcx>, Option<Location>)>,
+    place_nodes: IdLookup<(Place<'tcx>, Option<SnapshotLocation>)>,
     region_projection_nodes: IdLookup<RegionProjection<'tcx>>,
     region_clusters: HashMap<Location, GraphCluster>,
     nodes: Vec<GraphNode>,
@@ -119,7 +119,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         )
     }
 
-    fn place_node_id(&mut self, place: Place<'tcx>, location: Option<Location>) -> NodeId {
+    fn place_node_id(&mut self, place: Place<'tcx>, location: Option<SnapshotLocation>) -> NodeId {
         self.place_nodes.node_id(&(place, location))
     }
 
@@ -203,7 +203,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
     fn insert_place_node(
         &mut self,
         place: Place<'tcx>,
-        location: Option<Location>,
+        location: Option<SnapshotLocation>,
         capability: Option<CapabilityKind>,
     ) -> NodeId {
         if let Some(node_id) = self.place_nodes.existing_id(&(place, location)) {
@@ -375,7 +375,7 @@ impl<'a, 'tcx> PCSGraphConstructor<'a, 'tcx> {
     fn insert_place_and_previous_projections(
         &mut self,
         place: Place<'tcx>,
-        location: Option<Location>,
+        location: Option<SnapshotLocation>,
         kind: Option<CapabilityKind>,
     ) -> NodeId {
         let node = self.constructor.insert_place_node(place, location, kind);

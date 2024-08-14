@@ -85,6 +85,7 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
             .borrows
             .after
             .apply_unblock_graph(g, self.cgx.rp, mir::Location { block: self.block, statement_index: 0 });
+        eprintln!("fpcs: {}, borrows: {}, ub: {}", fpcs, borrows, ub);
         fpcs || borrows || ub
     }
 }

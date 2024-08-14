@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use crate::{
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
     rustc_interface,
-    utils::{Place, PlaceRepacker},
+    utils::{Place, PlaceRepacker, SnapshotLocation},
     ReborrowBridge,
 };
 
@@ -80,15 +80,27 @@ fn subtract_deref_expansions<'tcx>(
 }
 
 impl<'tcx> BorrowsState<'tcx> {
-    pub fn join<'mir>(&mut self, other: &Self, body: &'mir mir::Body<'tcx>) -> bool {
+    pub fn join<'mir>(&mut self, other: &Self, post_block: BasicBlock) -> bool {
         let mut changed = false;
         if self.graph.join(&other.graph) {
+            eprintln!("graph changed");
             changed = true;
         }
-        if self.latest.join(&other.latest, body) {
-            changed = true;
+        if self.latest.join(&other.latest, post_block) {
+            // TODO: Setting changed to true prevents divergence for loops,
+            // think about how latest should work in loops
+
+            // changed = true;
         }
         changed
+    }
+
+    pub fn change_maybe_old_place(
+        &mut self,
+        old_place: MaybeOldPlace<'tcx>,
+        new_place: MaybeOldPlace<'tcx>,
+    ) -> bool {
+        self.graph.change_maybe_old_place(old_place, new_place)
     }
 
     pub fn remove_edge_and_set_latest(
@@ -355,7 +367,9 @@ impl<'tcx> BorrowsState<'tcx> {
         let mut changed = false;
         for action in graph.actions(repacker) {
             match action {
-                crate::combined_pcs::UnblockAction::TerminateReborrow { reserve_location, .. } => {
+                crate::combined_pcs::UnblockAction::TerminateReborrow {
+                    reserve_location, ..
+                } => {
                     if self.kill_reborrows(reserve_location, location, repacker) {
                         changed = true;
                     }
@@ -373,11 +387,11 @@ impl<'tcx> BorrowsState<'tcx> {
         changed
     }
 
-    pub fn set_latest(&mut self, place: Place<'tcx>, location: Location) {
-        self.latest.insert(place, location);
+    pub fn set_latest<T: Into<SnapshotLocation>>(&mut self, place: Place<'tcx>, location: T) {
+        self.latest.insert(place, location.into());
     }
 
-    pub fn get_latest(&self, place: &Place<'tcx>) -> Location {
+    pub fn get_latest(&self, place: &Place<'tcx>) -> SnapshotLocation {
         self.latest.get(place)
     }
 

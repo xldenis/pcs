@@ -11,7 +11,7 @@ use rustc_interface::{
 
 use crate::{
     rustc_interface,
-    utils::{Place, PlaceSnapshot},
+    utils::{Place, PlaceSnapshot, SnapshotLocation},
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -26,6 +26,12 @@ pub struct FunctionCallAbstraction<'tcx> {
 }
 
 impl<'tcx> FunctionCallAbstraction<'tcx> {
+    pub fn maybe_old_places(&mut self) -> Vec<&mut MaybeOldPlace<'tcx>> {
+        self.edges
+            .iter_mut()
+            .flat_map(|(_, edge)| vec![edge.input.mut_place(), edge.output.mut_place()])
+            .collect()
+    }
 
     pub fn def_id(&self) -> DefId {
         self.def_id
@@ -74,6 +80,13 @@ pub enum AbstractionTarget<'tcx> {
 }
 
 impl<'tcx> AbstractionTarget<'tcx> {
+    pub fn mut_place(&mut self) -> &mut MaybeOldPlace<'tcx> {
+        match self {
+            AbstractionTarget::MaybeOldPlace(p) => p,
+            AbstractionTarget::RegionProjection(p) => &mut p.place,
+        }
+    }
+
     pub fn blocks(&self, place: &MaybeOldPlace<'tcx>) -> bool {
         match self {
             AbstractionTarget::MaybeOldPlace(p) => p == place,
@@ -106,6 +119,12 @@ impl<'tcx> AbstractionTarget<'tcx> {
 }
 
 impl<'tcx> AbstractionType<'tcx> {
+    pub fn maybe_old_places(&mut self) -> Vec<&mut MaybeOldPlace<'tcx>> {
+        match self {
+            AbstractionType::FunctionCall(c) => c.maybe_old_places(),
+        }
+    }
+
     pub fn location(&self) -> Location {
         match self {
             AbstractionType::FunctionCall(c) => c.location,
@@ -129,7 +148,8 @@ impl<'tcx> AbstractionType<'tcx> {
 
     pub fn blocks_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
         match self {
-            AbstractionType::FunctionCall(c) => c.edges
+            AbstractionType::FunctionCall(c) => c
+                .edges
                 .iter()
                 .flat_map(|(_, edge)| match edge.input {
                     AbstractionTarget::MaybeOldPlace(p) => Some(p),
@@ -207,9 +227,9 @@ impl<'tcx> MaybeOldPlace<'tcx> {
             .collect()
     }
 
-    pub fn new(place: Place<'tcx>, at: Option<Location>) -> Self {
+    pub fn new<T: Into<SnapshotLocation>>(place: Place<'tcx>, at: Option<T>) -> Self {
         if let Some(at) = at {
-            Self::OldPlace(PlaceSnapshot { place, at })
+            Self::OldPlace(PlaceSnapshot::new(place, at))
         } else {
             Self::Current { place }
         }
@@ -266,7 +286,7 @@ impl<'tcx> MaybeOldPlace<'tcx> {
         }
     }
 
-    pub fn location(&self) -> Option<Location> {
+    pub fn location(&self) -> Option<SnapshotLocation> {
         match self {
             MaybeOldPlace::Current { .. } => None,
             MaybeOldPlace::OldPlace(old_place) => Some(old_place.at),
@@ -303,13 +323,13 @@ impl<'tcx> MaybeOldPlace<'tcx> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Latest<'tcx>(FxHashMap<Place<'tcx>, Location>);
+pub struct Latest<'tcx>(FxHashMap<Place<'tcx>, SnapshotLocation>);
 
 impl<'tcx> Latest<'tcx> {
     pub fn new() -> Self {
         Self(FxHashMap::default())
     }
-    pub fn get(&self, place: &Place<'tcx>) -> Location {
+    pub fn get(&self, place: &Place<'tcx>) -> SnapshotLocation {
         if let Some(loc) = self.0.get(place) {
             return *loc;
         }
@@ -318,25 +338,22 @@ impl<'tcx> Latest<'tcx> {
                 return *loc;
             }
         }
-        Location::START
+        SnapshotLocation::Location(Location::START)
     }
-    pub fn insert(&mut self, place: Place<'tcx>, location: Location) -> Option<Location> {
+    pub fn insert(
+        &mut self,
+        place: Place<'tcx>,
+        location: SnapshotLocation,
+    ) -> Option<SnapshotLocation> {
         self.0.insert(place, location)
     }
 
-    /// Joins the latest versions of locations, by choosing the closest location
-    /// that appears after (or at) both locations. If either location definitely
-    /// comes after the other, that one is chosen. Otherwise, we return the
-    /// first block that dominates both locations. Such a block definitely
-    /// exists (presumably it is the block where this join occurs)
-    pub fn join(&mut self, other: &Self, body: &mir::Body<'tcx>) -> bool {
+    pub fn join(&mut self, other: &Self, block: BasicBlock) -> bool {
         let mut changed = false;
         for (place, other_loc) in other.0.iter() {
             if let Some(self_loc) = self.0.get(place) {
-                let dominators = body.basic_blocks.dominators();
-                let new_loc = join_locations(*self_loc, *other_loc, dominators);
-                if new_loc != *self_loc {
-                    self.insert(*place, new_loc);
+                if *self_loc != *other_loc {
+                    self.insert(*place, SnapshotLocation::Join(block));
                     changed = true;
                 }
             } else {
@@ -345,28 +362,6 @@ impl<'tcx> Latest<'tcx> {
             }
         }
         changed
-    }
-}
-
-/// Choses the closes location that appears after or at both locations. If
-/// either location definitely comes after the other, that one is chosen.
-/// Otherwise, we return the first block that dominates both locations. Such a
-/// block definitely exists (presumably it is the block where this join occurs)
-fn join_locations(loc1: Location, loc2: Location, dominators: &Dominators<BasicBlock>) -> Location {
-    if loc1.dominates(loc2, dominators) {
-        loc1
-    } else if loc2.dominates(loc1, dominators) {
-        loc2
-    } else {
-        for block in dominators.dominators(loc2.block) {
-            if dominators.dominates(block, loc1.block) {
-                return Location {
-                    block,
-                    statement_index: 0,
-                };
-            }
-        }
-        unreachable!()
     }
 }
 

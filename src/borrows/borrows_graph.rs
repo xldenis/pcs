@@ -153,6 +153,21 @@ impl<'tcx> BorrowsGraph<'tcx> {
         self.0.len() != len
     }
 
+    pub fn change_maybe_old_place(
+        &mut self,
+        old_place: MaybeOldPlace<'tcx>,
+        new_place: MaybeOldPlace<'tcx>,
+    ) -> bool {
+        self.mut_maybe_old_places(|place| {
+            if *place == old_place {
+                *place = new_place;
+                true
+            } else {
+                false
+            }
+        })
+    }
+
     pub fn add_reborrow(
         &mut self,
         blocked_place: Place<'tcx>,
@@ -301,6 +316,23 @@ impl<'tcx> BorrowsGraph<'tcx> {
         });
     }
 
+    fn mut_maybe_old_places(&mut self, mut f: impl FnMut(&mut MaybeOldPlace<'tcx>) -> bool) -> bool {
+        self.mut_edges(|edge| {
+            let maybe_old_places: Vec<&mut MaybeOldPlace<'tcx>> = match edge.mut_kind() {
+                BorrowsEdgeKind::Reborrow(reborrow) => vec![&mut reborrow.blocked_place, &mut reborrow.assigned_place],
+                BorrowsEdgeKind::DerefExpansion(de) => vec![de.mut_base()],
+                BorrowsEdgeKind::RegionAbstraction(ra) => ra.maybe_old_places(),
+                BorrowsEdgeKind::RegionProjectionMember(_) => todo!(),
+            };
+            let mut changed = false;
+            for p in maybe_old_places {
+                if f(p) {
+                    changed = true;
+                }
+            }
+            changed
+        })
+    }
     fn mut_edges(&mut self, mut f: impl FnMut(&mut BorrowsEdge<'tcx>) -> bool) -> bool {
         let mut changed = false;
         self.0 = self
@@ -362,6 +394,10 @@ impl<'tcx> BorrowsEdge<'tcx> {
 
     pub fn kind(&self) -> &BorrowsEdgeKind<'tcx> {
         &self.kind
+    }
+
+    pub fn mut_kind(&mut self) -> &mut BorrowsEdgeKind<'tcx> {
+        &mut self.kind
     }
 
     pub fn new(kind: BorrowsEdgeKind<'tcx>, block: BasicBlock) -> Self {

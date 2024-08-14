@@ -8,14 +8,9 @@ use std::{
     io::{self},
 };
 
-use rustc_interface::{
-    middle::{
-        mir::{
-            self, BinOp, Body, Local, Operand, Rvalue, Statement,
-            TerminatorKind, UnwindAction,
-        },
-        ty::{TyCtxt},
-    },
+use rustc_interface::middle::{
+    mir::{self, BinOp, Body, Local, Operand, Rvalue, Statement, TerminatorKind, UnwindAction},
+    ty::TyCtxt,
 };
 
 #[derive(Serialize)]
@@ -99,7 +94,7 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, repacker: PlaceRepacker<'_, 'tcx>)
         Rvalue::ThreadLocalRef(_) => todo!(),
         Rvalue::AddressOf(_, _) => todo!(),
         Rvalue::Len(_) => todo!(),
-        Rvalue::Cast(_, _, _) => todo!(),
+        Rvalue::Cast(_, operand, ty) => format!("{} as {}", format_operand(operand, repacker), ty),
         Rvalue::BinaryOp(op, box (lhs, rhs)) | Rvalue::CheckedBinaryOp(op, box (lhs, rhs)) => {
             format!(
                 "{} {} {}",

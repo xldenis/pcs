@@ -502,19 +502,14 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                             let target: utils::Place<'tcx> = (*target).into();
                             if matches!(from.ty(self.repacker()).ty.kind(), ty::TyKind::Ref(_, _, r) if r.is_mut())
                             {
-                                self.state.after.move_reborrows(
+                                self.state.after.change_maybe_old_place(
                                     MaybeOldPlace::new(
                                         from.project_deref(self.repacker()),
                                         Some(self.state.after.get_latest(&from)),
                                     ),
-                                    target.project_deref(self.repacker()).into(),
+                                    target.project_deref(repacker).into(),
                                 );
                             }
-                            self.state.after.move_region_projection_member_projections(
-                                MaybeOldPlace::Current { place: from },
-                                MaybeOldPlace::Current { place: target },
-                                repacker,
-                            );
                             self.state.after.delete_descendants_of(
                                 MaybeOldPlace::Current { place: from },
                                 repacker,

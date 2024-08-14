@@ -25,6 +25,10 @@ pub struct RegionAbstraction<'tcx> {
 }
 
 impl<'tcx> RegionAbstraction<'tcx> {
+    pub fn maybe_old_places(&mut self) -> Vec<&mut MaybeOldPlace<'tcx>> {
+        self.abstraction_type.maybe_old_places()
+    }
+
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         self.abstraction_type.make_place_old(place, latest);
     }

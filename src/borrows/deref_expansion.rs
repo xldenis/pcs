@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::{
     rustc_interface::middle::mir::{Location, PlaceElem},
-    utils::{Place, PlaceRepacker, PlaceSnapshot},
+    utils::{Place, PlaceRepacker, PlaceSnapshot, SnapshotLocation},
 };
 
 use super::domain::{Latest, MaybeOldPlace, ToJsonWithRepacker};
@@ -40,6 +40,13 @@ pub enum DerefExpansion<'tcx> {
 }
 
 impl<'tcx> DerefExpansion<'tcx> {
+    pub fn mut_base(&mut self) -> &mut MaybeOldPlace<'tcx> {
+        match self {
+            DerefExpansion::OwnedExpansion { base, .. } => base,
+            DerefExpansion::BorrowExpansion(e) => &mut e.base,
+        }
+    }
+
     pub fn is_owned_expansion(&self) -> bool {
         matches!(self, DerefExpansion::OwnedExpansion { .. })
     }
@@ -103,7 +110,7 @@ impl<'tcx> DerefExpansion<'tcx> {
         }
     }
 
-    pub fn make_base_old(&mut self, place_location: Location) {
+    pub fn make_base_old(&mut self, place_location: SnapshotLocation) {
         let base = self.base();
         assert!(base.is_current());
         self.set_base(MaybeOldPlace::OldPlace(PlaceSnapshot {
