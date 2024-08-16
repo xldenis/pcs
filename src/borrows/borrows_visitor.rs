@@ -347,6 +347,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
     }
 
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
+        if self.preparing && self.before {
+            self.minimize(location);
+        }
         self.super_terminator(terminator, location);
         if !self.before && !self.preparing {
             match &terminator.kind {

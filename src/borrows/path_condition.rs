@@ -56,7 +56,7 @@ impl PCGraph {
         self.0
             .iter()
             .find(|pc| !self.has_path_to_block(pc.from))
-            .unwrap()
+            .unwrap_or_else(|| panic!("No root found in {:?}", self))
             .from
     }
 
@@ -89,7 +89,9 @@ impl PCGraph {
     }
 
     pub fn insert(&mut self, pc: PathCondition) -> bool {
-        if self.has_path_to_block(pc.from) {
+        // TODO: The current logic ensures that inserting preserves the root, but
+        // it should be checked whether this makes sense
+        if self.has_path_to_block(pc.from) && pc.to != self.root() {
             self.0.insert(pc)
         } else {
             false
@@ -135,13 +137,9 @@ impl PathConditions {
     pub fn insert(&mut self, pc: PathCondition) -> bool {
         match self {
             PathConditions::AtBlock(b) => {
-                if *b == pc.from {
-                    *self = PathConditions::Paths(PCGraph::singleton(pc));
-                    true
-                } else {
-                    eprintln!("Ignore {:?} for {:?}", pc, b);
-                    false
-                }
+                assert!(*b == pc.from);
+                *self = PathConditions::Paths(PCGraph::singleton(pc));
+                true
             }
             PathConditions::Paths(p) => p.insert(pc),
         }
