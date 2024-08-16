@@ -119,15 +119,6 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
             .ensure_expansion_to_exactly(self.tcx, self.body, place, location)
     }
 
-    fn origins_live_at(&self, location: Location, start: bool) -> &[RegionVid] {
-        let location = if start {
-            self.location_table.start_index(location)
-        } else {
-            self.location_table.mid_index(location)
-        };
-        self.output_facts.origins_live_at(location)
-    }
-
     fn loans_invalidated_at(&self, location: Location, start: bool) -> Vec<BorrowIndex> {
         let location = if start {
             self.location_table.start_index(location)
@@ -389,19 +380,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     self.repacker(),
                 );
             }
-
-            let live_origins = self.origins_live_at(location, self.before);
-
-            // for abstraction in self.state.after.region_abstractions().iter() {
-            //     if abstraction.value.outputs().iter().all(|i| {
-            //         !live_origins
-            //             .iter()
-            //             .any(|lo| self.outlives(i.region(self.repacker()), *lo))
-            //     }) {
-            //         eprintln!("Live origins {:?} dont contain anything", live_origins);
-            //         g.kill_abstraction(&self.state.after, abstraction.clone(), self.repacker());
-            //     }
-            // }
 
             let repacker = PlaceRepacker::new(self.body, self.tcx);
             self.state.after.apply_unblock_graph(g, repacker, location);
