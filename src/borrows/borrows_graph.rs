@@ -385,6 +385,12 @@ impl<'tcx, T: ToJsonWithRepacker<'tcx>> ToJsonWithRepacker<'tcx> for Conditioned
 }
 
 impl<'tcx> BorrowsEdge<'tcx> {
+
+    /// true iff any of the blocked places can be mutated via the blocking places
+    pub fn is_shared_borrow(&self) -> bool {
+        self.kind.is_shared_borrow()
+    }
+
     pub fn conditions(&self) -> &PathConditions {
         &self.conditions
     }
@@ -444,6 +450,13 @@ pub enum BorrowsEdgeKind<'tcx> {
 }
 
 impl<'tcx> BorrowsEdgeKind<'tcx> {
+    pub fn is_shared_borrow(&self) -> bool {
+        match self {
+            BorrowsEdgeKind::Reborrow(reborrow) => reborrow.mutability == Mutability::Not,
+            _ => false,
+        }
+    }
+
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         match self {
             BorrowsEdgeKind::Reborrow(reborrow) => reborrow.make_place_old(place, latest),

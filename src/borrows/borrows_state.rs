@@ -109,10 +109,12 @@ impl<'tcx> BorrowsState<'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
         location: Location,
     ) -> bool {
-        for place in edge.blocked_places() {
-            match place {
-                MaybeOldPlace::Current { place } => self.set_latest(place, location),
-                _ => {}
+        if !edge.is_shared_borrow() {
+            for place in edge.blocked_places() {
+                match place {
+                    MaybeOldPlace::Current { place } => self.set_latest(place, location),
+                    _ => {}
+                }
             }
         }
         self.graph.remove(edge, DebugCtx::new(location))
