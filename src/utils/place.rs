@@ -39,6 +39,18 @@ pub struct Place<'tcx>(
     DebugInfo<'static>,
 );
 
+impl PartialOrd for Place<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some((self.local, self.projection).cmp(&(other.local, other.projection)))
+    }
+}
+
+impl Ord for Place<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (self.local, self.projection).cmp(&(other.local, other.projection))
+    }
+}
+
 impl<'tcx> From<Place<'tcx>> for MaybeOldPlace<'tcx> {
     fn from(place: Place<'tcx>) -> Self {
         MaybeOldPlace::Current { place }
