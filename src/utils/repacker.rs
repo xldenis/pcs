@@ -61,6 +61,10 @@ impl<'a, 'tcx: 'a> PlaceRepacker<'a, 'tcx> {
         Self { mir, tcx }
     }
 
+    pub fn num_args(self) -> usize {
+        self.mir.arg_count
+    }
+
     pub fn local_count(self) -> usize {
         self.mir.local_decls().len()
     }
