@@ -316,10 +316,15 @@ impl<'tcx> BorrowsGraph<'tcx> {
         });
     }
 
-    fn mut_maybe_old_places(&mut self, mut f: impl FnMut(&mut MaybeOldPlace<'tcx>) -> bool) -> bool {
+    fn mut_maybe_old_places(
+        &mut self,
+        mut f: impl FnMut(&mut MaybeOldPlace<'tcx>) -> bool,
+    ) -> bool {
         self.mut_edges(|edge| {
             let maybe_old_places: Vec<&mut MaybeOldPlace<'tcx>> = match edge.mut_kind() {
-                BorrowsEdgeKind::Reborrow(reborrow) => vec![&mut reborrow.blocked_place, &mut reborrow.assigned_place],
+                BorrowsEdgeKind::Reborrow(reborrow) => {
+                    vec![&mut reborrow.blocked_place, &mut reborrow.assigned_place]
+                }
                 BorrowsEdgeKind::DerefExpansion(de) => vec![de.mut_base()],
                 BorrowsEdgeKind::RegionAbstraction(ra) => ra.maybe_old_places(),
                 BorrowsEdgeKind::RegionProjectionMember(_) => todo!(),
@@ -385,7 +390,6 @@ impl<'tcx, T: ToJsonWithRepacker<'tcx>> ToJsonWithRepacker<'tcx> for Conditioned
 }
 
 impl<'tcx> BorrowsEdge<'tcx> {
-
     /// true iff any of the blocked places can be mutated via the blocking places
     pub fn is_shared_borrow(&self) -> bool {
         self.kind.is_shared_borrow()
@@ -495,7 +499,9 @@ impl<'tcx> BorrowsEdgeKind<'tcx> {
             BorrowsEdgeKind::DerefExpansion(de) => de.expansion(repacker).into_iter().collect(),
             BorrowsEdgeKind::RegionAbstraction(ra) => ra.blocked_by_places(),
             BorrowsEdgeKind::RegionProjectionMember(member) => match member.direction {
-                RegionProjectionMemberDirection::PlaceIsRegionInput => FxHashSet::default(),
+                RegionProjectionMemberDirection::PlaceIsRegionInput => {
+                    vec![member.projection.place].into_iter().collect()
+                }
                 RegionProjectionMemberDirection::PlaceIsRegionOutput => {
                     vec![member.place].into_iter().collect()
                 }

@@ -459,6 +459,7 @@ impl<'tcx> RegionProjection<'tcx> {
         Self { place, region }
     }
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+        eprintln!("[projection] make_place_old {:?} {:?}", place, self.place);
         self.place.make_place_old(place, latest);
     }
     pub fn index(&self, repacker: PlaceRepacker<'_, 'tcx>) -> usize {

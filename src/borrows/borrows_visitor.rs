@@ -452,7 +452,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     self.state.after.set_latest((*target).into(), location);
                     match rvalue {
                         Rvalue::Aggregate(box kind, fields) => match kind {
-                            AggregateKind::Adt(_def_id, _variant_idx, _substs, _, _) => {
+                            AggregateKind::Adt(..) | AggregateKind::Tuple => {
                                 let target: utils::Place<'tcx> = (*target).into();
                                 for (_idx, field) in fields.iter_enumerated() {
                                     match field.ty(self.body, self.tcx).kind() {

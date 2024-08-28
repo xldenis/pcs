@@ -35,17 +35,22 @@ pub enum RegionProjectionMemberDirection {
 pub struct RegionProjectionMember<'tcx> {
     pub place: MaybeOldPlace<'tcx>,
     pub projection: RegionProjection<'tcx>,
-    pub location: Location,
+    location: Location,
     pub direction: RegionProjectionMemberDirection,
 }
 
 impl<'tcx> RegionProjectionMember<'tcx> {
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         self.place.make_place_old(place, latest);
+        self.projection.make_place_old(place, latest);
     }
 
     pub fn projection_index(&self, repacker: PlaceRepacker<'_, 'tcx>) -> usize {
         self.projection.index(repacker)
+    }
+
+    pub fn location(&self) -> Location {
+        self.location
     }
 
     pub fn new(
