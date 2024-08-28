@@ -83,7 +83,6 @@ impl<'tcx> BorrowsState<'tcx> {
     pub fn join<'mir>(&mut self, other: &Self, post_block: BasicBlock) -> bool {
         let mut changed = false;
         if self.graph.join(&other.graph) {
-            eprintln!("graph changed");
             changed = true;
         }
         if self.latest.join(&other.latest, post_block) {

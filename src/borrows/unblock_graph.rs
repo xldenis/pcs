@@ -189,7 +189,9 @@ impl<'tcx> UnblockGraph<'tcx> {
                     }
                     self.add_dependency(edge.clone());
                 }
-                BorrowsEdgeKind::RegionProjectionMember(_) => todo!(),
+                BorrowsEdgeKind::RegionProjectionMember(_) => {
+                    // TODO
+                }
             }
         }
     }

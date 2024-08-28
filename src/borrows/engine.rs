@@ -138,10 +138,8 @@ impl<'a, 'tcx> Analysis<'tcx> for BorrowsEngine<'a, 'tcx> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
-        eprintln!("apply_statement_effect prepare: {:?}", location);
         BorrowsVisitor::preparing(self, state, false).visit_statement(statement, location);
         state.start = state.after.clone();
-        eprintln!("apply_statement_effect apply: {:?}", location);
         BorrowsVisitor::applying(self, state, false).visit_statement(statement, location);
     }
 

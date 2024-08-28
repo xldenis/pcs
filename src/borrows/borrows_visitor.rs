@@ -139,17 +139,25 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
     }
 
     fn outlives(&self, sup: RegionVid, sub: RegionVid) -> bool {
-        for o in self
-            .region_inference_context
-            .outlives_constraints()
-            .filter(|c| c.sup == sup)
-        {
-            if o.sub == sub {
-                return true;
-            } else if self.outlives(o.sub, sub) {
+        let mut visited = BTreeSet::default();
+        let mut stack = vec![sup];
+
+        while let Some(current) = stack.pop() {
+            if current == sub {
                 return true;
             }
+
+            if visited.insert(current) {
+                for o in self
+                    .region_inference_context
+                    .outlives_constraints()
+                    .filter(|c| c.sup == current)
+                {
+                    stack.push(o.sub);
+                }
+            }
         }
+
         false
     }
 
