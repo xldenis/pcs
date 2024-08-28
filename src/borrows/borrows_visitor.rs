@@ -442,11 +442,11 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 StatementKind::StorageDead(local) => {
                     let place: utils::Place<'tcx> = (*local).into();
                     let repacker = PlaceRepacker::new(self.body, self.tcx);
-                    if place.ty(repacker).ty.is_ref() {
+                    // if place.ty(repacker).ty.is_ref() {
                         self.state
                             .after
                             .make_place_old(place, repacker, self.debug_ctx);
-                    }
+                    // }
                 }
                 StatementKind::Assign(box (target, rvalue)) => {
                     self.state.after.set_latest((*target).into(), location);

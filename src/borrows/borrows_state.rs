@@ -70,7 +70,7 @@ impl<'tcx> RegionProjectionMember<'tcx> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorrowsState<'tcx> {
-    latest: Latest<'tcx>,
+    pub latest: Latest<'tcx>,
     graph: BorrowsGraph<'tcx>,
 }
 
