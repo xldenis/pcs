@@ -14,8 +14,9 @@ use rustc_interface::{
     hir::{self, def_id::LocalDefId},
     interface::{interface::Compiler, Config, Queries},
     middle::{
+        util::Providers,
         mir::{BasicBlock, Location},
-        query::{queries::mir_borrowck::ProvidedValue as MirBorrowck, ExternProviders, Providers},
+        query::{queries::mir_borrowck::ProvidedValue as MirBorrowck, ExternProviders},
         ty::TyCtxt,
     },
     session::Session,
@@ -101,14 +102,14 @@ fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
     }
 }
 
+fn set_mir_borrowck(_session: &Session, providers: &mut Providers) {
+    providers.mir_borrowck = mir_borrowck;
+}
+
 impl driver::Callbacks for PcsCallbacks {
     fn config(&mut self, config: &mut Config) {
         assert!(config.override_queries.is_none());
-        config.override_queries = Some(
-            |_session: &Session, providers: &mut Providers, _external: &mut ExternProviders| {
-                providers.mir_borrowck = mir_borrowck;
-            },
-        );
+        config.override_queries = Some(set_mir_borrowck);
     }
     fn after_analysis<'tcx>(
         &mut self,

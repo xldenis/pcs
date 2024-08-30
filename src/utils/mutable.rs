@@ -203,6 +203,7 @@ impl<'tcx> Place<'tcx> {
                             )
                         }
                     }
+                    ProjectionElem::Subtype(_) => todo!(),
                 }
             }
         }

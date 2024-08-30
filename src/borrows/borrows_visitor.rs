@@ -14,8 +14,8 @@ use rustc_interface::{
     },
     middle::{
         mir::{
-            visit::Visitor, AggregateKind, Body, BorrowKind, ConstantKind, Location, Operand,
-            Place, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+            visit::Visitor, AggregateKind, Body, BorrowKind, Const, Location, Operand, Place,
+            Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
         },
         ty::{
             self, EarlyBinder, Region, RegionKind, RegionVid, TyCtxt, TypeVisitable, TypeVisitor,
@@ -169,8 +169,8 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         location: Location,
     ) {
         let (func_def_id, substs) = match func {
-            Operand::Constant(c) => match c.literal {
-                ConstantKind::Val(_, ty) => match ty.kind() {
+            Operand::Constant(box c) => match c.const_ {
+                Const::Val(_, ty) => match ty.kind() {
                     ty::TyKind::FnDef(def_id, substs) => (def_id, substs),
                     _ => unreachable!(),
                 },
@@ -443,9 +443,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     let place: utils::Place<'tcx> = (*local).into();
                     let repacker = PlaceRepacker::new(self.body, self.tcx);
                     // if place.ty(repacker).ty.is_ref() {
-                        self.state
-                            .after
-                            .make_place_old(place, repacker, self.debug_ctx);
+                    self.state
+                        .after
+                        .make_place_old(place, repacker, self.debug_ctx);
                     // }
                 }
                 StatementKind::Assign(box (target, rvalue)) => {

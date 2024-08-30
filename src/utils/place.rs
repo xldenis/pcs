@@ -14,7 +14,7 @@ use std::{
 use derive_more::{Deref, DerefMut};
 
 use rustc_interface::{
-    abi::VariantIdx,
+    target::abi::VariantIdx,
     ast::Mutability,
     middle::{
         mir::{Body, Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
@@ -332,6 +332,7 @@ impl Debug for Place<'_> {
                 | ProjectionElem::Index(_)
                 | ProjectionElem::ConstantIndex { .. }
                 | ProjectionElem::Subslice { .. } => {}
+                ProjectionElem::Subtype(_) => todo!(),
             }
         }
 
@@ -399,6 +400,7 @@ impl Debug for Place<'_> {
                 } => {
                     write!(fmt, "[{from:?}..{to:?}]")?;
                 }
+                ProjectionElem::Subtype(_) => todo!(),
             }
         }
 

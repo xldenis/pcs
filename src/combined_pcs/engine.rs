@@ -4,10 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::{
-    cell::Cell,
-    rc::Rc,
-};
+use std::{cell::Cell, rc::Rc};
 
 use itertools::Itertools;
 use rustc_interface::{
@@ -15,32 +12,31 @@ use rustc_interface::{
         borrow_set::BorrowSet,
         consumers::{self, LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext},
     },
-    data_structures::fx::{FxHashSet},
+    data_structures::fx::FxHashSet,
     dataflow::{Analysis, AnalysisDomain},
     index::{Idx, IndexVec},
     middle::{
         mir::{
-            BasicBlock, Body, CallReturnPlaces, Location, PlaceElem,
-            Promoted, Statement, Terminator, TerminatorEdges,
-            START_BLOCK,
+            BasicBlock, Body, CallReturnPlaces, Location, PlaceElem, Promoted, Statement,
+            Terminator, TerminatorEdges, START_BLOCK,
         },
-        ty::{TyCtxt},
+        ty::{self, TyCtxt, ParamEnv, GenericArgsRef},
     },
 };
 
 use crate::{
     borrows::{
         domain::{AbstractionType, MaybeOldPlace},
-        engine::{BorrowsEngine},
+        engine::BorrowsEngine,
     },
-    free_pcs::{
-        engine::FpcsEngine,
-    },
+    free_pcs::engine::FpcsEngine,
     rustc_interface,
-    utils::{PlaceRepacker},
+    utils::PlaceRepacker,
 };
 
 use super::domain::PlaceCapabilitySummary;
+
+#[derive(Clone)]
 
 pub struct BodyWithBorrowckFacts<'tcx> {
     pub body: Body<'tcx>,
@@ -50,6 +46,31 @@ pub struct BodyWithBorrowckFacts<'tcx> {
     pub location_table: Option<Rc<LocationTable>>,
     pub input_facts: Option<Box<PoloniusInput>>,
     pub output_facts: Option<Rc<PoloniusOutput>>,
+}
+
+impl<'tcx> BodyWithBorrowckFacts<'tcx> {
+    pub fn monomorphize(
+        self,
+        tcx: ty::TyCtxt<'tcx>,
+        substs: GenericArgsRef<'tcx>,
+        param_env: ParamEnv<'tcx>,
+    ) -> Self {
+        let body = tcx.erase_regions(self.body.clone());
+        let monomorphized_body = tcx.instantiate_and_normalize_erasing_regions(
+            substs,
+            param_env,
+            ty::EarlyBinder::bind(body),
+        );
+        Self {
+            body: monomorphized_body,
+            promoted: self.promoted,
+            borrow_set: self.borrow_set,
+            region_inference_context: self.region_inference_context,
+            input_facts: self.input_facts,
+            location_table: self.location_table,
+            output_facts: self.output_facts,
+        }
+    }
 }
 
 impl<'tcx> From<consumers::BodyWithBorrowckFacts<'tcx>> for BodyWithBorrowckFacts<'tcx> {

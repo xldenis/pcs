@@ -228,6 +228,7 @@ impl<'tcx> Place<'tcx> {
             | ProjectionElem::Subslice { .. }
             | ProjectionElem::Downcast(..)
             | ProjectionElem::OpaqueCast(..) => (Vec::new(), ProjectionRefKind::Other),
+            ProjectionElem::Subtype(_) => todo!(),
         };
         (new_current_place, other_places, kind)
     }
