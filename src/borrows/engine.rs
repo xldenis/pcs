@@ -5,7 +5,7 @@ use rustc_interface::{
         borrow_set::BorrowSet,
         consumers::{LocationTable, PoloniusInput, PoloniusOutput, RegionInferenceContext},
     },
-    dataflow::{Analysis, AnalysisDomain, Forward, JoinSemiLattice},
+    dataflow::{Analysis, AnalysisDomain, JoinSemiLattice},
     middle::{
         mir::{
             visit::Visitor, BasicBlock, Body, CallReturnPlaces, Location, Statement, Terminator,
@@ -107,7 +107,6 @@ impl<'mir, 'tcx> JoinSemiLattice for BorrowsDomain<'mir, 'tcx> {
 
 impl<'tcx, 'a> AnalysisDomain<'tcx> for BorrowsEngine<'a, 'tcx> {
     type Domain = BorrowsDomain<'a, 'tcx>;
-    type Direction = Forward;
     const NAME: &'static str = "borrows";
 
     fn bottom_value(&self, _body: &Body<'tcx>) -> Self::Domain {
