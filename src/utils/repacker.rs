@@ -293,19 +293,19 @@ impl<'tcx> Place<'tcx> {
                     }
                 }
             }
-            TyKind::Generator(_, substs, _) => {
-                for (index, subst_ty) in substs.as_generator().upvar_tys().iter().enumerate() {
-                    if Some(index) != without_field {
-                        let field = FieldIdx::from_usize(index);
-                        let field_place = repacker.tcx.mk_place_field(
-                            self.to_rust_place(repacker),
-                            field,
-                            subst_ty,
-                        );
-                        places.push(field_place.into());
-                    }
-                }
-            }
+            // TyKind::Generator(_, substs, _) => {
+            //     for (index, subst_ty) in substs.as_generator().upvar_tys().iter().enumerate() {
+            //         if Some(index) != without_field {
+            //             let field = FieldIdx::from_usize(index);
+            //             let field_place = repacker.tcx.mk_place_field(
+            //                 self.to_rust_place(repacker),
+            //                 field,
+            //                 subst_ty,
+            //             );
+            //             places.push(field_place.into());
+            //         }
+            //     }
+            // }
             TyKind::Ref(_, _, _) => {
                 places.push(
                     repacker

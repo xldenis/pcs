@@ -229,9 +229,7 @@ impl<'tcx> Place<'tcx> {
         match place_ref.last_projection() {
             Some((place_base, ProjectionElem::Field(field, _ty))) => {
                 let base_ty = place_base.ty(repacker.body(), repacker.tcx).ty;
-                if (base_ty.is_closure() || base_ty.is_generator())
-                    && (!by_ref || upvars[field.index()].by_ref)
-                {
+                if (base_ty.is_closure()) && (!by_ref || upvars[field.index()].by_ref) {
                     Some(field)
                 } else {
                     None

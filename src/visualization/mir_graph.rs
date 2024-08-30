@@ -86,8 +86,8 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, repacker: PlaceRepacker<'_, 'tcx>)
         Rvalue::Ref(_region, kind, place) => {
             let kind = match kind {
                 mir::BorrowKind::Shared => "",
-                mir::BorrowKind::Shallow => "",
                 mir::BorrowKind::Mut { .. } => "mut",
+                mir::BorrowKind::Fake => todo!(),
             };
             format!("&{} {}", kind, format_place(place, repacker))
         }
@@ -306,7 +306,6 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                 resume_arg: _,
                 drop: _,
             } => todo!(),
-            TerminatorKind::GeneratorDrop => todo!(),
             TerminatorKind::FalseEdge {
                 real_target,
                 imaginary_target: _,
@@ -335,6 +334,7 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                 destination: _,
                 unwind: _,
             } => todo!(),
+            TerminatorKind::CoroutineDrop => todo!(),
         }
     }
 

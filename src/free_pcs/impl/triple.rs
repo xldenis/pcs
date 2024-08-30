@@ -251,7 +251,6 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
             | UnwindTerminate(_)
             | Unreachable
             | Assert { .. }
-            | GeneratorDrop
             | FalseEdge { .. }
             | FalseUnwind { .. } => return,
             Return => {
@@ -300,6 +299,7 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
                 post: Condition::Capability(resume_arg.into(), CapabilityKind::Exclusive),
             },
             InlineAsm { .. } => todo!("{terminator:?}"),
+            CoroutineDrop => todo!(),
         };
         self.triple(Stage::Main, t);
     }
