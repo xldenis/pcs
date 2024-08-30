@@ -1,10 +1,9 @@
 #![feature(rustc_private)]
 
-use std::cmp::Ordering;
+use std::io::Write;
+use std::{cmp::Ordering, fs::File};
 
-use std::{cell::RefCell};
-
-
+use std::cell::RefCell;
 
 use pcs::{combined_pcs::BodyWithBorrowckFacts, run_free_pcs, rustc_interface};
 use regex::Regex;
@@ -49,11 +48,20 @@ fn mir_borrowck<'tcx>(tcx: TyCtxt<'tcx>, def_id: LocalDefId) -> MirBorrowck<'tcx
 
 fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
     let mut item_names = vec![];
-    let dir_path = "visualization/data";
-    if std::path::Path::new(dir_path).exists() {
-        std::fs::remove_dir_all(dir_path).expect("Failed to delete directory contents");
+
+    let vis_dir = if std::env::var("PCS_VISUALIZATION").unwrap_or_default() == "true" {
+        Some("visualization/data")
+    } else {
+        None
+    };
+
+    if let Some(path) = &vis_dir {
+        if std::path::Path::new(path).exists() {
+            std::fs::remove_dir_all(path)
+                .expect("Failed to delete visualization directory contents");
+        }
+        std::fs::create_dir_all(path).expect("Failed to create visualization directory");
     }
-    std::fs::create_dir_all(dir_path).expect("Failed to create directory for JSON file");
 
     for def_id in tcx.hir().body_owners() {
         let kind = tcx.def_kind(def_id);
@@ -64,7 +72,11 @@ fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
                     let mut map = state.borrow_mut();
                     unsafe { std::mem::transmute(map.remove(&def_id).unwrap()) }
                 });
-                run_free_pcs(&body, tcx, Some(format!("{}/{}", dir_path, item_name)));
+                run_free_pcs(
+                    &body,
+                    tcx,
+                    vis_dir.map(|dir| format!("{}/{}", dir, item_name)),
+                );
                 item_names.push(item_name);
             }
             unsupported_item_kind => {
@@ -73,20 +85,20 @@ fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
         }
     }
 
-    use std::{fs::File, io::Write};
+    if let Some(dir_path) = &vis_dir {
+        let file_path = format!("{}/functions.json", dir_path);
 
-    let file_path = format!("{}/functions.json", dir_path);
-
-    let json_data = serde_json::to_string(
-        &item_names
-            .iter()
-            .map(|name| (name.clone(), name.clone()))
-            .collect::<std::collections::HashMap<_, _>>(),
-    )
-    .expect("Failed to serialize item names to JSON");
-    let mut file = File::create(file_path).expect("Failed to create JSON file");
-    file.write_all(json_data.as_bytes())
-        .expect("Failed to write item names to JSON file");
+        let json_data = serde_json::to_string(
+            &item_names
+                .iter()
+                .map(|name| (name.clone(), name.clone()))
+                .collect::<std::collections::HashMap<_, _>>(),
+        )
+        .expect("Failed to serialize item names to JSON");
+        let mut file = File::create(file_path).expect("Failed to create JSON file");
+        file.write_all(json_data.as_bytes())
+            .expect("Failed to write item names to JSON file");
+    }
 }
 
 impl driver::Callbacks for PcsCallbacks {
@@ -219,9 +231,26 @@ fn parse_subset_base_fact(line: &str) -> SubsetBaseFact {
     }
 }
 
+pub const PRUSTI_LIBS: [&str; 2] = ["prusti-contracts", "prusti-std"];
+
 fn main() {
-    let mut rustc_args = vec!["-Zpolonius=yes".to_string()];
+    let mut rustc_args = vec![
+        "--cfg=prusti".to_string(),
+        "--edition=2018".to_string(),
+        "-Zpolonius=yes".to_string(),
+        "-L".to_string(),
+        "dependency=../prusti-dev/target/verify/debug/deps".to_string(),
+    ];
+    rustc_args.push("-Zcrate-attr=feature(register_tool)".to_owned());
+    rustc_args.push("-Zcrate-attr=register_tool(prusti)".to_owned());
+    rustc_args.push("-Zcrate-attr=feature(stmt_expr_attributes)".to_owned());
+    for lib in PRUSTI_LIBS.iter().map(|c| c.replace("-", "_")) {
+        rustc_args.push("--extern".to_string());
+        rustc_args.push(format!("{}=../prusti-dev/target/verify/debug/lib{}.rlib", lib, lib));
+    }
     rustc_args.extend(std::env::args().skip(1));
     let mut callbacks = PcsCallbacks;
-    driver::RunCompiler::new(&rustc_args, &mut callbacks).run();
+    driver::RunCompiler::new(&rustc_args, &mut callbacks)
+        .run()
+        .unwrap();
 }
