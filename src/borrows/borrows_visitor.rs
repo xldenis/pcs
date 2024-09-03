@@ -164,7 +164,7 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
     fn construct_region_abstraction_if_necessary(
         &mut self,
         func: &Operand<'tcx>,
-        args: &[Operand<'tcx>],
+        args: &[&Operand<'tcx>],
         destination: Place<'tcx>,
         location: Location,
     ) {
@@ -361,7 +361,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     self.state.after.set_latest((*destination).into(), location);
                     self.construct_region_abstraction_if_necessary(
                         func,
-                        args,
+                        &args.iter().map(|arg| &arg.node).collect::<Vec<_>>(),
                         (*destination).into(),
                         location,
                     );

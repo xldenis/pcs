@@ -141,7 +141,7 @@ fn format_terminator<'tcx>(
                 format_place(destination, repacker),
                 format_operand(func, repacker),
                 args.iter()
-                    .map(|arg| format_operand(arg, repacker))
+                    .map(|arg| format_operand(&arg.node, repacker))
                     .collect::<Vec<_>>()
                     .join(", ")
             )
