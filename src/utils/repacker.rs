@@ -218,7 +218,7 @@ impl<'tcx> Place<'tcx> {
                 let typ = self.ty(repacker);
                 let kind = match typ.ty.kind() {
                     TyKind::Ref(_, _, mutbl) => ProjectionRefKind::Ref(*mutbl),
-                    TyKind::RawPtr(ptr) => ProjectionRefKind::RawPtr(ptr.mutbl),
+                    TyKind::RawPtr(_, mutbl) => ProjectionRefKind::RawPtr(*mutbl),
                     _ if typ.ty.is_box() => ProjectionRefKind::Box,
                     _ => unreachable!(),
                 };
@@ -380,7 +380,7 @@ impl<'tcx> Place<'tcx> {
         self.projection_tys(repacker)
             .filter_map(|(ty, projs)| match ty.ty.kind() {
                 &TyKind::Ref(r, ty, m) => Some((Some((r, ty, m)), projs)),
-                &TyKind::RawPtr(_) => Some((None, projs)),
+                &TyKind::RawPtr(..) => Some((None, projs)),
                 _ => None,
             })
     }

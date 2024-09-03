@@ -14,12 +14,12 @@ use std::{
 use derive_more::{Deref, DerefMut};
 
 use rustc_interface::{
-    target::abi::VariantIdx,
     ast::Mutability,
     middle::{
         mir::{Body, Local, Place as MirPlace, PlaceElem, PlaceRef, ProjectionElem},
         ty::{RegionVid, Ty, TyCtxt, TyKind},
     },
+    target::abi::VariantIdx,
 };
 
 use crate::{
@@ -31,6 +31,8 @@ use crate::{
 };
 
 use super::{debug_info::DebugInfo, PlaceRepacker};
+use itertools::Itertools;
+
 #[derive(Clone, Copy, Deref, DerefMut)]
 pub struct Place<'tcx>(
     #[deref]
@@ -38,18 +40,6 @@ pub struct Place<'tcx>(
     PlaceRef<'tcx>,
     DebugInfo<'static>,
 );
-
-impl PartialOrd for Place<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some((self.local, self.projection).cmp(&(other.local, other.projection)))
-    }
-}
-
-impl Ord for Place<'_> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        (self.local, self.projection).cmp(&(other.local, other.projection))
-    }
-}
 
 impl<'tcx> From<Place<'tcx>> for MaybeOldPlace<'tcx> {
     fn from(place: Place<'tcx>) -> Self {

@@ -238,7 +238,7 @@ fn main() {
     let mut rustc_args = vec![
         "--cfg=prusti".to_string(),
         "--edition=2018".to_string(),
-        "-Zpolonius=yes".to_string(),
+        "-Zpolonius=next".to_string(),
         "-L".to_string(),
         "dependency=../prusti-dev/target/verify/debug/deps".to_string(),
     ];

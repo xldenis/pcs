@@ -58,6 +58,7 @@ fn format_bin_op(op: &BinOp) -> String {
         BinOp::Ge => ">=".to_string(),
         BinOp::Gt => ">".to_string(),
         BinOp::Offset => todo!(),
+        BinOp::Cmp => todo!(),
     }
 }
 
