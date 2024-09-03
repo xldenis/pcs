@@ -581,9 +581,8 @@ struct LifetimeExtractor<'tcx> {
 }
 
 impl<'tcx> TypeVisitor<ty::TyCtxt<'tcx>> for LifetimeExtractor<'tcx> {
-    fn visit_region(&mut self, rr: ty::Region<'tcx>) -> ControlFlow<Self::BreakTy> {
+    fn visit_region(&mut self, rr: ty::Region<'tcx>) {
         self.lifetimes.push(rr);
-        ControlFlow::Continue(())
     }
 }
 

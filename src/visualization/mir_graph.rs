@@ -327,12 +327,7 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                 });
             }
             TerminatorKind::InlineAsm {
-                template: _,
-                operands: _,
-                options: _,
-                line_spans: _,
-                destination: _,
-                unwind: _,
+                ..
             } => todo!(),
             TerminatorKind::CoroutineDrop => todo!(),
         }
