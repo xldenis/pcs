@@ -1,10 +1,16 @@
 #![feature(rustc_private)]
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::{cmp::Ordering, fs::File};
 
 use std::cell::RefCell;
 
+use itertools::Itertools;
+use pcs::visualization::dot_graph::{
+    DotEdge, DotGraph, DotLabel, DotNode, EdgeDirection, EdgeOptions,
+};
+use pcs::visualization::dot_graph::{DotStringAttr, DotSubgraph};
 use pcs::{combined_pcs::BodyWithBorrowckFacts, run_free_pcs, rustc_interface};
 use regex::Regex;
 use rustc_interface::{
@@ -14,10 +20,10 @@ use rustc_interface::{
     hir::{self, def_id::LocalDefId},
     interface::{interface::Compiler, Config, Queries},
     middle::{
-        util::Providers,
         mir::{BasicBlock, Location},
         query::{queries::mir_borrowck::ProvidedValue as MirBorrowck, ExternProviders},
         ty::TyCtxt,
+        util::Providers,
     },
     session::Session,
 };
@@ -234,6 +240,140 @@ fn parse_subset_base_fact(line: &str) -> SubsetBaseFact {
 
 pub const PRUSTI_LIBS: [&str; 2] = ["prusti-contracts", "prusti-std"];
 
+fn subset_base_visualization(file_contents: String) {
+    let facts: Vec<SubsetBaseFact> = file_contents.lines().map(parse_subset_base_fact).collect();
+    // let mut facts_by_block: BTreeMap<BasicBlock, Vec<SubsetBaseFact>> = BTreeMap::new();
+    // for fact in facts {
+    //     facts_by_block
+    //         .entry(fact.location.block().clone())
+    //         .or_insert_with(Vec::new)
+    //         .push(fact);
+    // }
+    // for (block, facts) in facts_by_block.iter() {
+    let filename = format!("bc_visualization/all.dot");
+    let mut nodes: Vec<Region> = vec![];
+    let mut lookup = |region: &Region| {
+        nodes.iter().position(|n| n == region).unwrap_or_else(|| {
+            nodes.push(region.clone());
+            nodes.len() - 1
+        })
+    };
+    let mut edges: BTreeSet<DotEdge> = BTreeSet::new();
+    for fact in facts
+        .into_iter()
+        .sorted_by(|a, b| a.location.cmp(&b.location))
+        .filter(|fact| fact.location.block().as_usize() == 0)
+    {
+        println!("{:?}", fact);
+        let sub_node = lookup(&fact.subset);
+        let sup_node = lookup(&fact.superset);
+        edges.insert(DotEdge {
+            from: format!("n{}", sub_node),
+            to: format!("n{}", sup_node),
+            options: EdgeOptions::directed(EdgeDirection::Forward)
+                .with_label(format!("{:?}", fact.location)),
+        });
+    }
+    let dot_graph = DotGraph {
+        name: "G".to_string(),
+        nodes: nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| DotNode {
+                id: format!("n{}", i),
+                label: DotLabel::Text(n.to_string()),
+                font_color: DotStringAttr("black".to_string()),
+                color: DotStringAttr("blue".to_string()),
+                shape: DotStringAttr("rect".to_string()),
+                style: None,
+                penwidth: None,
+            })
+            .collect(),
+        edges: edges.into_iter().collect(),
+        subgraphs: vec![],
+    };
+
+    dot_graph.write_to_file(&filename).unwrap();
+    //    }
+}
+
+fn polonius_visualization(file_contents: String) {
+    let mut facts_by_location: BTreeMap<RichLocation, Vec<PoloniusFact>> = BTreeMap::new();
+
+    for line in file_contents.lines() {
+        if let Some(fact) = parse_polonius_line(line) {
+            match &fact {
+                PoloniusFact::OriginContainsLoanAt(location, _, _) => {
+                    facts_by_location
+                        .entry(location.clone())
+                        .or_insert_with(Vec::new)
+                        .push(fact);
+                } // Add other variants as needed
+            }
+        }
+    }
+
+    for (location, facts) in facts_by_location.iter() {
+        let filename = format!(
+            "bc_visualization/{}.dot",
+            match location {
+                RichLocation::Mid(loc) => format!("mid_{:?}_{}", loc.block, loc.statement_index),
+                RichLocation::Start(loc) =>
+                    format!("start_{:?}_{}", loc.block, loc.statement_index),
+            }
+        );
+        let mut dot_graph = DotGraph {
+            name: "G".to_string(),
+            nodes: vec![],
+            edges: vec![],
+            subgraphs: vec![],
+        };
+
+        // Group facts by their region
+        let mut facts_by_region: BTreeMap<String, Vec<&PoloniusFact>> = BTreeMap::new();
+
+        for fact in facts {
+            if let PoloniusFact::OriginContainsLoanAt(_, region, _) = fact {
+                facts_by_region
+                    .entry(region.clone())
+                    .or_default()
+                    .push(fact);
+            }
+        }
+
+        for (i, (region, region_facts)) in facts_by_region.iter().enumerate() {
+            let cluster = DotSubgraph {
+                id: format!("cluster_{}", i),
+                label: region.clone(),
+                nodes: region_facts
+                    .into_iter()
+                    .map(|fact| match fact {
+                        PoloniusFact::OriginContainsLoanAt(_, _, borrow) => DotNode {
+                            id: format!("node_{region}_{borrow}"),
+                            label: DotLabel::Text(borrow.clone()),
+                            font_color: DotStringAttr("black".to_string()),
+                            color: DotStringAttr("blue".to_string()),
+                            shape: DotStringAttr("rect".to_string()),
+                            style: None,
+                            penwidth: None,
+                        },
+                    })
+                    .collect(),
+                rank_annotations: vec![],
+            };
+            dot_graph.subgraphs.push(cluster);
+        }
+        // Create a file for the dot graph
+        let mut file = std::fs::File::create(&filename).expect("Failed to create file");
+
+        // Write the dot graph to the file
+        use std::io::Write;
+        write!(file, "{}", dot_graph).expect("Failed to write to file");
+
+        println!("Wrote dot graph to {}", filename);
+    }
+}
+
 fn main() {
     let mut rustc_args = vec![
         "--cfg=prusti".to_string(),
@@ -247,11 +387,17 @@ fn main() {
     rustc_args.push("-Zcrate-attr=feature(stmt_expr_attributes)".to_owned());
     for lib in PRUSTI_LIBS.iter().map(|c| c.replace("-", "_")) {
         rustc_args.push("--extern".to_string());
-        rustc_args.push(format!("{}=../prusti-dev/target/verify/debug/lib{}.rlib", lib, lib));
+        rustc_args.push(format!(
+            "{}=../prusti-dev/target/verify/debug/lib{}.rlib",
+            lib, lib
+        ));
     }
-    rustc_args.extend(std::env::args().skip(1));
-    let mut callbacks = PcsCallbacks;
-    driver::RunCompiler::new(&rustc_args, &mut callbacks)
-        .run()
-        .unwrap();
+    subset_base_visualization(
+        std::fs::read_to_string("/Users/zgrannan/pcs/nll-facts/go/subset_base.facts").unwrap(),
+    );
+    // rustc_args.extend(std::env::args().skip(1));
+    // let mut callbacks = PcsCallbacks;
+    // driver::RunCompiler::new(&rustc_args, &mut callbacks)
+    //     .run()
+    //     .unwrap();
 }
