@@ -299,6 +299,7 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
             },
             InlineAsm { .. } => todo!("{terminator:?}"),
             CoroutineDrop => todo!(),
+            _ => todo!("{terminator:?}"),
         };
         self.triple(Stage::Main, t);
     }

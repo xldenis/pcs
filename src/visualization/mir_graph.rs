@@ -335,6 +335,7 @@ fn mk_mir_graph<'mir, 'tcx>(tcx: TyCtxt<'tcx>, body: &'mir Body<'tcx>) -> MirGra
                 ..
             } => todo!(),
             TerminatorKind::CoroutineDrop => todo!(),
+            _ => todo!(),
         }
     }
 
