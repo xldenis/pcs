@@ -556,7 +556,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
             | ThreadLocalRef(_)
             | Cast(_, _, _)
             | BinaryOp(_, _)
-            | CheckedBinaryOp(_, _)
             | NullaryOp(_, _)
             | UnaryOp(_, _)
             | Aggregate(_, _)

@@ -59,6 +59,10 @@ fn format_bin_op(op: &BinOp) -> String {
         BinOp::Gt => ">".to_string(),
         BinOp::Offset => todo!(),
         BinOp::Cmp => todo!(),
+        BinOp::AddWithOverflow => "+".to_string(),
+        BinOp::SubWithOverflow => "-".to_string(),
+        BinOp::MulWithOverflow => "*".to_string(),
+        _ => todo!(),
     }
 }
 
@@ -96,7 +100,7 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, repacker: PlaceRepacker<'_, 'tcx>)
         Rvalue::AddressOf(_, _) => todo!(),
         Rvalue::Len(_) => todo!(),
         Rvalue::Cast(_, operand, ty) => format!("{} as {}", format_operand(operand, repacker), ty),
-        Rvalue::BinaryOp(op, box (lhs, rhs)) | Rvalue::CheckedBinaryOp(op, box (lhs, rhs)) => {
+        Rvalue::BinaryOp(op, box (lhs, rhs)) => {
             format!(
                 "{} {} {}",
                 format_operand(lhs, repacker),
