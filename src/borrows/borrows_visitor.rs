@@ -562,7 +562,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
             | ShallowInitBox(_, _) => {}
 
             &Ref(_, _, place)
-            | &AddressOf(_, place)
             | &Len(place)
             | &Discriminant(place)
             | &CopyForDeref(place) => {
@@ -571,6 +570,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     self.ensure_expansion_to_exactly(place, location);
                 }
             }
+            _ => todo!(),
         }
     }
 }

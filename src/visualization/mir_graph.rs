@@ -97,7 +97,6 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, repacker: PlaceRepacker<'_, 'tcx>)
             format!("&{} {}", kind, format_place(place, repacker))
         }
         Rvalue::ThreadLocalRef(_) => todo!(),
-        Rvalue::AddressOf(_, _) => todo!(),
         Rvalue::Len(_) => todo!(),
         Rvalue::Cast(_, operand, ty) => format!("{} as {}", format_operand(operand, repacker), ty),
         Rvalue::BinaryOp(op, box (lhs, rhs)) => {
@@ -125,6 +124,7 @@ fn format_rvalue<'tcx>(rvalue: &Rvalue<'tcx>, repacker: PlaceRepacker<'_, 'tcx>)
         }
         Rvalue::ShallowInitBox(_, _) => todo!(),
         Rvalue::CopyForDeref(_) => todo!(),
+        _ => todo!(),
     }
 }
 fn format_terminator<'tcx>(

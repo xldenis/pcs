@@ -159,7 +159,6 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
             | ShallowInitBox(_, _) => {}
 
             &Ref(_, _, place)
-            | &AddressOf(_, place)
             | &Len(place)
             | &Discriminant(place)
             | &CopyForDeref(place) => {
@@ -173,6 +172,7 @@ impl<'tcx> Visitor<'tcx> for TripleWalker<'_, '_, 'tcx> {
                     },
                 )
             }
+            _ => todo!(),
         }
     }
 
@@ -317,7 +317,6 @@ impl ProducesCapability for Rvalue<'_> {
             | Repeat(_, _)
             | Ref(_, _, _)
             | ThreadLocalRef(_)
-            | AddressOf(_, _)
             | Len(_)
             | Cast(_, _, _)
             | BinaryOp(_, _)
@@ -327,6 +326,7 @@ impl ProducesCapability for Rvalue<'_> {
             | Aggregate(_, _)
             | CopyForDeref(_) => CapabilityKind::Exclusive,
             ShallowInitBox(_, _) => CapabilityKind::ShallowExclusive,
+            _ => todo!(),
         }
     }
 }
