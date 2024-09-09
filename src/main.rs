@@ -385,19 +385,10 @@ fn main() {
     rustc_args.push("-Zcrate-attr=feature(register_tool)".to_owned());
     rustc_args.push("-Zcrate-attr=register_tool(prusti)".to_owned());
     rustc_args.push("-Zcrate-attr=feature(stmt_expr_attributes)".to_owned());
-    for lib in PRUSTI_LIBS.iter().map(|c| c.replace("-", "_")) {
-        rustc_args.push("--extern".to_string());
-        rustc_args.push(format!(
-            "{}=../prusti-dev/target/verify/debug/lib{}.rlib",
-            lib, lib
-        ));
-    }
-    subset_base_visualization(
-        std::fs::read_to_string("/Users/zgrannan/pcs/nll-facts/go/subset_base.facts").unwrap(),
-    );
-    // rustc_args.extend(std::env::args().skip(1));
-    // let mut callbacks = PcsCallbacks;
-    // driver::RunCompiler::new(&rustc_args, &mut callbacks)
-    //     .run()
-    //     .unwrap();
+
+    rustc_args.extend(std::env::args().skip(1));
+    let mut callbacks = PcsCallbacks;
+    driver::RunCompiler::new(&rustc_args, &mut callbacks)
+        .run()
+        .unwrap();
 }
