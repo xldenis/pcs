@@ -93,7 +93,7 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
     }
 }
 
-pub fn run_free_pcs<'mir, 'tcx>(
+pub fn run_combined_pcs<'mir, 'tcx>(
     mir: &'mir BodyWithBorrowckFacts<'tcx>,
     tcx: TyCtxt<'tcx>,
     visualization_output_path: Option<String>,
