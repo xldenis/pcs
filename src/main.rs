@@ -11,7 +11,7 @@ use pcs::visualization::dot_graph::{
     DotEdge, DotGraph, DotLabel, DotNode, EdgeDirection, EdgeOptions,
 };
 use pcs::visualization::dot_graph::{DotStringAttr, DotSubgraph};
-use pcs::{combined_pcs::BodyWithBorrowckFacts, run_free_pcs, rustc_interface};
+use pcs::{combined_pcs::BodyWithBorrowckFacts, run_combined_pcs, rustc_interface};
 use regex::Regex;
 use rustc_interface::{
     borrowck::consumers,
@@ -79,7 +79,7 @@ fn run_pcs_on_all_fns<'tcx>(tcx: TyCtxt<'tcx>) {
                     let mut map = state.borrow_mut();
                     unsafe { std::mem::transmute(map.remove(&def_id).unwrap()) }
                 });
-                run_free_pcs(
+                run_combined_pcs(
                     &body,
                     tcx,
                     vis_dir.map(|dir| format!("{}/{}", dir, item_name)),
