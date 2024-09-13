@@ -52,12 +52,11 @@ impl std::fmt::Display for PCGraph {
 }
 
 impl PCGraph {
-    pub fn root(&self) -> BasicBlock {
+    pub fn root(&self) -> Option<BasicBlock> {
         self.0
             .iter()
             .find(|pc| !self.has_path_to_block(pc.from))
-            .unwrap_or_else(|| panic!("No root found in {:?}", self))
-            .from
+            .map(|pc| pc.from)
     }
 
     pub fn singleton(pc: PathCondition) -> Self {
@@ -79,23 +78,22 @@ impl PCGraph {
     }
 
     pub fn has_suffix_of(&self, path: &[BasicBlock]) -> bool {
-        let root_idx = path.iter().position(|b| self.root() == *b);
-        match root_idx {
-            Some(root_idx) => {
-                let path = &path[root_idx..];
-                let mut i = 0;
-                while i < path.len() - 1 {
-                    let f = path[i];
-                    let t = path[i + 1];
-                    if !self.0.contains(&PathCondition::new(f, t)) {
-                        return false;
-                    }
-                    i += 1
-                }
-                true
+        let path = if let Some(root) = self.root() {
+            let root_idx = path.iter().position(|b| *b == root).unwrap_or(0);
+            &path[root_idx..]
+        } else {
+            path
+        };
+        let mut i = 0;
+        while i < path.len() - 1 {
+            let f = path[i];
+            let t = path[i + 1];
+            if !self.0.contains(&PathCondition::new(f, t)) {
+                return false;
             }
-            None => false,
+            i += 1
         }
+        true
     }
 
     pub fn insert(&mut self, pc: PathCondition) -> bool {
