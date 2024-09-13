@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     borrows_graph::{BorrowsEdge, BorrowsEdgeKind, Conditioned},
-    domain::AbstractionType,
+    domain::{AbstractionType, ReborrowBlockedPlace},
     region_abstraction::RegionAbstraction,
 };
 
@@ -47,12 +47,12 @@ impl<'tcx> UnblockGraph<'tcx> {
     }
 
     pub fn for_place(
-        place: Place<'tcx>,
+        place: ReborrowBlockedPlace<'tcx>,
         state: &BorrowsState<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> Self {
         let mut ug = Self::new();
-        ug.unblock_place(MaybeOldPlace::Current { place }, state, repacker);
+        ug.unblock_place(place, state, repacker);
         ug
     }
 
@@ -61,9 +61,7 @@ impl<'tcx> UnblockGraph<'tcx> {
     }
 
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
-        self.0.retain(|edge| {
-            edge.valid_for_path(path)
-        });
+        self.0.retain(|edge| edge.valid_for_path(path));
     }
 
     pub fn actions(self, repacker: PlaceRepacker<'_, 'tcx>) -> Vec<UnblockAction<'tcx>> {
@@ -166,7 +164,7 @@ impl<'tcx> UnblockGraph<'tcx> {
 
     pub fn unblock_place(
         &mut self,
-        place: MaybeOldPlace<'tcx>,
+        place: ReborrowBlockedPlace<'tcx>,
         borrows: &BorrowsState<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
@@ -180,12 +178,12 @@ impl<'tcx> UnblockGraph<'tcx> {
                 BorrowsEdgeKind::DerefExpansion(expansion) => {
                     self.add_dependency(edge.clone());
                     for place in expansion.expansion(repacker) {
-                        self.unblock_place(place, borrows, repacker);
+                        self.unblock_place(place.into(), borrows, repacker);
                     }
                 }
                 BorrowsEdgeKind::RegionAbstraction(abstraction) => {
                     for place in abstraction.abstraction_type.blocker_places() {
-                        self.unblock_place(place, borrows, repacker);
+                        self.unblock_place(place.into(), borrows, repacker);
                     }
                     self.add_dependency(edge.clone());
                 }
@@ -203,7 +201,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for edge in borrows.reborrow_edges_reserved_at(location) {
-            self.unblock_place(edge.value.assigned_place, borrows, repacker);
+            self.unblock_place(edge.value.assigned_place.into(), borrows, repacker);
             self.add_dependency(edge.to_borrows_edge());
         }
     }
@@ -214,7 +212,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         borrows: &BorrowsState<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
-        self.unblock_place(reborrow.value.assigned_place, borrows, repacker);
+        self.unblock_place(reborrow.value.assigned_place.into(), borrows, repacker);
         self.add_dependency(reborrow.to_borrows_edge());
     }
 
@@ -226,7 +224,7 @@ impl<'tcx> UnblockGraph<'tcx> {
     ) {
         for reborrow in borrows.reborrows_blocked_by(MaybeOldPlace::OldPlace(place)) {
             match reborrow.value.blocked_place {
-                MaybeOldPlace::OldPlace(p) => {
+                ReborrowBlockedPlace::Local(MaybeOldPlace::OldPlace(p)) => {
                     self.trim_old_leaves_from(borrows, p.clone(), repacker)
                 }
                 _ => {}

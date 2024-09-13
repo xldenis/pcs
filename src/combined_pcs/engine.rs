@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, fs::create_dir_all, rc::Rc};
 
 use itertools::Itertools;
 use rustc_interface::{
@@ -20,13 +20,13 @@ use rustc_interface::{
             BasicBlock, Body, CallReturnPlaces, Location, PlaceElem, Promoted, Statement,
             Terminator, TerminatorEdges, START_BLOCK,
         },
-        ty::{self, TyCtxt, ParamEnv, GenericArgsRef},
+        ty::{self, GenericArgsRef, ParamEnv, TyCtxt},
     },
 };
 
 use crate::{
     borrows::{
-        domain::{AbstractionType, MaybeOldPlace},
+        domain::{AbstractionType, MaybeOldPlace, ReborrowBlockedPlace},
         engine::BorrowsEngine,
     },
     free_pcs::engine::FpcsEngine,
@@ -105,9 +105,16 @@ pub struct PcsEngine<'a, 'tcx> {
 
     pub(crate) fpcs: FpcsEngine<'a, 'tcx>,
     pub(crate) borrows: BorrowsEngine<'a, 'tcx>,
+    debug_output_dir: Option<String>,
 }
 impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
-    pub fn new(cgx: PcsContext<'a, 'tcx>) -> Self {
+    pub fn new(cgx: PcsContext<'a, 'tcx>, debug_output_dir: Option<String>) -> Self {
+        if let Some(dir_path) = &debug_output_dir {
+            if std::path::Path::new(dir_path).exists() {
+                std::fs::remove_dir_all(dir_path).expect("Failed to delete directory contents");
+            }
+            create_dir_all(&dir_path).expect("Failed to create directory for DOT files");
+        }
         let cgx = Rc::new(cgx);
         let fpcs = FpcsEngine(cgx.rp);
         let borrows = BorrowsEngine::new(
@@ -124,6 +131,7 @@ impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
             block: Cell::new(START_BLOCK),
             fpcs,
             borrows,
+            debug_output_dir,
         }
     }
 }
@@ -135,13 +143,13 @@ impl<'a, 'tcx> AnalysisDomain<'tcx> for PcsEngine<'a, 'tcx> {
     fn bottom_value(&self, _body: &Body<'tcx>) -> Self::Domain {
         let block = self.block.get();
         self.block.set(block.plus(1));
-        PlaceCapabilitySummary::new(self.cgx.clone(), block)
+        PlaceCapabilitySummary::new(self.cgx.clone(), block, self.debug_output_dir.clone())
     }
 
     fn initialize_start_block(&self, _body: &Body<'tcx>, state: &mut Self::Domain) {
         self.block.set(START_BLOCK);
         state.fpcs.initialize_as_start_block();
-        // Initialize borrows if needed
+        state.borrows.initialize_as_start_block();
     }
 }
 
@@ -168,7 +176,7 @@ pub enum UnblockAction<'tcx> {
     TerminateAbstraction(Location, AbstractionType<'tcx>),
     TerminateReborrow {
         reserve_location: Location,
-        blocked_place: MaybeOldPlace<'tcx>,
+        blocked_place: ReborrowBlockedPlace<'tcx>,
         assigned_place: MaybeOldPlace<'tcx>,
         is_mut: bool,
     },

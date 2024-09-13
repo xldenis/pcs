@@ -370,9 +370,55 @@ use serde_json::json;
 
 use super::borrows_visitor::{extract_nested_lifetimes, get_vid};
 
+#[derive(PartialEq, Eq, Copy, Clone, Debug, Hash)]
+pub enum ReborrowBlockedPlace<'tcx> {
+    /// Reborrows from a place that has a name in the program, e.g for a
+    /// reborrow x = &mut (*y), the blocked place is `Local(*y)`
+    Local(MaybeOldPlace<'tcx>),
+
+    /// The blocked place that a borrows in function inputs; e.g for a function
+    /// `f(&mut x)` the blocked place is `Remote(x)`
+    Remote(mir::Local),
+}
+
+impl<'tcx> ReborrowBlockedPlace<'tcx> {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+        match self {
+            ReborrowBlockedPlace::Local(p) => p.make_place_old(place, latest),
+            ReborrowBlockedPlace::Remote(_) => {}
+        }
+    }
+
+    pub fn as_local(&self) -> Option<MaybeOldPlace<'tcx>> {
+        match self {
+            ReborrowBlockedPlace::Local(p) => Some(*p),
+            ReborrowBlockedPlace::Remote(_) => None,
+        }
+    }
+
+    pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
+        match self {
+            ReborrowBlockedPlace::Local(p) => p.to_json(repacker),
+            ReborrowBlockedPlace::Remote(_) => todo!(),
+        }
+    }
+}
+
+impl<'tcx> From<MaybeOldPlace<'tcx>> for ReborrowBlockedPlace<'tcx> {
+    fn from(place: MaybeOldPlace<'tcx>) -> Self {
+        ReborrowBlockedPlace::Local(place)
+    }
+}
+
+impl<'tcx> From<Place<'tcx>> for ReborrowBlockedPlace<'tcx> {
+    fn from(place: Place<'tcx>) -> Self {
+        ReborrowBlockedPlace::Local(place.into())
+    }
+}
+
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct Reborrow<'tcx> {
-    pub blocked_place: MaybeOldPlace<'tcx>,
+    pub blocked_place: ReborrowBlockedPlace<'tcx>,
     pub assigned_place: MaybeOldPlace<'tcx>,
     pub mutability: Mutability,
 
@@ -384,7 +430,7 @@ pub struct Reborrow<'tcx> {
 
 impl<'tcx> Reborrow<'tcx> {
     pub fn new(
-        blocked_place: MaybeOldPlace<'tcx>,
+        blocked_place: ReborrowBlockedPlace<'tcx>,
         assigned_place: MaybeOldPlace<'tcx>,
         mutability: Mutability,
         reservation_location: Location,

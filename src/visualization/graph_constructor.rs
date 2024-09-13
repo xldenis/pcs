@@ -3,12 +3,12 @@ use crate::{
         borrows_graph::{BorrowsEdge, BorrowsEdgeKind},
         borrows_state::BorrowsState,
         borrows_visitor::{extract_nested_lifetimes, get_vid},
-        domain::{AbstractionTarget, MaybeOldPlace, RegionProjection},
+        domain::{AbstractionTarget, MaybeOldPlace, ReborrowBlockedPlace, RegionProjection},
         region_abstraction::RegionAbstraction,
         unblock_graph::UnblockGraph,
     },
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
-    rustc_interface,
+    rustc_interface::{self, middle::mir::Local},
     utils::{Place, PlaceRepacker, PlaceSnapshot, SnapshotLocation},
     visualization::dot_graph::RankAnnotation,
 };
@@ -67,6 +67,7 @@ impl GraphCluster {
 }
 
 struct GraphConstructor<'mir, 'tcx> {
+    remote_nodes: IdLookup<Local>,
     place_nodes: IdLookup<(Place<'tcx>, Option<SnapshotLocation>)>,
     region_projection_nodes: IdLookup<RegionProjection<'tcx>>,
     region_clusters: HashMap<Location, GraphCluster>,
@@ -102,6 +103,7 @@ impl<T: Eq + Clone> IdLookup<T> {
 impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
     fn new(repacker: PlaceRepacker<'a, 'tcx>) -> Self {
         Self {
+            remote_nodes: IdLookup::new('a'),
             place_nodes: IdLookup::new('p'),
             region_projection_nodes: IdLookup::new('r'),
             region_clusters: HashMap::new(),
@@ -200,6 +202,22 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
             .insert(region_abstraction.location(), cluster);
     }
 
+    fn insert_remote_node(&mut self, local: Local) -> NodeId {
+        if let Some(id) = self.remote_nodes.existing_id(&local) {
+            return id;
+        }
+        let id = self.remote_nodes.node_id(&local);
+        let node = GraphNode {
+            id,
+            node_type: NodeType::ReborrowingDagNode {
+                label: format!("Target of input {:?}", local),
+                location: None,
+            },
+        };
+        self.insert_node(node);
+        id
+    }
+
     fn insert_place_node(
         &mut self,
         place: Place<'tcx>,
@@ -270,6 +288,13 @@ impl<'mir, 'tcx> PlaceGrapher<'mir, 'tcx> for UnblockGraphConstructor<'mir, 'tcx
             .insert_place_node(place.place(), place.location(), None)
     }
 
+    fn insert_reborrow_blocked_place(&mut self, place: ReborrowBlockedPlace<'tcx>) -> NodeId {
+        match place {
+            ReborrowBlockedPlace::Local(place) => self.insert_maybe_old_place(place),
+            ReborrowBlockedPlace::Remote(local) => self.constructor.insert_remote_node(local),
+        }
+    }
+
     fn constructor(&mut self) -> &mut GraphConstructor<'mir, 'tcx> {
         &mut self.constructor
     }
@@ -280,6 +305,7 @@ impl<'mir, 'tcx> PlaceGrapher<'mir, 'tcx> for UnblockGraphConstructor<'mir, 'tcx
 }
 
 trait PlaceGrapher<'mir, 'tcx: 'mir> {
+    fn insert_reborrow_blocked_place(&mut self, place: ReborrowBlockedPlace<'tcx>) -> NodeId;
     fn insert_maybe_old_place(&mut self, place: MaybeOldPlace<'tcx>) -> NodeId;
     fn constructor(&mut self) -> &mut GraphConstructor<'mir, 'tcx>;
     fn repacker(&self) -> PlaceRepacker<'mir, 'tcx>;
@@ -299,14 +325,14 @@ trait PlaceGrapher<'mir, 'tcx: 'mir> {
                 }
             }
             BorrowsEdgeKind::Reborrow(reborrow) => {
-                let borrowed_place = self.insert_maybe_old_place(reborrow.blocked_place);
+                let borrowed_place = self.insert_reborrow_blocked_place(reborrow.blocked_place);
                 let assigned_place = self.insert_maybe_old_place(reborrow.assigned_place);
                 self.constructor().edges.insert(GraphEdge::ReborrowEdge {
                     borrowed_place,
                     assigned_place,
                     location: reborrow.reserve_location(),
                     region: format!("{:?}", reborrow.region),
-                    path_conditions: format!("{:?}", reborrow.reserve_location().block),
+                    path_conditions: format!("{}", edge.conditions()),
                 });
             }
             BorrowsEdgeKind::RegionAbstraction(abstraction) => {
@@ -353,6 +379,13 @@ impl<'a, 'tcx> PlaceGrapher<'a, 'tcx> for PCSGraphConstructor<'a, 'tcx> {
 
     fn constructor(&mut self) -> &mut GraphConstructor<'a, 'tcx> {
         &mut self.constructor
+    }
+
+    fn insert_reborrow_blocked_place(&mut self, place: ReborrowBlockedPlace<'tcx>) -> NodeId {
+        match place {
+            ReborrowBlockedPlace::Local(place) => self.insert_maybe_old_place(place),
+            ReborrowBlockedPlace::Remote(local) => self.constructor.insert_remote_node(local),
+        }
     }
 }
 

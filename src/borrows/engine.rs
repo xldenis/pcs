@@ -11,17 +11,20 @@ use rustc_interface::{
             visit::Visitor, BasicBlock, Body, CallReturnPlaces, Location, Statement, Terminator,
             TerminatorEdges,
         },
-        ty::TyCtxt,
+        ty::{self, TyCtxt},
     },
 };
 use serde_json::{json, Value};
 
 use crate::{
-    borrows::domain::ToJsonWithRepacker, rustc_interface, utils::{self, PlaceRepacker}
+    borrows::domain::ToJsonWithRepacker,
+    rustc_interface,
+    utils::{self, Place, PlaceRepacker},
 };
 
 use super::{
-    borrows_state::BorrowsState, borrows_visitor::BorrowsVisitor, path_condition::PathCondition,
+    borrows_state::BorrowsState, borrows_visitor::BorrowsVisitor, domain::ReborrowBlockedPlace,
+    path_condition::PathCondition,
 };
 use super::{
     deref_expansion::DerefExpansion,
@@ -227,6 +230,23 @@ impl<'mir, 'tcx> BorrowsDomain<'mir, 'tcx> {
             after: BorrowsState::new(),
             block,
             repacker,
+        }
+    }
+
+    pub fn initialize_as_start_block(&mut self) {
+        for arg in self.repacker.body().args_iter() {
+            if let ty::TyKind::Ref(region, _, mutability) =
+                self.repacker.body().local_decls[arg].ty.kind()
+            {
+                let arg_place: Place<'tcx> = arg.into();
+                self.after.add_reborrow(
+                    ReborrowBlockedPlace::Remote(arg),
+                    arg_place.project_deref(self.repacker),
+                    *mutability,
+                    Location::START,
+                    *region,
+                );
+            }
         }
     }
 

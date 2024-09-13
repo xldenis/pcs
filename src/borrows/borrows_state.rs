@@ -19,7 +19,7 @@ use super::{
     borrows_graph::{BorrowsEdge, BorrowsEdgeKind, BorrowsGraph, Conditioned, ToBorrowsEdge},
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
-    domain::{Latest, MaybeOldPlace, Reborrow, RegionProjection},
+    domain::{Latest, MaybeOldPlace, Reborrow, ReborrowBlockedPlace, RegionProjection},
     path_condition::{PathCondition, PathConditions},
     region_abstraction::RegionAbstraction,
     unblock_graph::UnblockGraph,
@@ -116,7 +116,9 @@ impl<'tcx> BorrowsState<'tcx> {
         if !edge.is_shared_borrow() {
             for place in edge.blocked_places() {
                 match place {
-                    MaybeOldPlace::Current { place } => self.set_latest(place, location),
+                    ReborrowBlockedPlace::Local(MaybeOldPlace::Current { place }) => {
+                        self.set_latest(place, location)
+                    }
                     _ => {}
                 }
             }
@@ -151,7 +153,7 @@ impl<'tcx> BorrowsState<'tcx> {
                     let is_old_unblocked = edge
                         .blocked_by_places(repacker)
                         .iter()
-                        .all(|p| p.is_old() && !self.graph.has_edge_blocking(p));
+                        .all(|p| p.is_old() && !self.graph.has_edge_blocking((*p).into()));
                     is_old_unblocked
                         || match &edge.kind() {
                             BorrowsEdgeKind::DerefExpansion(de) => {
@@ -159,7 +161,7 @@ impl<'tcx> BorrowsState<'tcx> {
                                     && de
                                         .expansion(repacker)
                                         .into_iter()
-                                        .all(|p| !self.graph.has_edge_blocking(&p.into()))
+                                        .all(|p| !self.graph.has_edge_blocking(p.into()))
                             }
                             _ => false,
                         }
@@ -190,7 +192,10 @@ impl<'tcx> BorrowsState<'tcx> {
         location: Location,
     ) -> bool {
         let mut changed = false;
-        let edges = self.edges_blocking(place).cloned().collect::<Vec<_>>();
+        let edges = self
+            .edges_blocking(place.into())
+            .cloned()
+            .collect::<Vec<_>>();
         for edge in edges {
             changed = true;
             self.remove_edge_and_set_latest(&edge, repacker, location);
@@ -198,9 +203,31 @@ impl<'tcx> BorrowsState<'tcx> {
         changed
     }
 
+    pub fn get_place_blocking(
+        &self,
+        place: ReborrowBlockedPlace<'tcx>,
+    ) -> Option<MaybeOldPlace<'tcx>> {
+        let mut edges = self.edges_blocking(place).collect::<Vec<_>>();
+        if edges.len() != 1 {
+            eprintln!(
+                "Expected 1 edge blocking {:?}, found {}",
+                place,
+                edges.len()
+            );
+            eprintln!("Edges: {:?}", edges);
+            return None;
+        }
+        match edges[0].kind() {
+            BorrowsEdgeKind::Reborrow(reborrow) => Some(reborrow.assigned_place),
+            BorrowsEdgeKind::DerefExpansion(_) => todo!(),
+            BorrowsEdgeKind::RegionAbstraction(_) => todo!(),
+            BorrowsEdgeKind::RegionProjectionMember(_) => todo!(),
+        }
+    }
+
     pub fn edges_blocking(
         &self,
-        place: MaybeOldPlace<'tcx>,
+        place: ReborrowBlockedPlace<'tcx>,
     ) -> impl Iterator<Item = &BorrowsEdge<'tcx>> {
         self.graph.edges_blocking(place)
     }
@@ -268,7 +295,7 @@ impl<'tcx> BorrowsState<'tcx> {
         }
 
         for exp in subtract_deref_expansions(&self.deref_expansions(), &to.deref_expansions()) {
-            ug.unblock_place(exp.value.base(), self, repacker);
+            ug.unblock_place(exp.value.base().into(), self, repacker);
         }
 
         for abstraction in self.region_abstractions() {
@@ -407,7 +434,7 @@ impl<'tcx> BorrowsState<'tcx> {
     ) -> FxHashSet<Conditioned<Reborrow<'tcx>>> {
         self.reborrows()
             .into_iter()
-            .filter(|rb| rb.value.blocked_place == place)
+            .filter(|rb| rb.value.blocked_place == place.into())
             .collect()
     }
 
@@ -431,7 +458,7 @@ impl<'tcx> BorrowsState<'tcx> {
 
     pub fn add_reborrow(
         &mut self,
-        blocked_place: Place<'tcx>,
+        blocked_place: ReborrowBlockedPlace<'tcx>,
         assigned_place: Place<'tcx>,
         mutability: Mutability,
         location: Location,

@@ -284,16 +284,16 @@ pub fn generate_unblock_dot_graph<'a, 'tcx: 'a>(
 }
 
 pub fn generate_dot_graph<'a, 'tcx: 'a>(
-    _location: Location,
     repacker: PlaceRepacker<'a, 'tcx>,
     summary: &CapabilitySummary<'tcx>,
     borrows_domain: &BorrowsState<'tcx>,
     borrow_set: &BorrowSet<'tcx>,
-    _input_facts: &PoloniusInput,
     file_path: &str,
 ) -> io::Result<()> {
     let constructor = PCSGraphConstructor::new(summary, repacker, borrows_domain, borrow_set);
     let graph = constructor.construct_graph();
-    let drawer = GraphDrawer::new(File::create(file_path).unwrap());
+    let drawer = GraphDrawer::new(File::create(file_path).unwrap_or_else(|e| {
+        panic!("Failed to create file at path: {}: {}", file_path, e);
+    }));
     drawer.draw(graph)
 }

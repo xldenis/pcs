@@ -19,7 +19,8 @@ pub mod visualization;
 use std::fs::create_dir_all;
 
 use borrows::{
-    borrows_graph::Conditioned, borrows_visitor::DebugCtx, deref_expansion::DerefExpansion, domain::Reborrow, engine::BorrowsDomain, unblock_graph::UnblockGraph
+    borrows_graph::Conditioned, borrows_visitor::DebugCtx, deref_expansion::DerefExpansion,
+    domain::Reborrow, engine::BorrowsDomain, unblock_graph::UnblockGraph,
 };
 use combined_pcs::{BodyWithBorrowckFacts, PcsContext, PcsEngine, PlaceCapabilitySummary};
 use free_pcs::HasExtra;
@@ -99,7 +100,7 @@ pub fn run_combined_pcs<'mir, 'tcx>(
     visualization_output_path: Option<String>,
 ) -> FpcsOutput<'mir, 'tcx> {
     let cgx = PcsContext::new(tcx, mir);
-    let fpcs = PcsEngine::new(cgx);
+    let fpcs = PcsEngine::new(cgx, visualization_output_path.clone());
     let analysis = fpcs
         .into_engine(tcx, &mir.body)
         .pass_name("free_pcs")
@@ -107,10 +108,6 @@ pub fn run_combined_pcs<'mir, 'tcx>(
     let mut fpcs_analysis = free_pcs::FreePcsAnalysis::new(analysis.into_results_cursor(&mir.body));
 
     if let Some(dir_path) = visualization_output_path {
-        if std::path::Path::new(&dir_path).exists() {
-            std::fs::remove_dir_all(&dir_path).expect("Failed to delete directory contents");
-        }
-        create_dir_all(&dir_path).expect("Failed to create directory for DOT files");
         generate_json_from_mir(&format!("{}/mir.json", dir_path), tcx, &mir.body)
             .expect("Failed to generate JSON from MIR");
 
@@ -155,16 +152,8 @@ pub fn run_combined_pcs<'mir, 'tcx>(
                         statement_index,
                         name
                     );
-                    generate_dot_graph(
-                        statement.location,
-                        rp,
-                        &fpcs,
-                        &dag,
-                        &mir.borrow_set,
-                        &input_facts,
-                        &file_path,
-                    )
-                    .expect("Failed to generate DOT graph");
+                    generate_dot_graph(rp, &fpcs, &dag, &mir.borrow_set, &file_path)
+                        .expect("Failed to generate DOT graph");
                 }
             }
         }

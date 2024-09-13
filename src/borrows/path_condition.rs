@@ -6,7 +6,7 @@ use crate::{rustc_interface::middle::mir::BasicBlock, utils::PlaceRepacker};
 
 use super::domain::ToJsonWithRepacker;
 
-#[derive(PartialEq, Eq, Clone, Hash, PartialOrd, Ord, Debug)]
+#[derive(Copy, PartialEq, Eq, Clone, Hash, PartialOrd, Ord, Debug)]
 pub struct PathCondition {
     pub from: BasicBlock,
     pub to: BasicBlock,
@@ -64,6 +64,16 @@ impl PCGraph {
         Self(BTreeSet::from([pc]))
     }
 
+    pub fn join(&mut self, other: &Self) -> bool {
+        let mut changed = false;
+        for pc in other.0.iter() {
+            if self.insert(*pc) {
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub fn has_path_to_block(&self, block: BasicBlock) -> bool {
         self.0.iter().any(|pc| pc.to == block)
     }
@@ -89,13 +99,7 @@ impl PCGraph {
     }
 
     pub fn insert(&mut self, pc: PathCondition) -> bool {
-        // TODO: The current logic ensures that inserting preserves the root, but
-        // it should be checked whether this makes sense
-        if self.has_path_to_block(pc.from) && pc.to != self.root() {
-            self.0.insert(pc)
-        } else {
-            false
-        }
+        self.0.insert(pc)
     }
 }
 
@@ -132,6 +136,17 @@ impl std::fmt::Display for PathConditions {
 impl PathConditions {
     pub fn new(block: BasicBlock) -> Self {
         Self::AtBlock(block)
+    }
+
+    pub fn join(&mut self, other: &Self) -> bool {
+        match (self, other) {
+            (PathConditions::AtBlock(b1), PathConditions::AtBlock(b2)) => {
+                assert!(*b1 == *b2);
+                false
+            }
+            (PathConditions::Paths(p1), PathConditions::Paths(p2)) => p1.join(p2),
+            _ => unreachable!(),
+        }
     }
 
     pub fn insert(&mut self, pc: PathCondition) -> bool {

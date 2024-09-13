@@ -511,7 +511,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     let from: utils::Place<'tcx> = (*from).into();
                                     let target: utils::Place<'tcx> = (*target).into();
                                     self.state.after.add_reborrow(
-                                        from.project_deref(self.repacker()),
+                                        from.project_deref(self.repacker()).into(),
                                         target.project_deref(self.repacker()),
                                         Mutability::Not,
                                         location,
@@ -532,7 +532,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                                     .erase_regions((*assigned_place).ty(self.body, self.tcx).ty)
                             );
                             self.state.after.add_reborrow(
-                                blocked_place,
+                                blocked_place.into(),
                                 assigned_place,
                                 kind.mutability(),
                                 location,
@@ -561,10 +561,7 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
             | Aggregate(_, _)
             | ShallowInitBox(_, _) => {}
 
-            &Ref(_, _, place)
-            | &Len(place)
-            | &Discriminant(place)
-            | &CopyForDeref(place) => {
+            &Ref(_, _, place) | &Len(place) | &Discriminant(place) | &CopyForDeref(place) => {
                 let place: utils::Place<'tcx> = place.into();
                 if self.before && self.preparing && !place.is_owned(self.body, self.tcx) {
                     self.ensure_expansion_to_exactly(place, location);
