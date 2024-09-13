@@ -194,7 +194,6 @@ enum GraphEdge {
     DerefExpansionEdge {
         source: NodeId,
         target: NodeId,
-        location: Location,
     },
     RegionProjectionMemberEdge {
         place: NodeId,
@@ -223,16 +222,10 @@ impl GraphEdge {
                     .with_color("orange".to_string())
                     .with_label(format!("{} - {}", region, path_conditions)),
             },
-            GraphEdge::DerefExpansionEdge {
-                source,
-                target,
-                location,
-            } => DotEdge {
+            GraphEdge::DerefExpansionEdge { source, target } => DotEdge {
                 from: source.to_string(),
                 to: target.to_string(),
-                options: EdgeOptions::undirected()
-                    .with_color("green".to_string())
-                    .with_label(format!("{:?}", location)),
+                options: EdgeOptions::undirected().with_color("green".to_string()),
             },
             GraphEdge::AbstractEdge { blocked, blocking } => DotEdge {
                 from: blocked.to_string(),

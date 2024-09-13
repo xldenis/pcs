@@ -322,7 +322,6 @@ impl<'tcx> BorrowsGraph<'tcx> {
         let de = if place.place().is_owned(repacker.body(), repacker.tcx()) {
             DerefExpansion::OwnedExpansion {
                 base: place,
-                location,
             }
         } else {
             DerefExpansion::borrowed(place, expansion, location, repacker)

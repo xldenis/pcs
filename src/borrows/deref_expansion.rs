@@ -18,10 +18,6 @@ impl<'tcx> BorrowDerefExpansion<'tcx> {
         self.base
     }
 
-    pub fn location(&self) -> Location {
-        self.location
-    }
-
     pub fn expansion(&self, repacker: PlaceRepacker<'_, 'tcx>) -> Vec<MaybeOldPlace<'tcx>> {
         self.expansion
             .iter()
@@ -34,7 +30,6 @@ impl<'tcx> BorrowDerefExpansion<'tcx> {
 pub enum DerefExpansion<'tcx> {
     OwnedExpansion {
         base: MaybeOldPlace<'tcx>,
-        location: Location,
     },
     BorrowExpansion(BorrowDerefExpansion<'tcx>),
 }
@@ -55,13 +50,6 @@ impl<'tcx> DerefExpansion<'tcx> {
         match self {
             DerefExpansion::OwnedExpansion { base, .. } => base.make_place_old(place, latest),
             DerefExpansion::BorrowExpansion(e) => e.base.make_place_old(place, latest),
-        }
-    }
-
-    pub fn location(&self) -> Location {
-        match self {
-            DerefExpansion::OwnedExpansion { location, .. } => *location,
-            DerefExpansion::BorrowExpansion(e) => e.location,
         }
     }
 

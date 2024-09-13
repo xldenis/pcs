@@ -320,7 +320,6 @@ trait PlaceGrapher<'mir, 'tcx: 'mir> {
                         .insert(GraphEdge::DerefExpansionEdge {
                             source: base,
                             target: place,
-                            location: deref_expansion.location(),
                         });
                 }
             }
