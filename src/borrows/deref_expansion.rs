@@ -10,7 +10,7 @@ use super::domain::{Latest, MaybeOldPlace, ToJsonWithRepacker};
 pub struct BorrowDerefExpansion<'tcx> {
     base: MaybeOldPlace<'tcx>,
     expansion: Vec<PlaceElem<'tcx>>,
-    location: Location,
+    pub location: Location,
 }
 
 impl<'tcx> BorrowDerefExpansion<'tcx> {
@@ -28,9 +28,7 @@ impl<'tcx> BorrowDerefExpansion<'tcx> {
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub enum DerefExpansion<'tcx> {
-    OwnedExpansion {
-        base: MaybeOldPlace<'tcx>,
-    },
+    OwnedExpansion { base: MaybeOldPlace<'tcx> },
     BorrowExpansion(BorrowDerefExpansion<'tcx>),
 }
 

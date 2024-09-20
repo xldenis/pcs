@@ -104,7 +104,7 @@ impl<'mir, 'tcx> JoinSemiLattice for BorrowsDomain<'mir, 'tcx> {
         other_after.add_path_condition(pc);
 
         // Overlay both graphs
-        self.after.join(&other_after, self.block)
+        self.after.join(&other_after, self.block, self.repacker)
     }
 }
 

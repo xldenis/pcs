@@ -24,6 +24,10 @@ use super::{
 pub struct BorrowsGraph<'tcx>(FxHashSet<BorrowsEdge<'tcx>>);
 
 impl<'tcx> BorrowsGraph<'tcx> {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn new() -> Self {
         Self(FxHashSet::default())
     }
@@ -104,6 +108,68 @@ impl<'tcx> BorrowsGraph<'tcx> {
             .collect()
     }
 
+    pub fn is_leaf_edge(
+        &self,
+        edge: &BorrowsEdge<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> bool {
+        edge.kind
+            .blocked_by_places(repacker)
+            .iter()
+            .all(|p| !self.has_edge_blocking(*p))
+    }
+
+    pub fn leaf_edges(&self, repacker: PlaceRepacker<'_, 'tcx>) -> FxHashSet<BorrowsEdge<'tcx>> {
+        let mut candidates = self.0.clone();
+        candidates.retain(|edge| self.is_leaf_edge(edge, repacker));
+        candidates
+    }
+
+    pub fn num_paths_between(
+        &self,
+        blocking: MaybeOldPlace<'tcx>,
+        blocked: ReborrowBlockedPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> usize {
+        let mut count = 0;
+        for blocked_edge in self.edges_blocked_by(blocking.into(), repacker) {
+            for blocked_place in blocked_edge.blocked_places() {
+                if blocked_place == blocked {
+                    count += 1;
+                } else {
+                    if let Some(blocked_place) = blocked_place.as_local() {
+                        count += self.num_paths_between(blocked_place, blocked, repacker);
+                    }
+                }
+            }
+        }
+        assert!(count < 2);
+        count
+    }
+
+    pub fn subgraph_for_leaves(&self, repacker: PlaceRepacker<'_, 'tcx>) -> BorrowsGraph<'tcx> {
+        let mut subgraph = BorrowsGraph::new();
+        let mut stack: Vec<BorrowsEdge<'tcx>> = self.leaf_edges(repacker).into_iter().collect();
+
+        while let Some(leaf) = stack.pop() {
+            if !subgraph.insert(leaf.clone()) {
+                continue;
+            }
+            for blocked_place in leaf.kind.blocked_places().into_iter() {
+                if let Some(blocked_place) = blocked_place.as_local() {
+                    for edge in self
+                        .edges()
+                        .filter(|e| e.is_blocked_by_place(blocked_place.into(), repacker))
+                    {
+                        stack.push(edge.clone());
+                    }
+                }
+            }
+        }
+
+        subgraph
+    }
+
     pub fn roots(&self, repacker: PlaceRepacker<'_, 'tcx>) -> FxHashSet<Place<'tcx>> {
         let mut candidates = self
             .0
@@ -134,6 +200,18 @@ impl<'tcx> BorrowsGraph<'tcx> {
             .any(|edge| edge.blocked_by_places(repacker).contains(&place))
     }
 
+    pub fn edges_blocked_by(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> FxHashSet<BorrowsEdge<'tcx>> {
+        self.0
+            .iter()
+            .filter(|edge| edge.blocked_by_places(repacker).contains(&place))
+            .cloned()
+            .collect()
+    }
+
     pub fn make_place_old(
         &mut self,
         place: Place<'tcx>,
@@ -146,7 +224,12 @@ impl<'tcx> BorrowsGraph<'tcx> {
         });
     }
 
-    pub fn join(&mut self, other: &Self) -> bool {
+    pub fn join(
+        &mut self,
+        other: &Self,
+        post_block: BasicBlock,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> bool {
         let mut changed = false;
         let len = self.0.len();
         let our_edges = self.0.clone();
@@ -165,6 +248,26 @@ impl<'tcx> BorrowsGraph<'tcx> {
                     self.insert(other_edge.clone());
                     changed = true;
                 }
+            }
+        }
+        if false && post_block.as_usize() == 1 {
+            // TODO
+            let subgraph_to_abstract = self.subgraph_for_leaves(repacker);
+            let should_abstract = subgraph_to_abstract
+                .leaf_edges(repacker)
+                .iter()
+                .any(|edge| {
+                    edge.blocked_by_places(repacker)
+                        .into_iter()
+                        .any(|blocking_place| {
+                            let mut roots = subgraph_to_abstract.roots(repacker).into_iter();
+                            roots.any(|root| {
+                                self.num_paths_between(blocking_place, root.into(), repacker) > 1
+                            })
+                        })
+                });
+            if should_abstract {
+                todo!()
             }
         }
         changed
@@ -228,7 +331,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
         });
     }
 
-    pub fn remove(&mut self, edge: &BorrowsEdge<'tcx>, _debug_ctx: DebugCtx) -> bool {
+    pub fn remove(&mut self, edge: &BorrowsEdge<'tcx>, debug_ctx: DebugCtx) -> bool {
         self.0.remove(edge)
     }
 
@@ -320,13 +423,11 @@ impl<'tcx> BorrowsGraph<'tcx> {
             assert!(p.projection.len() > place.place().projection.len());
         }
         let de = if place.place().is_owned(repacker.body(), repacker.tcx()) {
-            DerefExpansion::OwnedExpansion {
-                base: place,
-            }
+            DerefExpansion::OwnedExpansion { base: place }
         } else {
             DerefExpansion::borrowed(place, expansion, location, repacker)
         };
-        self.insert(BorrowsEdge {
+        let result = self.insert(BorrowsEdge {
             conditions: PathConditions::new(location.block),
             kind: BorrowsEdgeKind::DerefExpansion(de),
         });
@@ -450,6 +551,7 @@ impl<'tcx> BorrowsEdge<'tcx> {
         self.kind.blocked_by_places(repacker).contains(&place)
     }
 
+    /// The places that are blocking this edge (e.g. the assigned place of a reborrow)
     pub fn blocked_by_places(
         &self,
         repacker: PlaceRepacker<'_, 'tcx>,
@@ -489,6 +591,18 @@ impl<'tcx> BorrowsEdgeKind<'tcx> {
         }
     }
 
+    pub fn blocks_place(&self, place: ReborrowBlockedPlace<'tcx>) -> bool {
+        self.blocked_places().contains(&place)
+    }
+
+    pub fn blocked_by_place(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> bool {
+        self.blocked_by_places(repacker).contains(&place)
+    }
+
     pub fn blocked_places(&self) -> FxHashSet<ReborrowBlockedPlace<'tcx>> {
         match &self {
             BorrowsEdgeKind::Reborrow(reborrow) => {
@@ -507,6 +621,7 @@ impl<'tcx> BorrowsEdgeKind<'tcx> {
         }
     }
 
+    /// The places that are blocking this edge (e.g. the assigned place of a reborrow)
     pub fn blocked_by_places(
         &self,
         repacker: PlaceRepacker<'_, 'tcx>,

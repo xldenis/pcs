@@ -78,16 +78,18 @@ fn subtract_deref_expansions<'tcx>(
     from: &FxHashSet<Conditioned<DerefExpansion<'tcx>>>,
     to: &FxHashSet<Conditioned<DerefExpansion<'tcx>>>,
 ) -> FxHashSet<Conditioned<DerefExpansion<'tcx>>> {
-    from.iter()
-        .filter(|f1| to.iter().all(|f2| *f1 != f2))
-        .cloned()
-        .collect()
+    from.difference(to).cloned().collect()
 }
 
 impl<'tcx> BorrowsState<'tcx> {
-    pub fn join<'mir>(&mut self, other: &Self, post_block: BasicBlock) -> bool {
+    pub fn join<'mir>(
+        &mut self,
+        other: &Self,
+        post_block: BasicBlock,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> bool {
         let mut changed = false;
-        if self.graph.join(&other.graph) {
+        if self.graph.join(&other.graph, post_block, repacker) {
             changed = true;
         }
         if self.latest.join(&other.latest, post_block) {
@@ -209,12 +211,6 @@ impl<'tcx> BorrowsState<'tcx> {
     ) -> Option<MaybeOldPlace<'tcx>> {
         let mut edges = self.edges_blocking(place).collect::<Vec<_>>();
         if edges.len() != 1 {
-            eprintln!(
-                "Expected 1 edge blocking {:?}, found {}",
-                place,
-                edges.len()
-            );
-            eprintln!("Edges: {:?}", edges);
             return None;
         }
         match edges[0].kind() {
@@ -276,7 +272,7 @@ impl<'tcx> BorrowsState<'tcx> {
     pub fn bridge(
         &self,
         to: &Self,
-        _debug_ctx: DebugCtx,
+        debug_ctx: DebugCtx,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> ReborrowBridge<'tcx> {
         let added_reborrows: FxHashSet<Conditioned<Reborrow<'tcx>>> = to
@@ -284,7 +280,12 @@ impl<'tcx> BorrowsState<'tcx> {
             .into_iter()
             .filter(|rb| !self.has_reborrow_at_location(rb.value.reserve_location()))
             .collect();
-        let expands = subtract_deref_expansions(&to.deref_expansions(), &self.deref_expansions());
+
+        let expands = to
+            .deref_expansions()
+            .difference(&self.deref_expansions())
+            .cloned()
+            .collect();
 
         let mut ug = UnblockGraph::new();
 
@@ -294,7 +295,7 @@ impl<'tcx> BorrowsState<'tcx> {
             }
         }
 
-        for exp in subtract_deref_expansions(&self.deref_expansions(), &to.deref_expansions()) {
+        for exp in self.deref_expansions().difference(&to.deref_expansions()) {
             ug.unblock_place(exp.value.base().into(), self, repacker);
         }
 
