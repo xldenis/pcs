@@ -16,9 +16,12 @@ use super::{
     borrows_state::{RegionProjectionMember, RegionProjectionMemberDirection},
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
-    domain::{Latest, MaybeOldPlace, Reborrow, ReborrowBlockedPlace, ToJsonWithRepacker},
+    domain::{
+        AbstractionBlockEdge, AbstractionTarget, AbstractionType, Latest, LoopAbstraction,
+        MaybeOldPlace, Reborrow, ReborrowBlockedPlace, ToJsonWithRepacker,
+    },
     path_condition::{PathCondition, PathConditions},
-    region_abstraction::RegionAbstraction,
+    region_abstraction::AbstractionEdge,
 };
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BorrowsGraph<'tcx>(FxHashSet<BorrowsEdge<'tcx>>);
@@ -40,7 +43,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
         self.0.iter()
     }
 
-    pub fn region_abstractions(&self) -> FxHashSet<Conditioned<RegionAbstraction<'tcx>>> {
+    pub fn region_abstractions(&self) -> FxHashSet<Conditioned<AbstractionEdge<'tcx>>> {
         self.0
             .iter()
             .filter_map(|edge| match &edge.kind {
@@ -143,7 +146,6 @@ impl<'tcx> BorrowsGraph<'tcx> {
                 }
             }
         }
-        assert!(count < 2);
         count
     }
 
@@ -170,17 +172,21 @@ impl<'tcx> BorrowsGraph<'tcx> {
         subgraph
     }
 
-    pub fn roots(&self, repacker: PlaceRepacker<'_, 'tcx>) -> FxHashSet<Place<'tcx>> {
+    pub fn roots(
+        &self,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> FxHashSet<ReborrowBlockedPlace<'tcx>> {
         let mut candidates = self
             .0
             .iter()
-            .flat_map(|edge| {
-                edge.blocked_places()
-                    .into_iter()
-                    .flat_map(|p| p.as_local()?.as_current())
-            })
+            .flat_map(|edge| edge.blocked_places().into_iter())
             .collect::<FxHashSet<_>>();
-        candidates.retain(|p| !self.has_edge_blocked_by((*p).into(), repacker));
+        candidates.retain(|p| match p {
+            ReborrowBlockedPlace::Local(maybe_old_place) => {
+                self.is_root(*maybe_old_place, repacker)
+            }
+            ReborrowBlockedPlace::Remote(local) => true,
+        });
         candidates
     }
 
@@ -188,6 +194,10 @@ impl<'tcx> BorrowsGraph<'tcx> {
         self.0
             .iter()
             .any(|edge| edge.blocked_places().contains(&(place.into())))
+    }
+
+    pub fn is_root(&self, place: MaybeOldPlace<'tcx>, repacker: PlaceRepacker<'_, 'tcx>) -> bool {
+        !self.has_edge_blocked_by(place, repacker)
     }
 
     pub fn has_edge_blocked_by(
@@ -222,6 +232,64 @@ impl<'tcx> BorrowsGraph<'tcx> {
             edge.make_place_old(place, latest);
             true
         });
+    }
+
+    pub fn abstract_subgraph(
+        &mut self,
+        block: BasicBlock,
+        subgraph: BorrowsGraph<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) {
+        for edge in subgraph.edges() {
+            self.remove(edge, DebugCtx::Other);
+        }
+        let edges = subgraph
+            .leaf_edges(repacker)
+            .into_iter()
+            .flat_map(|edge| {
+                edge.blocked_by_places(repacker)
+                    .into_iter()
+                    .flat_map(|place| {
+                        let blocked_roots = subgraph.roots_blocked_by(place, repacker);
+                        blocked_roots
+                            .into_iter()
+                            .map(|blocked_root| {
+                                AbstractionBlockEdge::new(
+                                    AbstractionTarget::Place(blocked_root),
+                                    AbstractionTarget::Place(place),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+            })
+            .collect();
+        let abstraction = LoopAbstraction::new(edges, block);
+        self.insert(
+            AbstractionEdge::new(AbstractionType::Loop(abstraction))
+                .to_borrows_edge(PathConditions::new(block)),
+        );
+    }
+
+    pub fn roots_blocked_by(
+        &self,
+        place: MaybeOldPlace<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> FxHashSet<ReborrowBlockedPlace<'tcx>> {
+        self.edges_blocked_by(place, repacker)
+            .into_iter()
+            .flat_map(|edge| {
+                edge.blocked_places().into_iter().flat_map(|p| match p {
+                    ReborrowBlockedPlace::Local(maybe_old_place) => {
+                        if self.is_root(maybe_old_place, repacker) {
+                            vec![p].into_iter().collect()
+                        } else {
+                            self.roots_blocked_by(maybe_old_place, repacker)
+                        }
+                    }
+                    ReborrowBlockedPlace::Remote(local) => vec![p].into_iter().collect(),
+                })
+            })
+            .collect()
     }
 
     pub fn join(
@@ -267,7 +335,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
                         })
                 });
             if should_abstract {
-                todo!()
+                self.abstract_subgraph(post_block, subgraph_to_abstract, repacker);
             }
         }
         changed
@@ -568,7 +636,7 @@ impl<'tcx> BorrowsEdge<'tcx> {
 pub enum BorrowsEdgeKind<'tcx> {
     Reborrow(Reborrow<'tcx>),
     DerefExpansion(DerefExpansion<'tcx>),
-    RegionAbstraction(RegionAbstraction<'tcx>),
+    RegionAbstraction(AbstractionEdge<'tcx>),
     RegionProjectionMember(RegionProjectionMember<'tcx>),
 }
 
@@ -657,7 +725,7 @@ impl<'tcx> ToBorrowsEdge<'tcx> for DerefExpansion<'tcx> {
     }
 }
 
-impl<'tcx> ToBorrowsEdge<'tcx> for RegionAbstraction<'tcx> {
+impl<'tcx> ToBorrowsEdge<'tcx> for AbstractionEdge<'tcx> {
     fn to_borrows_edge(self, conditions: PathConditions) -> BorrowsEdge<'tcx> {
         BorrowsEdge {
             conditions,

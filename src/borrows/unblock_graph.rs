@@ -22,17 +22,66 @@ use crate::{
 use super::{
     borrows_graph::{BorrowsEdge, BorrowsEdgeKind, Conditioned},
     domain::{AbstractionType, ReborrowBlockedPlace},
-    region_abstraction::RegionAbstraction,
+    region_abstraction::AbstractionEdge,
 };
 
 type UnblockEdge<'tcx> = BorrowsEdge<'tcx>;
 type UnblockEdgeType<'tcx> = BorrowsEdgeKind<'tcx>;
 #[derive(Clone, Debug)]
-pub struct UnblockGraph<'tcx>(HashSet<UnblockEdge<'tcx>>);
+pub struct UnblockGraph<'tcx> {
+    edges: HashSet<UnblockEdge<'tcx>>,
+    error: bool,
+}
+
+#[derive(PartialEq, Eq, Clone, Debug)]
+enum UnblockHistoryAction<'tcx> {
+    UnblockPlace(ReborrowBlockedPlace<'tcx>),
+    KillReborrow(Reborrow<'tcx>),
+}
+
+#[derive(Clone, Debug)]
+struct UnblockHistory<'tcx>(Vec<UnblockHistoryAction<'tcx>>);
+
+impl<'tcx> std::fmt::Display for UnblockHistory<'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for action in self.0.iter() {
+            match action {
+                UnblockHistoryAction::UnblockPlace(place) => {
+                    writeln!(f, "unblock place {}", place)?;
+                }
+                UnblockHistoryAction::KillReborrow(reborrow) => {
+                    writeln!(f, "kill reborrow {}", reborrow)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'tcx> UnblockHistory<'tcx> {
+    pub fn new() -> Self {
+        Self(vec![])
+    }
+
+    // Adds an element to the end of the history if it is not already present
+    // Returns false iff the element was already present
+    pub fn record(&mut self, action: UnblockHistoryAction<'tcx>) -> bool {
+        if self.0.contains(&action) {
+            false
+        } else {
+            self.0.push(action);
+            true
+        }
+    }
+}
 
 impl<'tcx> UnblockGraph<'tcx> {
+
+    pub fn has_error(&self) -> bool {
+        self.error
+    }
     pub fn edges(&self) -> impl Iterator<Item = &UnblockEdge<'tcx>> {
-        self.0.iter()
+        self.edges.iter()
     }
     pub fn to_json(&self, repacker: PlaceRepacker<'_, 'tcx>) -> serde_json::Value {
         let dot_graph = generate_unblock_dot_graph(&repacker, self).unwrap();
@@ -43,7 +92,10 @@ impl<'tcx> UnblockGraph<'tcx> {
     }
 
     pub fn new() -> Self {
-        Self(HashSet::new())
+        Self {
+            edges: HashSet::new(),
+            error: false,
+        }
     }
 
     pub fn for_place(
@@ -57,15 +109,19 @@ impl<'tcx> UnblockGraph<'tcx> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.edges.is_empty()
     }
 
     pub fn filter_for_path(&mut self, path: &[BasicBlock]) {
-        self.0.retain(|edge| edge.valid_for_path(path));
+        self.edges.retain(|edge| edge.valid_for_path(path));
     }
 
     pub fn actions(self, repacker: PlaceRepacker<'_, 'tcx>) -> Vec<UnblockAction<'tcx>> {
-        let mut edges = self.0;
+        if self.error {
+            eprintln!("Unblock graph contains an error, not returning any actions");
+            return vec![];
+        }
+        let mut edges = self.edges;
         let mut actions = vec![];
 
         // There might be duplicates because the same action may be required by
@@ -142,18 +198,18 @@ impl<'tcx> UnblockGraph<'tcx> {
     }
 
     fn add_dependency(&mut self, unblock_edge: UnblockEdge<'tcx>) {
-        self.0.insert(unblock_edge);
+        self.edges.insert(unblock_edge);
     }
 
     pub fn kill_abstraction(
         &mut self,
         borrows: &BorrowsState<'tcx>,
-        abstraction: Conditioned<RegionAbstraction<'tcx>>,
+        abstraction: Conditioned<AbstractionEdge<'tcx>>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for place in &abstraction.value.blocks_places() {
             match place {
-                MaybeOldPlace::OldPlace(p) => {
+                ReborrowBlockedPlace::Local(MaybeOldPlace::OldPlace(p)) => {
                     self.trim_old_leaves_from(borrows, p.clone(), repacker)
                 }
                 _ => {}
@@ -161,29 +217,54 @@ impl<'tcx> UnblockGraph<'tcx> {
         }
         self.add_dependency(abstraction.to_borrows_edge());
     }
-
     pub fn unblock_place(
         &mut self,
         place: ReborrowBlockedPlace<'tcx>,
         borrows: &BorrowsState<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
+        self.unblock_place_internal(place, borrows, repacker, UnblockHistory::new());
+    }
+
+    fn unblock_place_internal(
+        &mut self,
+        place: ReborrowBlockedPlace<'tcx>,
+        borrows: &BorrowsState<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+        mut history: UnblockHistory<'tcx>,
+    ) {
+        if !history.record(UnblockHistoryAction::UnblockPlace(place)) {
+            eprintln!("Unblocking the same place twice {:?}!\n {}", place, history);
+            self.error = true;
+            return;
+        }
         for edge in borrows.edges_blocking(place) {
             match edge.kind() {
-                BorrowsEdgeKind::Reborrow(reborrow) => self.kill_reborrow(
+                BorrowsEdgeKind::Reborrow(reborrow) => self.kill_reborrow_internal(
                     Conditioned::new(reborrow.clone(), edge.conditions().clone()),
                     borrows,
                     repacker,
+                    history.clone(),
                 ),
                 BorrowsEdgeKind::DerefExpansion(expansion) => {
                     self.add_dependency(edge.clone());
                     for place in expansion.expansion(repacker) {
-                        self.unblock_place(place.into(), borrows, repacker);
+                        self.unblock_place_internal(
+                            place.into(),
+                            borrows,
+                            repacker,
+                            history.clone(),
+                        );
                     }
                 }
                 BorrowsEdgeKind::RegionAbstraction(abstraction) => {
                     for place in abstraction.abstraction_type.blocker_places() {
-                        self.unblock_place(place.into(), borrows, repacker);
+                        self.unblock_place_internal(
+                            place.into(),
+                            borrows,
+                            repacker,
+                            history.clone(),
+                        );
                     }
                     self.add_dependency(edge.clone());
                 }
@@ -201,9 +282,30 @@ impl<'tcx> UnblockGraph<'tcx> {
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
         for edge in borrows.reborrow_edges_reserved_at(location) {
-            self.unblock_place(edge.value.assigned_place.into(), borrows, repacker);
-            self.add_dependency(edge.to_borrows_edge());
+                self.unblock_place(edge.value.assigned_place.into(), borrows, repacker);
+                self.add_dependency(edge.to_borrows_edge());
         }
+    }
+
+    pub fn kill_reborrow_internal(
+        &mut self,
+        reborrow: Conditioned<Reborrow<'tcx>>,
+        borrows: &BorrowsState<'tcx>,
+        repacker: PlaceRepacker<'_, 'tcx>,
+        mut history: UnblockHistory<'tcx>,
+    ) {
+        if !history.record(UnblockHistoryAction::KillReborrow(reborrow.value.clone())) {
+            // eprintln!("Killing the same reborrow twice {:?}!\n {}", reborrow, history);
+            self.error = true;
+            return;
+        }
+        self.unblock_place_internal(
+            reborrow.value.assigned_place.into(),
+            borrows,
+            repacker,
+            history,
+        );
+        self.add_dependency(reborrow.to_borrows_edge());
     }
 
     pub fn kill_reborrow(
@@ -212,8 +314,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         borrows: &BorrowsState<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
-        self.unblock_place(reborrow.value.assigned_place.into(), borrows, repacker);
-        self.add_dependency(reborrow.to_borrows_edge());
+        self.kill_reborrow_internal(reborrow, borrows, repacker, UnblockHistory::new());
     }
 
     pub fn trim_old_leaves_from(

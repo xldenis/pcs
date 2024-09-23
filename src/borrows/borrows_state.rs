@@ -21,7 +21,7 @@ use super::{
     deref_expansion::DerefExpansion,
     domain::{Latest, MaybeOldPlace, Reborrow, ReborrowBlockedPlace, RegionProjection},
     path_condition::{PathCondition, PathConditions},
-    region_abstraction::RegionAbstraction,
+    region_abstraction::AbstractionEdge,
     unblock_graph::UnblockGraph,
 };
 
@@ -345,8 +345,8 @@ impl<'tcx> BorrowsState<'tcx> {
 
     pub fn get_abstractions_blocking(
         &self,
-        place: &MaybeOldPlace<'tcx>,
-    ) -> Vec<Conditioned<RegionAbstraction<'tcx>>> {
+        place: ReborrowBlockedPlace<'tcx>,
+    ) -> Vec<Conditioned<AbstractionEdge<'tcx>>> {
         self.region_abstractions()
             .iter()
             .filter(|abstraction| abstraction.value.blocks(place))
@@ -371,8 +371,10 @@ impl<'tcx> BorrowsState<'tcx> {
             .ensure_deref_expansion_to_at_least(place.into(), body, tcx, location);
     }
 
-    /// Returns places in the PCS that are reborrowed
-    pub fn roots(&self, repacker: PlaceRepacker<'_, 'tcx>) -> FxHashSet<Place<'tcx>> {
+    pub fn roots(
+        &self,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> FxHashSet<ReborrowBlockedPlace<'tcx>> {
         self.graph.roots(repacker)
     }
 
@@ -399,6 +401,9 @@ impl<'tcx> BorrowsState<'tcx> {
         location: Location,
     ) -> bool {
         let mut changed = false;
+        if graph.has_error() {
+            eprintln!("{:?} unblock graph has error", location);
+        }
         for action in graph.actions(repacker) {
             match action {
                 crate::combined_pcs::UnblockAction::TerminateReborrow {
@@ -465,6 +470,10 @@ impl<'tcx> BorrowsState<'tcx> {
         location: Location,
         region: ty::Region<'tcx>,
     ) {
+        eprintln!(
+            "adding reborrow blocking {:?} assigned to {:?}",
+            blocked_place, assigned_place
+        );
         self.graph
             .add_reborrow(blocked_place, assigned_place, mutability, location, region);
     }
@@ -473,7 +482,7 @@ impl<'tcx> BorrowsState<'tcx> {
         self.graph.has_reborrow_at_location(location)
     }
 
-    pub fn region_abstractions(&self) -> FxHashSet<Conditioned<RegionAbstraction<'tcx>>> {
+    pub fn region_abstractions(&self) -> FxHashSet<Conditioned<AbstractionEdge<'tcx>>> {
         self.graph.region_abstractions()
     }
 
@@ -490,7 +499,7 @@ impl<'tcx> BorrowsState<'tcx> {
 
     pub fn add_region_abstraction(
         &mut self,
-        abstraction: RegionAbstraction<'tcx>,
+        abstraction: AbstractionEdge<'tcx>,
         block: BasicBlock,
     ) {
         self.graph

@@ -15,7 +15,12 @@ use rustc_interface::{
 };
 
 use crate::{
-    borrows::{borrows_visitor::DebugCtx, engine::BorrowsDomain, unblock_graph::UnblockGraph},
+    borrows::{
+        borrows_visitor::DebugCtx,
+        domain::{MaybeOldPlace, ReborrowBlockedPlace},
+        engine::BorrowsDomain,
+        unblock_graph::UnblockGraph,
+    },
     free_pcs::{CapabilityLocal, FreePlaceCapabilitySummary},
     rustc_interface,
     visualization::generate_dot_graph,
@@ -89,13 +94,15 @@ impl JoinSemiLattice for PlaceCapabilitySummary<'_, '_> {
         let borrows = self.borrows.join(&other.borrows);
         let mut g = UnblockGraph::new();
         for root in self.borrows.after.roots(self.cgx.rp) {
-            match &self.fpcs.after[root.local] {
-                CapabilityLocal::Unallocated => {
-                    g.unblock_place(root.into(), &self.borrows.after, self.cgx.rp);
-                }
-                CapabilityLocal::Allocated(projs) => {
-                    if !(*projs).contains_key(&root) {
+            if let ReborrowBlockedPlace::Local(MaybeOldPlace::Current { place: root }) = root {
+                match &self.fpcs.after[root.local] {
+                    CapabilityLocal::Unallocated => {
                         g.unblock_place(root.into(), &self.borrows.after, self.cgx.rp);
+                    }
+                    CapabilityLocal::Allocated(projs) => {
+                        if !(*projs).contains_key(&root) {
+                            g.unblock_place(root.into(), &self.borrows.after, self.cgx.rp);
+                        }
                     }
                 }
             }

@@ -1,30 +1,18 @@
+use rustc_interface::{data_structures::fx::FxHashSet, middle::mir::Location};
 
+use crate::{rustc_interface, utils::Place};
 
-use rustc_interface::{
-    data_structures::{
-        fx::{FxHashSet},
-    },
-    middle::mir::{Location},
-};
-
-
-use crate::{
-    rustc_interface,
-    utils::{Place},
-};
-
-use super::{
-    domain::{
-        AbstractionBlockEdge, AbstractionTarget, AbstractionType, Latest, MaybeOldPlace,
-    },
+use super::domain::{
+    AbstractionBlockEdge, AbstractionInputTarget, AbstractionOutputTarget, AbstractionTarget,
+    AbstractionType, Latest, MaybeOldPlace, ReborrowBlockedPlace,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub struct RegionAbstraction<'tcx> {
+pub struct AbstractionEdge<'tcx> {
     pub abstraction_type: AbstractionType<'tcx>,
 }
 
-impl<'tcx> RegionAbstraction<'tcx> {
+impl<'tcx> AbstractionEdge<'tcx> {
     pub fn maybe_old_places(&mut self) -> Vec<&mut MaybeOldPlace<'tcx>> {
         self.abstraction_type.maybe_old_places()
     }
@@ -41,19 +29,19 @@ impl<'tcx> RegionAbstraction<'tcx> {
         self.abstraction_type.location()
     }
 
-    pub fn inputs(&self) -> Vec<&AbstractionTarget<'tcx>> {
+    pub fn inputs(&self) -> Vec<AbstractionInputTarget<'tcx>> {
         self.abstraction_type.inputs()
     }
 
-    pub fn outputs(&self) -> Vec<&AbstractionTarget<'tcx>> {
+    pub fn outputs(&self) -> Vec<AbstractionOutputTarget<'tcx>> {
         self.abstraction_type.outputs()
     }
 
-    pub fn blocks(&self, place: &MaybeOldPlace<'tcx>) -> bool {
+    pub fn blocks(&self, place: ReborrowBlockedPlace<'tcx>) -> bool {
         self.abstraction_type.blocks(place)
     }
 
-    pub fn blocks_places(&self) -> FxHashSet<MaybeOldPlace<'tcx>> {
+    pub fn blocks_places(&self) -> FxHashSet<ReborrowBlockedPlace<'tcx>> {
         self.abstraction_type.blocks_places()
     }
 
@@ -61,7 +49,7 @@ impl<'tcx> RegionAbstraction<'tcx> {
         self.abstraction_type.blocker_places()
     }
 
-    pub fn edges(&self) -> impl Iterator<Item = &AbstractionBlockEdge<'tcx>> {
+    pub fn edges(&self) -> Vec<AbstractionBlockEdge<'tcx>> {
         self.abstraction_type.edges()
     }
 }

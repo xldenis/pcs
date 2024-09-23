@@ -3,8 +3,11 @@ use crate::{
         borrows_graph::{BorrowsEdge, BorrowsEdgeKind},
         borrows_state::BorrowsState,
         borrows_visitor::{extract_nested_lifetimes, get_vid},
-        domain::{AbstractionTarget, MaybeOldPlace, ReborrowBlockedPlace, RegionProjection},
-        region_abstraction::RegionAbstraction,
+        domain::{
+            AbstractionInputTarget, AbstractionOutputTarget, AbstractionTarget, MaybeOldPlace,
+            ReborrowBlockedPlace, RegionProjection,
+        },
+        region_abstraction::AbstractionEdge,
         unblock_graph::UnblockGraph,
     },
     free_pcs::{CapabilityKind, CapabilityLocal, CapabilitySummary},
@@ -131,9 +134,26 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
     }
 
-    fn insert_abstraction_target(&mut self, target: &AbstractionTarget<'tcx>) -> NodeId {
+    fn insert_abstraction_input_target(&mut self, target: AbstractionInputTarget<'tcx>) -> NodeId {
         match target {
-            AbstractionTarget::MaybeOldPlace(place) => {
+            AbstractionTarget::Place(place) => match place {
+                ReborrowBlockedPlace::Local(place) => {
+                    self.insert_place_node(place.place(), place.location(), None)
+                }
+                ReborrowBlockedPlace::Remote(local) => self.insert_remote_node(local),
+            },
+            AbstractionTarget::RegionProjection(projection) => {
+                self.insert_region_projection_node(projection)
+            }
+        }
+    }
+
+    fn insert_abstraction_output_target(
+        &mut self,
+        target: AbstractionOutputTarget<'tcx>,
+    ) -> NodeId {
+        match target {
+            AbstractionTarget::Place(place) => {
                 self.insert_place_node(place.place(), place.location(), None)
             }
             AbstractionTarget::RegionProjection(projection) => {
@@ -142,11 +162,11 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         }
     }
 
-    fn insert_region_projection_node(&mut self, projection: &RegionProjection<'tcx>) -> NodeId {
-        if let Some(id) = self.region_projection_nodes.existing_id(projection) {
+    fn insert_region_projection_node(&mut self, projection: RegionProjection<'tcx>) -> NodeId {
+        if let Some(id) = self.region_projection_nodes.existing_id(&projection) {
             return id;
         }
-        let id = self.region_projection_nodes.node_id(projection);
+        let id = self.region_projection_nodes.node_id(&projection);
         let node = GraphNode {
             id,
             node_type: NodeType::RegionProjectionNode {
@@ -161,7 +181,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         id
     }
 
-    fn insert_region_abstraction(&mut self, region_abstraction: &RegionAbstraction<'tcx>) {
+    fn insert_region_abstraction(&mut self, region_abstraction: &AbstractionEdge<'tcx>) {
         if self
             .region_clusters
             .contains_key(&region_abstraction.location())
@@ -173,8 +193,8 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
         let mut output_nodes = BTreeSet::new();
 
         for edge in region_abstraction.edges() {
-            let input = self.insert_abstraction_target(&edge.input);
-            let output = self.insert_abstraction_target(&edge.output);
+            let input = self.insert_abstraction_input_target(edge.input);
+            let output = self.insert_abstraction_output_target(edge.output);
             input_nodes.insert(input);
             output_nodes.insert(output);
             self.edges.insert(GraphEdge::AbstractEdge {
@@ -252,7 +272,7 @@ impl<'a, 'tcx> GraphConstructor<'a, 'tcx> {
                     },
                     region: get_vid(&lifetime).unwrap(),
                 };
-                self.insert_region_projection_node(&region_projection);
+                self.insert_region_projection_node(region_projection);
             }
         }
         let node = GraphNode { id, node_type };
@@ -341,7 +361,7 @@ trait PlaceGrapher<'mir, 'tcx: 'mir> {
                 let place = self.insert_maybe_old_place(member.place);
                 let region_projection = self
                     .constructor()
-                    .insert_region_projection_node(&member.projection);
+                    .insert_region_projection_node(member.projection);
                 self.constructor()
                     .edges
                     .insert(GraphEdge::RegionProjectionMemberEdge {

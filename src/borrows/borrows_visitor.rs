@@ -27,7 +27,7 @@ use crate::{
     borrows::{
         borrows_state::RegionProjectionMember,
         domain::{AbstractionBlockEdge, AbstractionTarget},
-        region_abstraction::RegionAbstraction,
+        region_abstraction::AbstractionEdge,
     },
     rustc_interface,
     utils::{self, PlaceRepacker, PlaceSnapshot},
@@ -35,7 +35,7 @@ use crate::{
 
 use super::{
     borrows_state::RegionProjectionMemberDirection,
-    domain::{AbstractionType, FunctionCallAbstraction},
+    domain::{AbstractionOutputTarget, AbstractionType, FunctionCallAbstraction},
     engine::{BorrowsDomain, BorrowsEngine},
 };
 use super::{domain::MaybeOldPlace, unblock_graph::UnblockGraph};
@@ -210,7 +210,7 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
                             edges.push((
                                 idx,
                                 AbstractionBlockEdge {
-                                    input: AbstractionTarget::MaybeOldPlace(input_place.into()),
+                                    input: AbstractionTarget::Place(input_place.into()),
                                     output,
                                 },
                             ));
@@ -245,9 +245,12 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         // nested) mutable references
         if !edges.is_empty() {
             self.state.after.add_region_abstraction(
-                RegionAbstraction::new(AbstractionType::FunctionCall(
-                    FunctionCallAbstraction::new(location, *func_def_id, substs, edges),
-                )),
+                AbstractionEdge::new(AbstractionType::FunctionCall(FunctionCallAbstraction::new(
+                    location,
+                    *func_def_id,
+                    substs,
+                    edges,
+                ))),
                 location.block,
             );
         }
@@ -260,12 +263,12 @@ impl<'tcx, 'mir, 'state> BorrowsVisitor<'tcx, 'mir, 'state> {
         _substs: ty::GenericArgsRef<'tcx>,
         output_ty: ty::Ty<'tcx>,
         output_place: utils::Place<'tcx>,
-    ) -> Vec<AbstractionTarget<'tcx>> {
+    ) -> Vec<AbstractionOutputTarget<'tcx>> {
         let mut result = vec![];
         let output_ty = match output_ty.kind() {
             ty::TyKind::Ref(output_lifetime, ty, Mutability::Mut) => {
                 if outlives_in_param_env(input_lifetime, *output_lifetime, param_env) {
-                    result.push(AbstractionTarget::MaybeOldPlace(
+                    result.push(AbstractionTarget::Place(
                         output_place.project_deref(self.repacker()).into(),
                     ));
                 }
