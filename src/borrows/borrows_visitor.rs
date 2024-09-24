@@ -396,20 +396,6 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
             self.state.after.apply_unblock_graph(g, repacker, location);
         }
 
-        // Stuff in this block will be included as the middle "bridge" ops that
-        // are visible to Prusti
-        if self.preparing && !self.before {
-            match &statement.kind {
-                StatementKind::Assign(box (target, _)) => {
-                    let target: utils::Place<'tcx> = (*target).into();
-                    if !target.is_owned(self.body, self.tcx) {
-                        self.ensure_expansion_to_exactly(target, location);
-                    }
-                }
-                _ => {}
-            }
-        }
-
         // Will be included as start bridge ops
         if self.preparing && self.before {
             match &statement.kind {
@@ -440,7 +426,9 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
             }
         }
 
-        if !self.preparing && !self.before {
+        // Stuff in this block will be included as the middle "bridge" ops that
+        // are visible to Prusti
+        if self.preparing && !self.before {
             match &statement.kind {
                 StatementKind::StorageDead(local) => {
                     let place: utils::Place<'tcx> = (*local).into();
@@ -449,8 +437,22 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                     self.state
                         .after
                         .make_place_old(place, repacker, self.debug_ctx);
+                    self.state.after.trim_old_leaves(repacker, location);
                     // }
                 }
+                StatementKind::Assign(box (target, _)) => {
+                    let target: utils::Place<'tcx> = (*target).into();
+                    if !target.is_owned(self.body, self.tcx) {
+                        self.ensure_expansion_to_exactly(target, location);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+
+        if !self.preparing && !self.before {
+            match &statement.kind {
                 StatementKind::Assign(box (target, rvalue)) => {
                     self.state.after.set_latest((*target).into(), location);
                     match rvalue {
@@ -547,6 +549,8 @@ impl<'tcx, 'mir, 'state> Visitor<'tcx> for BorrowsVisitor<'tcx, 'mir, 'state> {
                 }
                 _ => {}
             }
+            let repacker = PlaceRepacker::new(self.body, self.tcx);
+            self.state.after.trim_old_leaves(repacker, location);
         }
     }
 

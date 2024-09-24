@@ -466,6 +466,22 @@ impl<'tcx> BorrowsState<'tcx> {
         );
     }
 
+    pub fn trim_old_leaves(&mut self, repacker: PlaceRepacker<'_, 'tcx>, location: Location) {
+        loop {
+            let mut cont = false;
+            let edges = self.graph.leaf_edges(repacker);
+            for edge in edges {
+                if edge.blocked_by_places(repacker).iter().all(|p| p.is_old()) {
+                    self.remove_edge_and_set_latest(&edge, repacker, location);
+                    cont = true;
+                }
+            }
+            if !cont {
+                break;
+            }
+        }
+    }
+
     pub fn add_reborrow(
         &mut self,
         blocked_place: ReborrowBlockedPlace<'tcx>,
