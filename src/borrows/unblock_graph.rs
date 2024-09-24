@@ -30,6 +30,8 @@ type UnblockEdgeType<'tcx> = BorrowsEdgeKind<'tcx>;
 #[derive(Clone, Debug)]
 pub struct UnblockGraph<'tcx> {
     edges: HashSet<UnblockEdge<'tcx>>,
+
+    /// For debugging only, record whether an error occurred
     error: bool,
 }
 
@@ -117,10 +119,6 @@ impl<'tcx> UnblockGraph<'tcx> {
     }
 
     pub fn actions(self, repacker: PlaceRepacker<'_, 'tcx>) -> Vec<UnblockAction<'tcx>> {
-        if self.error {
-            eprintln!("Unblock graph contains an error, not returning any actions");
-            return vec![];
-        }
         let mut edges = self.edges;
         let mut actions = vec![];
 
@@ -226,6 +224,11 @@ impl<'tcx> UnblockGraph<'tcx> {
         self.unblock_place_internal(place, borrows, repacker, UnblockHistory::new());
     }
 
+    fn report_error(&mut self) {
+        panic!("Error in unblock graph");
+        // self.error = true;
+    }
+
     fn unblock_place_internal(
         &mut self,
         place: ReborrowBlockedPlace<'tcx>,
@@ -234,8 +237,7 @@ impl<'tcx> UnblockGraph<'tcx> {
         mut history: UnblockHistory<'tcx>,
     ) {
         if !history.record(UnblockHistoryAction::UnblockPlace(place)) {
-            eprintln!("Unblocking the same place twice {:?}!\n {}", place, history);
-            self.error = true;
+            self.report_error();
             return;
         }
         for edge in borrows.edges_blocking(place) {
@@ -295,7 +297,6 @@ impl<'tcx> UnblockGraph<'tcx> {
         mut history: UnblockHistory<'tcx>,
     ) {
         if !history.record(UnblockHistoryAction::KillReborrow(reborrow.value.clone())) {
-            // eprintln!("Killing the same reborrow twice {:?}!\n {}", reborrow, history);
             self.error = true;
             return;
         }

@@ -43,7 +43,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
         self.0.iter()
     }
 
-    pub fn region_abstractions(&self) -> FxHashSet<Conditioned<AbstractionEdge<'tcx>>> {
+    pub fn abstraction_edges(&self) -> FxHashSet<Conditioned<AbstractionEdge<'tcx>>> {
         self.0
             .iter()
             .filter_map(|edge| match &edge.kind {
@@ -149,27 +149,85 @@ impl<'tcx> BorrowsGraph<'tcx> {
         count
     }
 
-    pub fn subgraph_for_leaves(&self, repacker: PlaceRepacker<'_, 'tcx>) -> BorrowsGraph<'tcx> {
-        let mut subgraph = BorrowsGraph::new();
-        let mut stack: Vec<BorrowsEdge<'tcx>> = self.leaf_edges(repacker).into_iter().collect();
+    pub fn assert_invariants_satisfied(&self, repacker: PlaceRepacker<'_, 'tcx>) {
+        // for root in self.roots(repacker) {
+        //     assert!(!root.is_old(), "root is old: {:?}", root);
+        // }
 
-        while let Some(leaf) = stack.pop() {
-            if !subgraph.insert(leaf.clone()) {
-                continue;
-            }
-            for blocked_place in leaf.kind.blocked_places().into_iter() {
-                if let Some(blocked_place) = blocked_place.as_local() {
-                    for edge in self
-                        .edges()
-                        .filter(|e| e.is_blocked_by_place(blocked_place.into(), repacker))
-                    {
-                        stack.push(edge.clone());
+        for abstraction_edge in self.abstraction_edges().into_iter() {
+            match abstraction_edge.value.abstraction_type {
+                AbstractionType::FunctionCall(function_call_abstraction) => {}
+                AbstractionType::Loop(loop_abstraction) => {
+                    for input in loop_abstraction.inputs() {
+                        match input {
+                            AbstractionTarget::Place(ReborrowBlockedPlace::Local(place)) => {
+                                if place.is_old() {
+                                    for rb in self.reborrows_blocked_by(place) {
+                                        if let Some(local_place) = rb.value.blocked_place.as_local()
+                                        {
+                                            assert!(
+                                                !local_place.is_old(),
+                                                "old input of loop abstraction {:?} blocks old place {:?}",
+                                                input,
+                                                local_place
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
         }
+    }
 
-        subgraph
+    pub fn loop_abstraction_subgraph_from(
+        &self,
+        repacker: PlaceRepacker<'_, 'tcx>,
+        from: Conditioned<Reborrow<'tcx>>,
+    ) -> Option<BorrowsGraph<'tcx>> {
+        let mut queue = self
+            .reborrows()
+            .into_iter()
+            .filter(|other| {
+                other.value.assigned_place == from.value.assigned_place
+                    && !other
+                        .conditions
+                        .mutually_exclusive(&from.conditions, &repacker.body().basic_blocks)
+            })
+            .collect::<Vec<_>>();
+        if queue.len() == 1 {
+            return None;
+        }
+        // panic!("Queue: {:?}", queue);
+        let mut subgraph = BorrowsGraph::new();
+        while let Some(other) = queue.pop() {
+            let edge = other.clone().to_borrows_edge();
+            if subgraph.insert(edge) {
+                if let Some(old_place) = other.value.blocked_place.as_local()
+                    && old_place.is_old()
+                {
+                    let blocked = self.reborrows_blocked_by(old_place);
+                    queue.extend(blocked);
+                }
+            }
+        }
+        Some(subgraph)
+    }
+    pub fn loop_abstraction_subgraph(
+        &self,
+        repacker: PlaceRepacker<'_, 'tcx>,
+    ) -> Option<BorrowsGraph<'tcx>> {
+        for r1 in self.reborrows().into_iter() {
+            if self.is_leaf_edge(&r1.clone().to_borrows_edge(), repacker) {
+                if let Some(graph) = self.loop_abstraction_subgraph_from(repacker, r1) {
+                    return Some(graph);
+                }
+            }
+        }
+        return None;
     }
 
     pub fn roots(
@@ -240,6 +298,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
         subgraph: BorrowsGraph<'tcx>,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) {
+        self.assert_invariants_satisfied(repacker);
         for edge in subgraph.edges() {
             self.remove(edge, DebugCtx::Other);
         }
@@ -253,6 +312,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
                         let blocked_roots = subgraph.roots_blocked_by(place, repacker);
                         blocked_roots
                             .into_iter()
+                            .filter(|blocked_root| !blocked_root.is_old())
                             .map(|blocked_root| {
                                 AbstractionBlockEdge::new(
                                     AbstractionTarget::Place(blocked_root),
@@ -268,6 +328,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
             AbstractionEdge::new(AbstractionType::Loop(abstraction))
                 .to_borrows_edge(PathConditions::new(block)),
         );
+        self.assert_invariants_satisfied(repacker);
     }
 
     pub fn roots_blocked_by(
@@ -318,26 +379,13 @@ impl<'tcx> BorrowsGraph<'tcx> {
                 }
             }
         }
-        if false && post_block.as_usize() == 1 {
-            // TODO
-            let subgraph_to_abstract = self.subgraph_for_leaves(repacker);
-            let should_abstract = subgraph_to_abstract
-                .leaf_edges(repacker)
-                .iter()
-                .any(|edge| {
-                    edge.blocked_by_places(repacker)
-                        .into_iter()
-                        .any(|blocking_place| {
-                            let mut roots = subgraph_to_abstract.roots(repacker).into_iter();
-                            roots.any(|root| {
-                                self.num_paths_between(blocking_place, root.into(), repacker) > 1
-                            })
-                        })
-                });
-            if should_abstract {
-                self.abstract_subgraph(post_block, subgraph_to_abstract, repacker);
-            }
+        // if post_block.as_usize() == 1 {
+        // TODO
+        while let Some(subgraph_to_abstract) = self.loop_abstraction_subgraph(repacker) {
+            changed = true;
+            self.abstract_subgraph(post_block, subgraph_to_abstract, repacker);
         }
+        // }
         changed
     }
 

@@ -82,6 +82,10 @@ fn subtract_deref_expansions<'tcx>(
 }
 
 impl<'tcx> BorrowsState<'tcx> {
+    pub fn assert_invariants_satisfied(&self, repacker: PlaceRepacker<'_, 'tcx>) {
+        self.graph.assert_invariants_satisfied(repacker);
+    }
+
     pub fn join<'mir>(
         &mut self,
         other: &Self,
@@ -470,10 +474,6 @@ impl<'tcx> BorrowsState<'tcx> {
         location: Location,
         region: ty::Region<'tcx>,
     ) {
-        eprintln!(
-            "adding reborrow blocking {:?} assigned to {:?}",
-            blocked_place, assigned_place
-        );
         self.graph
             .add_reborrow(blocked_place, assigned_place, mutability, location, region);
     }
@@ -483,7 +483,7 @@ impl<'tcx> BorrowsState<'tcx> {
     }
 
     pub fn region_abstractions(&self) -> FxHashSet<Conditioned<AbstractionEdge<'tcx>>> {
-        self.graph.region_abstractions()
+        self.graph.abstraction_edges()
     }
 
     pub fn to_json(&self, _repacker: PlaceRepacker<'_, 'tcx>) -> Value {

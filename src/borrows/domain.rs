@@ -21,6 +21,10 @@ pub struct LoopAbstraction<'tcx> {
 }
 
 impl<'tcx> LoopAbstraction<'tcx> {
+    pub fn inputs(&self) -> Vec<AbstractionInputTarget<'tcx>> {
+        self.edges.iter().map(|edge| edge.input).collect()
+    }
+
     pub fn edges(&self) -> &Vec<AbstractionBlockEdge<'tcx>> {
         &self.edges
     }
@@ -461,6 +465,11 @@ impl<'tcx> std::fmt::Display for ReborrowBlockedPlace<'tcx> {
 }
 
 impl<'tcx> ReborrowBlockedPlace<'tcx> {
+
+    pub fn is_old(&self) -> bool {
+        matches!(self, ReborrowBlockedPlace::Local(p) if p.is_old())
+    }
+
     pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
         match self {
             ReborrowBlockedPlace::Local(p) => p.make_place_old(place, latest),

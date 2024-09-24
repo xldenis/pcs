@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 
 use serde_json::json;
 
-use crate::{rustc_interface::middle::mir::BasicBlock, utils::PlaceRepacker};
+use crate::{
+    rustc_interface::middle::mir::{BasicBlock, BasicBlocks},
+    utils::PlaceRepacker,
+};
 
 use super::domain::ToJsonWithRepacker;
 
@@ -59,6 +62,13 @@ impl PCGraph {
             .map(|pc| pc.from)
     }
 
+    pub fn end(&self) -> Option<BasicBlock> {
+        self.0
+            .iter()
+            .find(|pc| !self.has_path_from_block(pc.to))
+            .map(|pc| pc.to)
+    }
+
     pub fn singleton(pc: PathCondition) -> Self {
         Self(BTreeSet::from([pc]))
     }
@@ -75,6 +85,10 @@ impl PCGraph {
 
     pub fn has_path_to_block(&self, block: BasicBlock) -> bool {
         self.0.iter().any(|pc| pc.to == block)
+    }
+
+    pub fn has_path_from_block(&self, block: BasicBlock) -> bool {
+        self.0.iter().any(|pc| pc.from == block)
     }
 
     pub fn has_suffix_of(&self, path: &[BasicBlock]) -> bool {
@@ -136,6 +150,34 @@ impl PathConditions {
         Self::AtBlock(block)
     }
 
+    pub fn root(&self) -> Option<BasicBlock> {
+        match self {
+            PathConditions::AtBlock(b) => Some(*b),
+            PathConditions::Paths(p) => p.root(),
+        }
+    }
+
+    pub fn end(&self) -> Option<BasicBlock> {
+        match self {
+            PathConditions::AtBlock(b) => Some(*b),
+            PathConditions::Paths(p) => p.end(),
+        }
+    }
+
+    /// Returns true if no path through the program would satisfy both conditions.
+    pub fn mutually_exclusive(&self, other: &Self, blocks: &BasicBlocks<'_>) -> bool {
+        if self == other {
+            return false;
+        }
+        match (self.root(), other.root(), self.end(), other.end()) {
+            (Some(r1), Some(r2), Some(e1), Some(e2)) => {
+                let preds = blocks.predecessors();
+                !preds[r1].contains(&e2) && !preds[r2].contains(&e1)
+            }
+            _ => false,
+        }
+    }
+
     pub fn join(&mut self, other: &Self) -> bool {
         match (self, other) {
             (PathConditions::AtBlock(b1), PathConditions::AtBlock(b2)) => {
@@ -143,7 +185,8 @@ impl PathConditions {
                 false
             }
             (PathConditions::Paths(p1), PathConditions::Paths(p2)) => p1.join(p2),
-            _ => unreachable!(),
+            (PathConditions::AtBlock(b), PathConditions::Paths(p)) => false, // TODO: check
+            (PathConditions::Paths(p), PathConditions::AtBlock(b)) => false, // TODO: check
         }
     }
 
