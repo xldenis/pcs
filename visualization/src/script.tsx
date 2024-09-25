@@ -31,6 +31,8 @@ import {
   getGraphData,
   getPathData,
   getPaths,
+  getPCSIterations,
+  PCSIterations,
 } from "./api";
 import { filterNodesAndEdges } from "./mir_graph";
 import { Selection, PCSGraphSelector } from "./components/PCSGraphSelector";
@@ -118,13 +120,15 @@ async function main() {
   }
 
   const App: React.FC<{}> = () => {
-    const [selected, setSelected] = useState<Selection>("after");
+    const [iterations, setIterations] = useState<PCSIterations>([]);
+    const [selected, setSelected] = useState<Selection>(999); // HACK - always show last iteration
     const [pathData, setPathData] = useState<PathData | null>(null);
     const [currentPoint, setCurrentPoint] = useState<CurrentPoint>({
       type: "stmt",
       block: 0,
       stmt: 0,
     });
+
     const [selectedFunction, setSelectedFunction] = useState<string>(
       initialFunction || functions[0]
     );
@@ -177,7 +181,17 @@ async function main() {
         dotGraph.innerHTML = "";
         return;
       }
-      const dotFilePath = `data/${selectedFunction}/block_${currentPoint.block}_stmt_${currentPoint.stmt}_${selected}.dot`;
+      if (iterations.length <= currentPoint.stmt) {
+        return;
+      }
+      const stmtIterations = iterations[currentPoint.stmt].flatMap(
+        (phases) => phases
+      );
+      const filename =
+        selected >= stmtIterations.length
+          ? stmtIterations[stmtIterations.length - 1][1]
+          : stmtIterations[selected][1];
+      const dotFilePath = `data/${selectedFunction}/${filename}`;
       const dotData = await fetchDotFile(dotFilePath);
       Viz.instance().then(function (viz) {
         dotGraph.innerHTML = "";
@@ -196,7 +210,7 @@ async function main() {
 
     useEffect(() => {
       loadPCSDotGraph();
-    }, [currentPoint, selectedFunction, selected]);
+    }, [iterations, currentPoint, selectedFunction, selected]);
 
     useEffect(() => {
       if (selectedFunction) {
@@ -247,6 +261,22 @@ async function main() {
 
       fetchPathData();
     }, [selectedFunction, selectedPath, currentPoint, paths]);
+
+    useEffect(() => {
+      if (currentPoint.type != "stmt") {
+        setIterations([]);
+        return;
+      }
+      const fetchIterations = async () => {
+        const iterations = await getPCSIterations(
+          selectedFunction,
+          currentPoint.block
+        );
+        setIterations(iterations);
+      };
+
+      fetchIterations();
+    }, [selectedFunction, currentPoint]);
 
     useEffect(() => {
       const handleKeyDown = (event: KeyboardEvent) => {
@@ -355,6 +385,15 @@ async function main() {
       },
       [paths, selectedPath]
     );
+
+    const pcsGraphSelector =
+      currentPoint.type === "stmt" && iterations.length > currentPoint.stmt ? (
+        <PCSGraphSelector
+          iterations={iterations[currentPoint.stmt].flatMap((phases) => phases)}
+          selected={selected}
+          onSelect={setSelected}
+        />
+      ) : null;
 
     return (
       <div style={{ position: "relative", minHeight: "100vh" }}>
@@ -481,7 +520,7 @@ async function main() {
             <PCSActions pathData={pathData} />
           </>
         )}
-        <PCSGraphSelector selected={selected} onSelect={setSelected} />
+        {pcsGraphSelector}
       </div>
     );
   };

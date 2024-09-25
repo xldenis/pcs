@@ -18,10 +18,22 @@ type MirGraph = {
   edges: MirGraphEdge[];
 };
 
+export type PCSIterations = [string, string][][][];
+
 const fetchJsonFile = async (filePath: string) => {
   const response = await fetch(filePath);
   return await response.json();
 };
+
+export async function getPCSIterations(
+  functionName: string,
+  block: number
+): Promise<PCSIterations> {
+  const iterations = await fetchJsonFile(
+    `data/${functionName}/block_${block}_iterations.json`
+  );
+  return iterations;
+}
 
 export async function getGraphData(func: string): Promise<MirGraph> {
   const graphFilePath = `data/${func}/mir.json`;

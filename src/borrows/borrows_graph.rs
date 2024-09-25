@@ -150,9 +150,16 @@ impl<'tcx> BorrowsGraph<'tcx> {
     }
 
     pub fn assert_invariants_satisfied(&self, repacker: PlaceRepacker<'_, 'tcx>) {
-        // for root in self.roots(repacker) {
-        //     assert!(!root.is_old(), "root is old: {:?}", root);
-        // }
+        for root_edge in self.root_edges(repacker) {
+            match root_edge.kind {
+                BorrowsEdgeKind::Reborrow(reborrow) => {
+                    // assert!(!reborrow.blocked_place.is_old())
+                }
+                BorrowsEdgeKind::DerefExpansion(deref_expansion) => {}
+                BorrowsEdgeKind::RegionAbstraction(abstraction_edge) => {}
+                BorrowsEdgeKind::RegionProjectionMember(region_projection_member) => {}
+            }
+        }
 
         for abstraction_edge in self.abstraction_edges().into_iter() {
             match abstraction_edge.value.abstraction_type {
@@ -230,22 +237,29 @@ impl<'tcx> BorrowsGraph<'tcx> {
         return None;
     }
 
+    pub fn root_edges(&self, repacker: PlaceRepacker<'_, 'tcx>) -> FxHashSet<BorrowsEdge<'tcx>> {
+        self.0
+            .iter()
+            .filter(|edge| {
+                edge.blocked_places().iter().all(|p| match p {
+                    ReborrowBlockedPlace::Local(maybe_old_place) => {
+                        self.is_root(*maybe_old_place, repacker)
+                    }
+                    ReborrowBlockedPlace::Remote(local) => true,
+                })
+            })
+            .cloned()
+            .collect::<FxHashSet<_>>()
+    }
+
     pub fn roots(
         &self,
         repacker: PlaceRepacker<'_, 'tcx>,
     ) -> FxHashSet<ReborrowBlockedPlace<'tcx>> {
-        let mut candidates = self
-            .0
-            .iter()
+        self.root_edges(repacker)
+            .into_iter()
             .flat_map(|edge| edge.blocked_places().into_iter())
-            .collect::<FxHashSet<_>>();
-        candidates.retain(|p| match p {
-            ReborrowBlockedPlace::Local(maybe_old_place) => {
-                self.is_root(*maybe_old_place, repacker)
-            }
-            ReborrowBlockedPlace::Remote(local) => true,
-        });
-        candidates
+            .collect()
     }
 
     pub fn has_edge_blocking(&self, place: MaybeOldPlace<'tcx>) -> bool {

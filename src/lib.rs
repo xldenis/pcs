@@ -111,15 +111,15 @@ pub fn run_combined_pcs<'mir, 'tcx>(
         generate_json_from_mir(&format!("{}/mir.json", dir_path), tcx, &mir.body)
             .expect("Failed to generate JSON from MIR");
 
-        let input_facts = mir.input_facts.as_ref().unwrap().clone();
-        let _output_facts = mir.output_facts.as_ref().unwrap().clone();
-        let _location_table = mir.location_table.as_ref().unwrap();
-
         let rp = PcsContext::new(tcx, mir).rp;
 
         // Iterate over each statement in the MIR
         for (block, _data) in mir.body.basic_blocks.iter_enumerated() {
             let pcs_block = fpcs_analysis.get_all_for_bb(block);
+            let block_iterations_json_file =
+                format!("{}/block_{}_iterations.json", dir_path, block.index());
+            let state = fpcs_analysis.cursor.get();
+            state.dot_graphs.write_json_file(&block_iterations_json_file);
             for (statement_index, statement) in pcs_block.statements.iter().enumerate() {
                 let borrows_file_path = format!(
                     "{}/block_{}_stmt_{}_borrows.json",
@@ -131,30 +131,6 @@ pub fn run_combined_pcs<'mir, 'tcx>(
                     serde_json::to_string_pretty(&statement.extra.to_json(rp)).unwrap();
                 std::fs::write(&borrows_file_path, borrows_json)
                     .expect("Failed to write borrows to JSON file");
-                for (name, fpcs, dag) in vec![
-                    (
-                        "before_start",
-                        &statement.states.before_start,
-                        &statement.extra.before_start,
-                    ),
-                    (
-                        "before_after",
-                        &statement.states.before_after,
-                        &statement.extra.before_after,
-                    ),
-                    ("start", &statement.states.start, &statement.extra.start),
-                    ("after", &statement.states.after, &statement.extra.after),
-                ] {
-                    let file_path = format!(
-                        "{}/block_{}_stmt_{}_{}.dot",
-                        &dir_path,
-                        block.index(),
-                        statement_index,
-                        name
-                    );
-                    generate_dot_graph(rp, &fpcs, &dag, &mir.borrow_set, &file_path)
-                        .expect("Failed to generate DOT graph");
-                }
             }
         }
     }

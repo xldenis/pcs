@@ -1,32 +1,30 @@
 import React from "react";
 
-export type Selection = "before_start" | "before_after" | "start" | "after";
+export type Selection = number;
 
 export function PCSGraphSelector({
+  iterations,
   selected,
   onSelect,
 }: {
+  iterations: [string, string][];
   selected: Selection;
   onSelect: (selection: Selection) => void;
 }) {
-  const names = [
-    { key: "before_start", name: "Before Start" },
-    { key: "before_after", name: "Before After" },
-    { key: "start", name: "Start" },
-    { key: "after", name: "After" },
-  ];
+  let selectedIdx =
+    selected > iterations.length ? iterations.length - 1 : selected;
   return (
     <div style={{ position: "fixed", right: "50px", top: "20px" }}>
-      {names.map(({ key, name }) => (
+      {iterations.map(([name, filename], index) => (
         <div
-          key={key}
+          key={filename}
           style={{
             border: "1px solid #000",
             padding: "10px",
-            backgroundColor: selected === key ? "lightgreen" : "transparent",
-            cursor: "pointer"
+            backgroundColor: selectedIdx === index ? "lightgreen" : "transparent",
+            cursor: "pointer",
           }}
-          onClick={() => onSelect(key as Selection)}
+          onClick={() => onSelect(index)}
         >
           {name}
         </div>

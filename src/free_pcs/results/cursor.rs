@@ -71,7 +71,7 @@ pub struct FreePcsAnalysis<
     D: HasFpcs<'mir, 'tcx> + HasExtra<T>,
     E: Analysis<'tcx, Domain = D>,
 > {
-    cursor: Cursor<'mir, 'tcx, E>,
+    pub cursor: Cursor<'mir, 'tcx, E>,
     curr_stmt: Option<Location>,
     end_stmt: Option<Location>,
     _marker: std::marker::PhantomData<T>,
