@@ -7,11 +7,11 @@ use std::{cmp::Ordering, fs::File};
 use std::cell::RefCell;
 
 use itertools::Itertools;
-use pcs::visualization::dot_graph::{
+use mir_state_analysis::visualization::dot_graph::{
     DotEdge, DotGraph, DotLabel, DotNode, EdgeDirection, EdgeOptions,
 };
-use pcs::visualization::dot_graph::{DotStringAttr, DotSubgraph};
-use pcs::{combined_pcs::BodyWithBorrowckFacts, run_combined_pcs, rustc_interface};
+use mir_state_analysis::visualization::dot_graph::{DotStringAttr, DotSubgraph};
+use mir_state_analysis::{combined_pcs::BodyWithBorrowckFacts, run_combined_pcs, rustc_interface};
 use regex::Regex;
 use rustc_interface::{
     borrowck::consumers,
