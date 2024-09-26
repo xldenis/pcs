@@ -17,9 +17,10 @@ use super::{
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
     domain::{
-        AbstractionBlockEdge, AbstractionTarget, AbstractionType, Latest, LoopAbstraction,
-        MaybeOldPlace, Reborrow, ReborrowBlockedPlace, ToJsonWithRepacker,
+        AbstractionBlockEdge, AbstractionTarget, AbstractionType, LoopAbstraction, MaybeOldPlace,
+        Reborrow, ReborrowBlockedPlace, ToJsonWithRepacker,
     },
+    latest::Latest,
     path_condition::{PathCondition, PathConditions},
     region_abstraction::AbstractionEdge,
 };
@@ -297,7 +298,7 @@ impl<'tcx> BorrowsGraph<'tcx> {
     pub fn make_place_old(
         &mut self,
         place: Place<'tcx>,
-        latest: &Latest<'tcx>,
+        latest: &Latest,
         _debug_ctx: Option<DebugCtx>,
     ) {
         self.mut_edges(|edge| {
@@ -689,7 +690,7 @@ impl<'tcx> BorrowsEdge<'tcx> {
         self.kind.blocked_by_places(repacker)
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         self.kind.make_place_old(place, latest);
     }
 }
@@ -710,7 +711,7 @@ impl<'tcx> BorrowsEdgeKind<'tcx> {
         }
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         match self {
             BorrowsEdgeKind::Reborrow(reborrow) => reborrow.make_place_old(place, latest),
             BorrowsEdgeKind::DerefExpansion(de) => de.make_place_old(place, latest),

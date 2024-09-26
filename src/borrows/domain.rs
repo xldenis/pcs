@@ -5,7 +5,7 @@ use rustc_interface::{
         graph::dominators::Dominators,
     },
     hir::def_id::DefId,
-    middle::mir::{self, tcx::PlaceTy, BasicBlock, Location, PlaceElem},
+    middle::mir::{self, tcx::PlaceTy, BasicBlock, Local, Location, PlaceElem},
     middle::ty::{self, GenericArgsRef, RegionVid, TyCtxt},
 };
 
@@ -98,7 +98,7 @@ impl<'tcx> FunctionCallAbstraction<'tcx> {
 pub trait HasPlaces<'tcx> {
     fn places_mut(&mut self) -> Vec<&mut MaybeOldPlace<'tcx>>;
 
-    fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         for p in self.places_mut() {
             p.make_place_old(place, latest);
         }
@@ -173,7 +173,7 @@ impl<'tcx> AbstractionOutputTarget<'tcx> {
 }
 
 impl<'tcx, T: HasPlaces<'tcx>> AbstractionTarget<'tcx, T> {
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         match self {
             AbstractionTarget::Place(p) => p.make_place_old(place, latest),
             AbstractionTarget::RegionProjection(p) => p.make_place_old(place, latest),
@@ -252,7 +252,7 @@ impl<'tcx> AbstractionType<'tcx> {
         self.blocks_places().contains(&place)
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         for p in self.maybe_old_places() {
             p.make_place_old(place, latest);
         }
@@ -386,7 +386,7 @@ impl<'tcx> MaybeOldPlace<'tcx> {
             }
         )
     }
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         if self.is_current() && place.is_prefix(self.place()) {
             *self = MaybeOldPlace::OldPlace(PlaceSnapshot {
                 place: self.place(),
@@ -396,53 +396,13 @@ impl<'tcx> MaybeOldPlace<'tcx> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Latest<'tcx>(FxHashMap<Place<'tcx>, SnapshotLocation>);
-
-impl<'tcx> Latest<'tcx> {
-    pub fn new() -> Self {
-        Self(FxHashMap::default())
-    }
-    pub fn get(&self, place: &Place<'tcx>) -> SnapshotLocation {
-        if let Some(loc) = self.0.get(place) {
-            return *loc;
-        }
-        for (p, _) in place.iter_projections() {
-            if let Some(loc) = self.0.get(&p.into()) {
-                return *loc;
-            }
-        }
-        SnapshotLocation::Location(Location::START)
-    }
-    pub fn insert(
-        &mut self,
-        place: Place<'tcx>,
-        location: SnapshotLocation,
-    ) -> Option<SnapshotLocation> {
-        self.0.insert(place, location)
-    }
-
-    pub fn join(&mut self, other: &Self, block: BasicBlock) -> bool {
-        let mut changed = false;
-        for (place, other_loc) in other.0.iter() {
-            if let Some(self_loc) = self.0.get(place) {
-                if *self_loc != *other_loc {
-                    self.insert(*place, SnapshotLocation::Join(block));
-                    changed = true;
-                }
-            } else {
-                self.insert(*place, *other_loc);
-                changed = true;
-            }
-        }
-        changed
-    }
-}
-
 use crate::utils::PlaceRepacker;
 use serde_json::json;
 
-use super::borrows_visitor::{extract_nested_lifetimes, get_vid};
+use super::{
+    borrows_visitor::{extract_nested_lifetimes, get_vid},
+    latest::Latest,
+};
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Hash)]
 pub enum ReborrowBlockedPlace<'tcx> {
@@ -465,12 +425,11 @@ impl<'tcx> std::fmt::Display for ReborrowBlockedPlace<'tcx> {
 }
 
 impl<'tcx> ReborrowBlockedPlace<'tcx> {
-
     pub fn is_old(&self) -> bool {
         matches!(self, ReborrowBlockedPlace::Local(p) if p.is_old())
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         match self {
             ReborrowBlockedPlace::Local(p) => p.make_place_old(place, latest),
             ReborrowBlockedPlace::Remote(_) => {}
@@ -546,7 +505,7 @@ impl<'tcx> Reborrow<'tcx> {
         self.reserve_location
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         self.blocked_place.make_place_old(place, latest);
         self.assigned_place.make_place_old(place, latest);
     }
@@ -601,7 +560,7 @@ impl<'tcx> RegionProjection<'tcx> {
     pub fn new(region: RegionVid, place: MaybeOldPlace<'tcx>) -> Self {
         Self { place, region }
     }
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         self.place.make_place_old(place, latest);
     }
     pub fn index(&self, repacker: PlaceRepacker<'_, 'tcx>) -> usize {

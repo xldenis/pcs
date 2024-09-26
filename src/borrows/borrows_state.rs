@@ -19,7 +19,8 @@ use super::{
     borrows_graph::{BorrowsEdge, BorrowsEdgeKind, BorrowsGraph, Conditioned, ToBorrowsEdge},
     borrows_visitor::DebugCtx,
     deref_expansion::DerefExpansion,
-    domain::{Latest, MaybeOldPlace, Reborrow, ReborrowBlockedPlace, RegionProjection},
+    domain::{MaybeOldPlace, Reborrow, ReborrowBlockedPlace, RegionProjection},
+    latest::Latest,
     path_condition::{PathCondition, PathConditions},
     region_abstraction::AbstractionEdge,
     unblock_graph::UnblockGraph,
@@ -40,7 +41,7 @@ pub struct RegionProjectionMember<'tcx> {
 }
 
 impl<'tcx> RegionProjectionMember<'tcx> {
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         self.place.make_place_old(place, latest);
         self.projection.make_place_old(place, latest);
     }
@@ -70,7 +71,7 @@ impl<'tcx> RegionProjectionMember<'tcx> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BorrowsState<'tcx> {
-    pub latest: Latest<'tcx>,
+    pub latest: Latest,
     graph: BorrowsGraph<'tcx>,
 }
 
@@ -431,7 +432,7 @@ impl<'tcx> BorrowsState<'tcx> {
     }
 
     pub fn set_latest<T: Into<SnapshotLocation>>(&mut self, place: Place<'tcx>, location: T) {
-        self.latest.insert(place, location.into());
+        self.latest.insert(place.local, location.into());
     }
 
     pub fn get_latest(&self, place: &Place<'tcx>) -> SnapshotLocation {

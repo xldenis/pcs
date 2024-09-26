@@ -5,7 +5,7 @@ use crate::{
     utils::{Place, PlaceRepacker, PlaceSnapshot, SnapshotLocation},
 };
 
-use super::domain::{Latest, MaybeOldPlace, ToJsonWithRepacker};
+use super::{domain::{MaybeOldPlace, ToJsonWithRepacker}, latest::Latest};
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct BorrowDerefExpansion<'tcx> {
     base: MaybeOldPlace<'tcx>,
@@ -44,7 +44,7 @@ impl<'tcx> DerefExpansion<'tcx> {
         matches!(self, DerefExpansion::OwnedExpansion { .. })
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         match self {
             DerefExpansion::OwnedExpansion { base, .. } => base.make_place_old(place, latest),
             DerefExpansion::BorrowExpansion(e) => e.base.make_place_old(place, latest),

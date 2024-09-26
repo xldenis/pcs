@@ -13,7 +13,8 @@ use rustc_interface::{
 
 use crate::{
     free_pcs::{
-        consistency::CapabilityConsistency, CapabilityKind, CapabilityLocal, CapabilitySummary, FreePcsAnalysis, HasExtra, HasFpcs, HasPrepare, RepackOp, Stage, TripleWalker
+        consistency::CapabilityConsistency, CapabilityKind, CapabilityLocal, CapabilitySummary,
+        FreePcsAnalysis, HasExtra, HasFpcs, HasPrepare, RepackOp, Stage, TripleWalker,
     },
     rustc_interface,
     utils::PlaceRepacker,

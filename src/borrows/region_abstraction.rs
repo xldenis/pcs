@@ -2,9 +2,12 @@ use rustc_interface::{data_structures::fx::FxHashSet, middle::mir::Location};
 
 use crate::{rustc_interface, utils::Place};
 
-use super::domain::{
-    AbstractionBlockEdge, AbstractionInputTarget, AbstractionOutputTarget, AbstractionTarget,
-    AbstractionType, Latest, MaybeOldPlace, ReborrowBlockedPlace,
+use super::{
+    domain::{
+        AbstractionBlockEdge, AbstractionInputTarget, AbstractionOutputTarget, AbstractionTarget,
+        AbstractionType, MaybeOldPlace, ReborrowBlockedPlace,
+    },
+    latest::Latest,
 };
 
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -17,7 +20,7 @@ impl<'tcx> AbstractionEdge<'tcx> {
         self.abstraction_type.maybe_old_places()
     }
 
-    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest<'tcx>) {
+    pub fn make_place_old(&mut self, place: Place<'tcx>, latest: &Latest) {
         self.abstraction_type.make_place_old(place, latest);
     }
 
