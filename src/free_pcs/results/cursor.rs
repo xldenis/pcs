@@ -5,19 +5,22 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use rustc_interface::{
+    dataflow::Analysis,
     dataflow::ResultsCursor,
-    dataflow::{Analysis},
     middle::{
         mir::{BasicBlock, Body, Location},
-        ty::{TyCtxt},
+        ty::TyCtxt,
     },
 };
 
 use crate::{
-    borrows::borrows_visitor::DebugCtx, combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary}, free_pcs::{
-        CapabilitySummary, FreePlaceCapabilitySummary, RepackOp,
-        RepackingBridgeSemiLattice,
-    }, rustc_interface, utils::PlaceRepacker
+    borrows::borrows_visitor::DebugCtx,
+    combined_pcs::{PcsContext, PcsEngine, PlaceCapabilitySummary},
+    free_pcs::{
+        CapabilitySummary, FreePlaceCapabilitySummary, RepackOp, RepackingBridgeSemiLattice,
+    },
+    rustc_interface,
+    utils::PlaceRepacker,
 };
 
 pub trait HasFpcs<'mir, 'tcx> {
@@ -46,6 +49,10 @@ impl<'mir, 'tcx> HasCgContext<'mir, 'tcx> for PcsEngine<'mir, 'tcx> {
 }
 
 type Cursor<'mir, 'tcx, E> = ResultsCursor<'mir, 'tcx, E>;
+
+pub trait HasPrepare {
+    fn prepare(&self);
+}
 
 pub trait HasExtra<T> {
     type ExtraBridge;
@@ -81,7 +88,7 @@ impl<
         'mir,
         'tcx,
         T,
-        D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx>>,
+        D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx>> + HasPrepare,
         E: Analysis<'tcx, Domain = D>,
     > FreePcsAnalysis<'mir, 'tcx, T, D, E>
 {
@@ -99,6 +106,7 @@ impl<
     // }
 
     pub fn analysis_for_bb(&mut self, block: BasicBlock) {
+        self.cursor.get().prepare();
         self.cursor.seek_to_block_start(block);
         let end_stmt = self.body().terminator_loc(block).successor_within_block();
         self.curr_stmt = Some(Location {
@@ -138,11 +146,8 @@ impl<
         let curr_fpcs = state.get_curr_fpcs();
         let (repacks_start, repacks_middle) = curr_fpcs.repack_ops(&after);
 
-        let (extra_start, extra_middle) = D::bridge_between_stmts(
-            extra_after,
-            state.get_extra(),
-            DebugCtx::new(location),
-        );
+        let (extra_start, extra_middle) =
+            D::bridge_between_stmts(extra_after, state.get_extra(), DebugCtx::new(location));
 
         let result = FreePcsLocation {
             location,

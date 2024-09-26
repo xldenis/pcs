@@ -13,8 +13,7 @@ use rustc_interface::{
 
 use crate::{
     free_pcs::{
-        consistency::CapabilityConsistency, CapabilityKind, CapabilityLocal, CapabilitySummary,
-        FreePcsAnalysis, HasExtra, HasFpcs, RepackOp, Stage, TripleWalker,
+        consistency::CapabilityConsistency, CapabilityKind, CapabilityLocal, CapabilitySummary, FreePcsAnalysis, HasExtra, HasFpcs, HasPrepare, RepackOp, Stage, TripleWalker
     },
     rustc_interface,
     utils::PlaceRepacker,
@@ -24,7 +23,7 @@ pub(crate) fn check<
     'mir,
     'tcx,
     T,
-    D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx>>,
+    D: HasFpcs<'mir, 'tcx> + HasExtra<T, BridgeCtx = TyCtxt<'tcx>> + HasPrepare,
     E: Analysis<'tcx, Domain = D>,
 >(
     mut cursor: FreePcsAnalysis<'mir, 'tcx, T, D, E>,

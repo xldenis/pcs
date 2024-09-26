@@ -96,15 +96,20 @@ impl<'tcx> ReborrowAction<'tcx> {
 
 impl<'mir, 'tcx> JoinSemiLattice for BorrowsDomain<'mir, 'tcx> {
     fn join(&mut self, other: &Self) -> bool {
-        let mut other_after = other.after.clone();
+        if !self.is_initialized() {
+            self.after = other.after.clone();
+            return other.is_initialized();
+        } else {
+            let mut other_after = other.after.clone();
 
-        // For edges in the other graph that actually belong to it,
-        // add the path condition that leads them to this block
-        let pc = PathCondition::new(other.block, self.block);
-        other_after.add_path_condition(pc);
+            // For edges in the other graph that actually belong to it,
+            // add the path condition that leads them to this block
+            let pc = PathCondition::new(other.block(), self.block());
+            other_after.add_path_condition(pc);
 
-        // Overlay both graphs
-        self.after.join(&other_after, self.block, self.repacker)
+            // Overlay both graphs
+            self.after.join(&other_after, self.block(), self.repacker)
+        }
     }
 }
 
@@ -185,7 +190,7 @@ pub struct BorrowsDomain<'mir, 'tcx> {
     pub before_after: BorrowsState<'tcx>,
     pub start: BorrowsState<'tcx>,
     pub after: BorrowsState<'tcx>,
-    pub block: BasicBlock,
+    pub block: Option<BasicBlock>,
     pub repacker: PlaceRepacker<'mir, 'tcx>,
 }
 
@@ -214,6 +219,18 @@ impl<'mir, 'tcx> std::fmt::Debug for BorrowsDomain<'mir, 'tcx> {
 }
 
 impl<'mir, 'tcx> BorrowsDomain<'mir, 'tcx> {
+    pub fn is_initialized(&self) -> bool {
+        self.block.is_some()
+    }
+
+    pub fn set_block(&mut self, block: BasicBlock) {
+        self.block = Some(block);
+    }
+
+    pub fn block(&self) -> BasicBlock {
+        self.block.unwrap()
+    }
+
     pub fn to_json(&self, repacker: PlaceRepacker<'mir, 'tcx>) -> Value {
         json!({
             "before_start": self.before_start.to_json(repacker),
@@ -223,7 +240,7 @@ impl<'mir, 'tcx> BorrowsDomain<'mir, 'tcx> {
         })
     }
 
-    pub fn new(repacker: PlaceRepacker<'mir, 'tcx>, block: BasicBlock) -> Self {
+    pub fn new(repacker: PlaceRepacker<'mir, 'tcx>, block: Option<BasicBlock>) -> Self {
         Self {
             before_start: BorrowsState::new(),
             before_after: BorrowsState::new(),

@@ -94,6 +94,12 @@ impl<'mir, 'tcx> HasExtra<BorrowsDomain<'mir, 'tcx>> for PlaceCapabilitySummary<
     }
 }
 
+use std::sync::Mutex;
+
+lazy_static::lazy_static! {
+    static ref RECORD_PCS: Mutex<bool> = Mutex::new(false);
+}
+
 pub fn run_combined_pcs<'mir, 'tcx>(
     mir: &'mir BodyWithBorrowckFacts<'tcx>,
     tcx: TyCtxt<'tcx>,
@@ -101,10 +107,30 @@ pub fn run_combined_pcs<'mir, 'tcx>(
 ) -> FpcsOutput<'mir, 'tcx> {
     let cgx = PcsContext::new(tcx, mir);
     let fpcs = PcsEngine::new(cgx, visualization_output_path.clone());
+    {
+        let mut record_pcs = RECORD_PCS.lock().unwrap();
+        *record_pcs = true;
+    }
     let analysis = fpcs
         .into_engine(tcx, &mir.body)
         .pass_name("free_pcs")
         .iterate_to_fixpoint();
+    {
+        let mut record_pcs = RECORD_PCS.lock().unwrap();
+        *record_pcs = false;
+    }
+    if let Some(dir_path) = &visualization_output_path {
+        for block in mir.body.basic_blocks.indices() {
+            let state = analysis.entry_set_for_block(block);
+            assert!(state.block() == block);
+            let block_iterations_json_file =
+                format!("{}/block_{}_iterations.json", dir_path, block.index());
+            state
+                .dot_graphs()
+                .borrow()
+                .write_json_file(&block_iterations_json_file);
+        }
+    }
     let mut fpcs_analysis = free_pcs::FreePcsAnalysis::new(analysis.into_results_cursor(&mir.body));
 
     if let Some(dir_path) = visualization_output_path {
@@ -116,10 +142,6 @@ pub fn run_combined_pcs<'mir, 'tcx>(
         // Iterate over each statement in the MIR
         for (block, _data) in mir.body.basic_blocks.iter_enumerated() {
             let pcs_block = fpcs_analysis.get_all_for_bb(block);
-            let block_iterations_json_file =
-                format!("{}/block_{}_iterations.json", dir_path, block.index());
-            let state = fpcs_analysis.cursor.get();
-            state.dot_graphs.write_json_file(&block_iterations_json_file);
             for (statement_index, statement) in pcs_block.statements.iter().enumerate() {
                 let borrows_file_path = format!(
                     "{}/block_{}_stmt_{}_borrows.json",

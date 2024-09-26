@@ -4,7 +4,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::{cell::Cell, fs::create_dir_all, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    fs::create_dir_all,
+    rc::Rc,
+};
 
 use itertools::Itertools;
 use rustc_interface::{
@@ -35,7 +39,7 @@ use crate::{
     visualization::generate_dot_graph,
 };
 
-use super::{domain::PlaceCapabilitySummary, DataflowStmtPhase};
+use super::{domain::PlaceCapabilitySummary, DataflowStmtPhase, DotGraphs};
 
 #[derive(Clone)]
 
@@ -102,13 +106,23 @@ impl<'a, 'tcx> PcsContext<'a, 'tcx> {
 
 pub struct PcsEngine<'a, 'tcx> {
     pub(crate) cgx: Rc<PcsContext<'a, 'tcx>>,
-    block: Cell<BasicBlock>,
-
     pub(crate) fpcs: FpcsEngine<'a, 'tcx>,
     pub(crate) borrows: BorrowsEngine<'a, 'tcx>,
     debug_output_dir: Option<String>,
+    dot_graphs: IndexVec<BasicBlock, Rc<RefCell<DotGraphs>>>,
+    curr_block: Cell<BasicBlock>,
 }
 impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
+    fn initialize(&self, state: &mut PlaceCapabilitySummary<'a, 'tcx>, block: BasicBlock) {
+        if let Some(existing_block) = state.block {
+            assert!(existing_block == block);
+            return;
+        }
+        state.set_block(block);
+        state.set_dot_graphs(self.dot_graphs[block].clone());
+        assert!(state.is_initialized());
+    }
+
     pub fn new(cgx: PcsContext<'a, 'tcx>, debug_output_dir: Option<String>) -> Self {
         if let Some(dir_path) = &debug_output_dir {
             if std::path::Path::new(dir_path).exists() {
@@ -116,6 +130,10 @@ impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
             }
             create_dir_all(&dir_path).expect("Failed to create directory for DOT files");
         }
+        let dot_graphs = IndexVec::from_fn_n(
+            |_| Rc::new(RefCell::new(DotGraphs::new())),
+            cgx.mir.body.basic_blocks.len(),
+        );
         let cgx = Rc::new(cgx);
         let fpcs = FpcsEngine(cgx.rp);
         let borrows = BorrowsEngine::new(
@@ -129,10 +147,11 @@ impl<'a, 'tcx> PcsEngine<'a, 'tcx> {
         );
         Self {
             cgx,
-            block: Cell::new(START_BLOCK),
+            dot_graphs,
             fpcs,
             borrows,
             debug_output_dir,
+            curr_block: Cell::new(START_BLOCK),
         }
     }
 
@@ -150,14 +169,25 @@ impl<'a, 'tcx> AnalysisDomain<'tcx> for PcsEngine<'a, 'tcx> {
     type Domain = PlaceCapabilitySummary<'a, 'tcx>;
     const NAME: &'static str = "pcs";
 
-    fn bottom_value(&self, _body: &Body<'tcx>) -> Self::Domain {
-        let block = self.block.get();
-        self.block.set(block.plus(1));
-        PlaceCapabilitySummary::new(self.cgx.clone(), block, self.debug_output_dir.clone())
+    fn bottom_value(&self, body: &Body<'tcx>) -> Self::Domain {
+        let block = self.curr_block.get();
+        let (block, dot_graphs) = if block.as_usize() < body.basic_blocks.len() {
+            self.curr_block.set(block.plus(1));
+            (Some(block), Some(self.dot_graphs[block].clone()))
+        } else {
+            // For results cursor, don't set block
+            (None, None)
+        };
+        PlaceCapabilitySummary::new(
+            self.cgx.clone(),
+            block,
+            self.debug_output_dir.clone(),
+            dot_graphs,
+        )
     }
 
     fn initialize_start_block(&self, _body: &Body<'tcx>, state: &mut Self::Domain) {
-        self.block.set(START_BLOCK);
+        self.curr_block.set(START_BLOCK);
         state.fpcs.initialize_as_start_block();
         state.borrows.initialize_as_start_block();
     }
@@ -200,6 +230,7 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
         statement: &Statement<'tcx>,
         location: Location,
     ) {
+        self.initialize(state, location.block);
         self.generate_dot_graph(state, DataflowStmtPhase::Initial, location.statement_index);
         self.fpcs
             .apply_before_statement_effect(&mut state.fpcs, statement, location);
@@ -247,6 +278,7 @@ impl<'a, 'tcx> Analysis<'tcx> for PcsEngine<'a, 'tcx> {
         terminator: &Terminator<'tcx>,
         location: Location,
     ) {
+        self.initialize(state, location.block);
         self.generate_dot_graph(state, DataflowStmtPhase::Initial, location.statement_index);
         self.borrows
             .apply_before_terminator_effect(&mut state.borrows, terminator, location);
