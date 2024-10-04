@@ -43,7 +43,7 @@ pub type FpcsOutput<'mir, 'tcx> = free_pcs::FreePcsAnalysis<
     PcsEngine<'mir, 'tcx>,
 >;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ReborrowBridge<'tcx> {
     pub expands: FxHashSet<Conditioned<DerefExpansion<'tcx>>>,
     pub added_reborrows: FxHashSet<Conditioned<Reborrow<'tcx>>>,
